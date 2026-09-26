@@ -1,12 +1,12 @@
 fn main() {
-    // Touch every dependency so the cross-build smoke test compiles and links them all.
-    let _ = anyhow::anyhow!("x");
-    let _ = flate2::Compression::best();
-    let _ = semver::Version::parse("1.0.0");
-    let _ = serde_json::json!({});
-    let _ = <sha2::Sha256 as sha2::Digest>::new();
-    let _ = toml::from_str::<toml::Value>("a = 1");
-    println!("mibpkg {}", env!("CARGO_PKG_VERSION"));
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match mibpkg::cli::run(&args) {
+        Ok(code) => std::process::exit(code),
+        Err(e) => {
+            eprintln!("mibpkg: {e:#}");
+            std::process::exit(1);
+        }
+    }
 }
 
 /// QNX 6.5's libgcc has no `_Unwind_FindEnclosingFunction`, which std's backtrace code

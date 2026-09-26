@@ -19,3 +19,4 @@ pub mod legacy;
 pub mod status;
 pub mod supervisor;
 pub mod gem;
+pub mod cli;
