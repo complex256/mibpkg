@@ -61,3 +61,29 @@ fn atomic_write_and_copy_atomic() {
     assert_eq!(fs::read(&d).unwrap(), b"two");
     assert_eq!(fs::metadata(&d).unwrap().permissions().mode() & 0o777, 0o755);
 }
+
+#[test]
+fn sync_unsupported_is_not_an_error() {
+    // QNX 6.5 /tmp is /dev/shmem: fsync there fails with ENOSYS (Unsupported).
+    use std::io::{Error, ErrorKind};
+    assert!(fsutil::sync_result(Err(Error::from(ErrorKind::Unsupported))).is_ok());
+    assert!(fsutil::sync_result(Err(Error::from(ErrorKind::PermissionDenied))).is_err());
+    assert!(fsutil::sync_result(Ok(())).is_ok());
+}
+
+#[test]
+fn rename_fallback_copies_and_removes_source() {
+    // QNX 6.5 /tmp (/dev/shmem) cannot rename: EXDEV. The fallback copies instead.
+    let t = tempfile::tempdir().unwrap();
+    let a = t.path().join("a.tmp");
+    let b = t.path().join("b");
+    fs::write(&a, "new").unwrap();
+    fs::set_permissions(&a, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(&b, "old").unwrap();
+    fsutil::replace_by_copy(&a, &b).unwrap();
+    assert_eq!(fs::read_to_string(&b).unwrap(), "new");
+    assert!(!a.exists());
+    assert_eq!(fs::metadata(&b).unwrap().permissions().mode() & 0o777, 0o755);
+    assert!(fsutil::is_cross_device(&std::io::Error::from(std::io::ErrorKind::CrossesDevices)));
+    assert!(!fsutil::is_cross_device(&std::io::Error::from(std::io::ErrorKind::NotFound)));
+}

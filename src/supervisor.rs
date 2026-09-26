@@ -81,7 +81,7 @@ impl CappedLog {
             self.file = None;
             let mut rotated = self.path.as_os_str().to_owned();
             rotated.push(".1");
-            let _ = fs::rename(&self.path, PathBuf::from(rotated));
+            let _ = crate::fsutil::rename(&self.path, &PathBuf::from(rotated));
             self.file = OpenOptions::new().create(true).write(true).truncate(true).open(&self.path).ok();
             self.size = 0;
         }

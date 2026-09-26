@@ -18,9 +18,42 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> io::Result<()> {
     {
         let mut f = fs::File::create(&tmp)?;
         f.write_all(data)?;
-        f.sync_all()?;
+        sync_result(f.sync_all())?;
     }
-    fs::rename(&tmp, path)
+    rename(&tmp, path)
+}
+
+/// rename(2), falling back to copy + remove where the filesystem cannot rename:
+/// QNX 6.5 /tmp (/dev/shmem) returns EXDEV even within one directory.
+pub fn rename(from: &Path, to: &Path) -> io::Result<()> {
+    match fs::rename(from, to) {
+        Err(e) if is_cross_device(&e) => replace_by_copy(from, to),
+        other => other,
+    }
+}
+
+pub fn is_cross_device(e: &io::Error) -> bool {
+    e.kind() == io::ErrorKind::CrossesDevices
+}
+
+/// Replace `to` with a copy of `from` (mode included), then remove `from`.
+/// Not atomic; only used where rename is impossible (RAM files in /tmp).
+pub fn replace_by_copy(from: &Path, to: &Path) -> io::Result<()> {
+    match fs::remove_file(to) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+        _ => {}
+    }
+    fs::copy(from, to)?;
+    fs::remove_file(from)
+}
+
+/// fsync, where the filesystem has it: QNX 6.5 /tmp (/dev/shmem) returns ENOSYS,
+/// and a RAM file has nothing to flush anyway.
+pub fn sync_result(r: io::Result<()>) -> io::Result<()> {
+    match r {
+        Err(e) if e.kind() == io::ErrorKind::Unsupported => Ok(()),
+        other => other,
+    }
 }
 
 pub fn set_mode(path: &Path, mode: u32) -> io::Result<()> {
@@ -34,5 +67,5 @@ pub fn copy_atomic(src: &Path, dst: &Path, mode: u32) -> io::Result<()> {
     let tmp = tmp_sibling(dst);
     fs::copy(src, &tmp)?;
     set_mode(&tmp, mode)?;
-    fs::rename(&tmp, dst)
+    rename(&tmp, dst)
 }

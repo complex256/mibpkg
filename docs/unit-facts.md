@@ -20,6 +20,11 @@ Facts the code depends on, with how and when they were verified.
 | GEM new .esd pickup | new `screen <name> Main` file appears on re-entering GEM, no reboot | Task 19, 2026-09-26 (probe) |
 | GEM script output | tapping a `script` button opens `<screen>/Console`, which shows stdout **and** stderr live | Task 19, 2026-09-26 (probe) |
 | Missing tools | no `printf`, `which`, `cmp`, `od`, `uniq`, `mkfifo`; `tee` and `cat` exist | Task 19, 2026-09-26 |
+| `File::try_clone` | fails EINVAL (`F_DUPFD_CLOEXEC` unsupported) — open the file twice instead | Task 20, 2026-09-26 |
+| fsync on `/tmp` (/dev/shmem) | ENOSYS — treated as success (`fsutil::sync_result`) | Task 20, 2026-09-26 |
+| rename in `/tmp` (/dev/shmem) | EXDEV even within one dir — copy+remove fallback (`fsutil::rename`); `mv` does this itself | Task 20, 2026-09-26 |
+| Background supervisor from an ssh action | survives the ssh session closing (`trap '' HUP` wrapper) | Task 20, 2026-09-26 |
+| Clock | unset at boot (files dated Jan 01 00:0x) | Task 20, 2026-09-26 |
 
 ## Pending checks for Task 19 (added by the final review, 2026-09-26)
 

@@ -1,7 +1,7 @@
 //! Talking to the supervisor through request files in /tmp (std-only: no signals).
 use crate::fsutil::atomic_write;
 use crate::paths::Layout;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
 
@@ -65,12 +65,15 @@ pub fn ensure_supervisor(layout: &Layout, sys: &dyn Sys) -> Result<()> {
         return Ok(());
     }
     let exe = std::env::current_exe().unwrap_or_else(|_| layout.tmp_bin());
-    let log = fs::OpenOptions::new().create(true).append(true).open(layout.run("log"))?;
+    // Two opens, not File::try_clone: that needs fcntl(F_DUPFD_CLOEXEC), which QNX 6.5
+    // rejects with EINVAL (seen on the unit, 2026-09-26).
+    let open_log = || fs::OpenOptions::new().create(true).append(true).open(layout.run("log"));
     supervisor_command(&exe, &layout.root)
         .stdin(Stdio::null())
-        .stdout(log.try_clone()?)
-        .stderr(log)
-        .spawn()?;
+        .stdout(open_log().context("opening the supervisor log")?)
+        .stderr(open_log().context("opening the supervisor log")?)
+        .spawn()
+        .context("spawning the supervisor")?;
     Ok(())
 }
 
