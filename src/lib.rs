@@ -18,3 +18,4 @@ pub mod install;
 pub mod legacy;
 pub mod status;
 pub mod supervisor;
+pub mod gem;
