@@ -92,3 +92,353 @@ impl CappedLog {
         }
     }
 }
+
+use crate::bootd::{self, BootEntry};
+use crate::control;
+use crate::fsutil::{atomic_write, copy_atomic};
+use crate::install::{current_dir, current_version};
+use crate::manifest::{resolve, Restart};
+use crate::media;
+use crate::paths::Layout;
+use crate::status::{self, now_secs, Status, SvcState, SvcStatus};
+use crate::sys::Sys;
+use anyhow::{bail, Result};
+use std::collections::BTreeMap;
+use std::io::Read;
+use std::path::Path;
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
+
+const LOG_CAP: u64 = 256 * 1024;
+
+struct Service {
+    entry: BootEntry,
+    child: Option<Child>,
+    state: SvcState,
+    starts: u32,
+    backoff: Option<Duration>,
+    next_start: Option<Instant>,
+    started_at: Option<Instant>,
+    window: CrashWindow,
+    last_exit: Option<String>,
+    error: Option<String>,
+    /// Package version the running child was started from.
+    version: Option<String>,
+}
+
+impl Service {
+    fn new(entry: BootEntry) -> Service {
+        Service {
+            entry,
+            child: None,
+            state: SvcState::Starting,
+            starts: 0,
+            backoff: None,
+            next_start: None,
+            started_at: None,
+            window: CrashWindow::default(),
+            last_exit: None,
+            error: None,
+            version: None,
+        }
+    }
+}
+
+pub struct Supervisor<'a> {
+    layout: &'a Layout,
+    sys: &'a dyn Sys,
+    timing: Timing,
+    services: BTreeMap<String, Service>,
+    invalid: BTreeMap<String, String>,
+}
+
+fn pump(mut r: impl Read + Send + 'static, log: Arc<Mutex<CappedLog>>) {
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        loop {
+            match r.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if let Ok(mut l) = log.lock() {
+                        l.write(&buf[..n]);
+                    }
+                }
+            }
+        }
+    });
+}
+
+impl<'a> Supervisor<'a> {
+    pub fn new(layout: &'a Layout, sys: &'a dyn Sys, timing: Timing) -> Supervisor<'a> {
+        Supervisor { layout, sys, timing, services: BTreeMap::new(), invalid: BTreeMap::new() }
+    }
+
+    /// Re-read boot.d: start new services, stop removed ones, restart changed
+    /// ones and ones whose package `current` version moved.
+    pub fn reload(&mut self) {
+        self.invalid.clear();
+        let mut seen = Vec::new();
+        for (file, r) in bootd::load_all(self.layout) {
+            let e = match r {
+                Ok(e) => e,
+                Err(err) => {
+                    self.invalid.insert(file, format!("{err:#}"));
+                    continue;
+                }
+            };
+            let id = e.id();
+            seen.push(id.clone());
+            let cur = current_version(self.layout, &e.package);
+            let keep = match self.services.get(&id) {
+                Some(s) => s.entry == e && (s.child.is_none() || s.version == cur),
+                None => false,
+            };
+            if !keep {
+                if let Some(mut old) = self.services.remove(&id) {
+                    self.stop(&mut old);
+                }
+                self.services.insert(id, Service::new(e));
+            }
+        }
+        let gone: Vec<String> = self.services.keys().filter(|k| !seen.contains(k)).cloned().collect();
+        for id in gone {
+            if let Some(mut s) = self.services.remove(&id) {
+                self.stop(&mut s);
+            }
+        }
+    }
+
+    pub fn restart(&mut self, id: &str) {
+        if let Some(mut s) = self.services.remove(id) {
+            self.stop(&mut s);
+            let fresh = Service::new(s.entry.clone());
+            self.services.insert(id.to_string(), fresh);
+        }
+    }
+
+    pub fn stop_all(&mut self) {
+        let ids: Vec<String> = self.services.keys().cloned().collect();
+        for id in ids {
+            let mut s = self.services.remove(&id).unwrap();
+            self.stop(&mut s);
+            self.services.insert(id, s);
+        }
+    }
+
+    fn stop(&self, s: &mut Service) {
+        if let Some(mut child) = s.child.take() {
+            self.sys.terminate(child.id());
+            let end = Instant::now() + self.timing.stop_grace;
+            loop {
+                match child.try_wait() {
+                    Ok(Some(_)) => break,
+                    Ok(None) if Instant::now() < end => std::thread::sleep(Duration::from_millis(20)),
+                    _ => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        break;
+                    }
+                }
+            }
+        }
+        s.state = SvcState::Stopped;
+    }
+
+    pub fn tick(&mut self, now: Instant) {
+        let ids: Vec<String> = self.services.keys().cloned().collect();
+        for id in ids {
+            let mut s = self.services.remove(&id).unwrap();
+            self.tick_one(&mut s, now);
+            self.services.insert(id, s);
+        }
+    }
+
+    fn tick_one(&self, s: &mut Service, now: Instant) {
+        let t = &self.timing;
+        if let Some(child) = s.child.as_mut() {
+            match child.try_wait() {
+                Ok(Some(st)) => {
+                    s.child = None;
+                    s.last_exit = Some(st.to_string());
+                    let restart = match s.entry.restart {
+                        Restart::Always => true,
+                        Restart::OnFailure => !st.success(),
+                        Restart::Never => false,
+                    };
+                    if !restart {
+                        s.state = SvcState::Stopped;
+                    } else if s.window.record(now, t) {
+                        s.state = SvcState::Failed;
+                    } else {
+                        let b = next_backoff(t, s.backoff);
+                        s.backoff = Some(b);
+                        s.next_start = Some(now + b);
+                        s.state = SvcState::Backoff;
+                    }
+                }
+                Ok(None) => {
+                    if s.started_at.map_or(false, |at| now.duration_since(at) >= t.stable_after) {
+                        s.backoff = None;
+                    }
+                }
+                Err(e) => s.error = Some(e.to_string()),
+            }
+        }
+        let due = s.next_start.map_or(true, |at| now >= at);
+        if s.child.is_none()
+            && matches!(s.state, SvcState::Starting | SvcState::Backoff | SvcState::NeedsConfig)
+            && due
+        {
+            self.start(s, now);
+        }
+    }
+
+    fn start(&self, s: &mut Service, now: Instant) {
+        let e = &s.entry;
+        let pkg_dir = match current_dir(self.layout, &e.package) {
+            Some(d) => d,
+            None => {
+                s.state = SvcState::Invalid;
+                s.error = Some(format!("package {} is not installed", e.package));
+                return;
+            }
+        };
+        let pkg_s = pkg_dir.display().to_string();
+        let cfg_s = self.layout.config_dir(&e.package).display().to_string();
+        let res = |x: &str| resolve(x, &pkg_s, &cfg_s);
+        if let Some(missing) = e.requires.iter().map(|r| res(r)).find(|p| !Path::new(p).is_file()) {
+            s.state = SvcState::NeedsConfig;
+            s.error = Some(format!("missing {missing}"));
+            s.next_start = Some(now + self.timing.config_recheck);
+            return;
+        }
+        let id = e.id();
+        let bin = self.layout.run(&id);
+        if let Err(err) = copy_atomic(Path::new(&res(&e.exec)), &bin, 0o755) {
+            s.state = SvcState::Invalid;
+            s.error = Some(format!("copying {} to /tmp: {err}", e.exec));
+            return;
+        }
+        let log = Arc::new(Mutex::new(CappedLog::open(self.layout.run(&format!("{id}.log")), LOG_CAP)));
+        let spawned = Command::new(&bin)
+            .args(e.args.iter().map(|a| res(a)))
+            .current_dir(&pkg_dir)
+            .env("MIBPKG_PKG_DIR", &pkg_s)
+            .env("MIBPKG_CONFIG_DIR", &cfg_s)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn();
+        match spawned {
+            Ok(mut child) => {
+                if let Some(o) = child.stdout.take() {
+                    pump(o, log.clone());
+                }
+                if let Some(er) = child.stderr.take() {
+                    pump(er, log);
+                }
+                s.child = Some(child);
+                s.state = SvcState::Running;
+                s.starts += 1;
+                s.started_at = Some(now);
+                s.error = None;
+                s.version = current_version(self.layout, &e.package);
+            }
+            Err(err) => {
+                s.error = Some(format!("starting {id}: {err}"));
+                if s.window.record(now, &self.timing) {
+                    s.state = SvcState::Failed;
+                } else {
+                    let b = next_backoff(&self.timing, s.backoff);
+                    s.backoff = Some(b);
+                    s.next_start = Some(now + b);
+                    s.state = SvcState::Backoff;
+                }
+            }
+        }
+    }
+
+    pub fn status(&self) -> Status {
+        let services = self
+            .services
+            .iter()
+            .map(|(id, s)| {
+                (
+                    id.clone(),
+                    SvcStatus {
+                        state: s.state,
+                        pid: s.child.as_ref().map(|c| c.id()),
+                        restarts: s.starts.saturating_sub(1),
+                        last_exit: s.last_exit.clone(),
+                        error: s.error.clone(),
+                    },
+                )
+            })
+            .collect();
+        Status { updated: now_secs(), pid: std::process::id(), disabled: false, services, invalid: self.invalid.clone() }
+    }
+}
+
+/// Kill service pids recorded by a supervisor that died without stopping them.
+fn reap_orphans(layout: &Layout, sys: &dyn Sys) {
+    if let Some(prev) = status::read(layout) {
+        for s in prev.services.values() {
+            if let Some(pid) = s.pid {
+                if sys.process_alive(pid) {
+                    sys.terminate(pid);
+                }
+            }
+        }
+    }
+}
+
+/// The supervisor main loop (`mibpkg supervise`).
+pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
+    if let Some(pid) = control::supervisor_pid(layout, sys) {
+        if pid != std::process::id() {
+            bail!("a supervisor is already running (pid {pid})");
+        }
+    }
+    atomic_write(&layout.run("pid"), std::process::id().to_string().as_bytes())?;
+    reap_orphans(layout, sys);
+    if media::disabled(layout) {
+        println!("mibpkg: DISABLE marker on the card; starting nothing");
+        status::write(layout, &Status { updated: now_secs(), pid: std::process::id(), disabled: true, ..Default::default() })?;
+        let _ = fs::remove_file(layout.run("pid"));
+        return Ok(());
+    }
+    let mut sup = Supervisor::new(layout, sys, timing.clone());
+    sup.reload();
+    loop {
+        if control::take(&layout.run("stop")) {
+            sup.stop_all();
+            break;
+        }
+        if control::take(&layout.run("selfupdate")) {
+            sup.stop_all();
+            let _ = status::write(layout, &sup.status());
+            let _ = fs::remove_file(layout.run("pid"));
+            Command::new("/bin/sh")
+                .arg(layout.bin_dir().join("launch.sh"))
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()?;
+            return Ok(());
+        }
+        if control::take(&layout.run("reload")) {
+            sup.reload();
+        }
+        for id in control::take_restarts(layout) {
+            sup.restart(&id);
+        }
+        sup.tick(Instant::now());
+        if let Err(e) = status::write(layout, &sup.status()) {
+            eprintln!("mibpkg: writing status: {e:#}");
+        }
+        std::thread::sleep(timing.poll);
+    }
+    let _ = status::write(layout, &sup.status());
+    let _ = fs::remove_file(layout.run("pid"));
+    Ok(())
+}
