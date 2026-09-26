@@ -1,0 +1,16 @@
+[package]
+name = "mibpkg"
+version = "@VERSION@"
+description = "Package manager for MIB2 High (this tool)"
+
+[[file]]
+src = "bin/mibpkg"
+mode = "755"
+
+[[file]]
+src = "bin/launch.sh"
+mode = "755"
+
+[[file]]
+src = "bin/gem.sh"
+mode = "755"
