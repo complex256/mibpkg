@@ -12,3 +12,4 @@ pub mod state;
 pub mod hook;
 pub mod bootd;
 pub mod config;
+pub mod media;
