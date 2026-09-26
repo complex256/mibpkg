@@ -1,0 +1,131 @@
+//! Every side effect on the unit that is not plain file I/O.
+use anyhow::{bail, Context, Result};
+use std::cell::{Cell, RefCell};
+use std::path::Path;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+pub trait Sys {
+    /// `mount -uw|-ur <mount>` (sync first when going read-only).
+    fn remount(&self, mount: &str, rw: bool) -> Result<()>;
+    /// `ksh -n <script>` succeeded.
+    fn shell_syntax_ok(&self, script: &Path) -> bool;
+    /// `/bin/sh <script> <args>` with a timeout; non-zero exit is an error.
+    fn run_script(&self, script: &Path, args: &[&str], env: &[(String, String)], timeout: Duration) -> Result<()>;
+    fn process_alive(&self, pid: u32) -> bool;
+    /// SIGTERM via `kill <pid>`.
+    fn terminate(&self, pid: u32);
+    /// Free bytes on the filesystem holding `path`, if `df` can tell.
+    fn free_bytes(&self, path: &Path) -> Option<u64>;
+}
+
+pub struct RealSys {
+    pub mounts: bool,
+}
+
+fn quiet_status(cmd: &mut Command) -> bool {
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+impl Sys for RealSys {
+    fn remount(&self, mount: &str, rw: bool) -> Result<()> {
+        if !self.mounts {
+            return Ok(());
+        }
+        let flag = if rw { "-uw" } else { "-ur" };
+        if !rw {
+            let _ = Command::new("sync").status();
+        }
+        let st = Command::new("mount").arg(flag).arg(mount).status().context("running mount")?;
+        if !st.success() {
+            bail!("mount {flag} {mount} failed");
+        }
+        Ok(())
+    }
+
+    fn shell_syntax_ok(&self, script: &Path) -> bool {
+        quiet_status(Command::new("ksh").arg("-n").arg(script))
+    }
+
+    fn run_script(&self, script: &Path, args: &[&str], env: &[(String, String)], timeout: Duration) -> Result<()> {
+        let mut c = Command::new("/bin/sh");
+        c.arg(script).args(args).stdin(Stdio::null());
+        for (k, v) in env {
+            c.env(k, v);
+        }
+        let mut child = c.spawn().with_context(|| format!("starting {}", script.display()))?;
+        let start = Instant::now();
+        loop {
+            if let Some(st) = child.try_wait()? {
+                if st.success() {
+                    return Ok(());
+                }
+                bail!("{} exited with {st}", script.display());
+            }
+            if start.elapsed() > timeout {
+                let _ = child.kill();
+                let _ = child.wait();
+                bail!("{} timed out after {}s", script.display(), timeout.as_secs());
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    fn process_alive(&self, pid: u32) -> bool {
+        quiet_status(Command::new("/bin/sh").arg("-c").arg(format!("kill -0 {pid}")))
+    }
+
+    fn terminate(&self, pid: u32) {
+        quiet_status(Command::new("/bin/sh").arg("-c").arg(format!("kill {pid}")));
+    }
+
+    fn free_bytes(&self, path: &Path) -> Option<u64> {
+        let out = Command::new("df").arg("-k").arg(path).stderr(Stdio::null()).output().ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let last = text.lines().last()?;
+        let avail_kb: u64 = last.split_whitespace().nth(3)?.parse().ok()?;
+        Some(avail_kb * 1024)
+    }
+}
+
+/// Test double: records remounts, can fail them, fakes `ksh -n` and `df`;
+/// processes and scripts are real (host /bin/sh).
+#[derive(Default)]
+pub struct RecordingSys {
+    pub calls: RefCell<Vec<String>>,
+    pub fail_remount_rw: Cell<bool>,
+    pub syntax_bad: Cell<bool>,
+    pub free: Cell<Option<u64>>,
+}
+
+const HOST: RealSys = RealSys { mounts: false };
+
+impl Sys for RecordingSys {
+    fn remount(&self, mount: &str, rw: bool) -> Result<()> {
+        self.calls.borrow_mut().push(format!("{} {mount}", if rw { "rw" } else { "ro" }));
+        if rw && self.fail_remount_rw.get() {
+            bail!("mount -uw {mount} failed");
+        }
+        Ok(())
+    }
+    fn shell_syntax_ok(&self, _script: &Path) -> bool {
+        !self.syntax_bad.get()
+    }
+    fn run_script(&self, script: &Path, args: &[&str], env: &[(String, String)], timeout: Duration) -> Result<()> {
+        HOST.run_script(script, args, env, timeout)
+    }
+    fn process_alive(&self, pid: u32) -> bool {
+        HOST.process_alive(pid)
+    }
+    fn terminate(&self, pid: u32) {
+        HOST.terminate(pid)
+    }
+    fn free_bytes(&self, _path: &Path) -> Option<u64> {
+        self.free.get()
+    }
+}
