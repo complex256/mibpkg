@@ -11,4 +11,5 @@ if [ ! -x "$RUN/mibpkg" ]; then
     chmod 755 "$RUN/mibpkg.new"
     mv "$RUN/mibpkg.new" "$RUN/mibpkg" || exit 1
 fi
-exec "$RUN/mibpkg" $MIBPKG_ARGS gem "$@" >>"$RUN/mibpkg.log" 2>&1
+# GEM shows a script's stdout/stderr live in its Console panel: show it there and keep it in the log.
+"$RUN/mibpkg" $MIBPKG_ARGS gem "$@" 2>&1 | tee -a "$RUN/mibpkg.log"

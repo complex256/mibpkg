@@ -122,3 +122,21 @@ fn gem_and_launch_set_a_unit_path() {
         assert!(p.contains("/proc/boot") && p.contains("/sbin"), "{script}: {p}");
     }
 }
+
+#[test]
+fn gem_output_reaches_console_and_log() {
+    let t = tempfile::tempdir().unwrap();
+    let (home, run) = fake_home(t.path());
+    fs::write(home.join("bin/mibpkg"), "#!/bin/sh\necho out-line\necho err-line >&2\n").unwrap();
+    let out = Command::new("/bin/sh")
+        .arg(shell("gem.sh"))
+        .arg("rescan")
+        .env("MIBPKG_HOME", &home)
+        .env("MIBPKG_RUN", &run)
+        .output()
+        .unwrap();
+    let console = String::from_utf8_lossy(&out.stdout);
+    assert!(console.contains("out-line") && console.contains("err-line"), "GEM Console shows output: {console:?}");
+    let log = fs::read_to_string(run.join("mibpkg.log")).unwrap();
+    assert!(log.contains("out-line") && log.contains("err-line"), "log keeps it too: {log:?}");
+}
