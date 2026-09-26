@@ -9,3 +9,4 @@ pub mod lock;
 pub mod sys;
 pub mod backups;
 pub mod state;
+pub mod hook;
