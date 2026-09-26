@@ -7,7 +7,7 @@ Facts the code depends on, with how and when they were verified.
 | Toolchain rustc | rustc 1.99.0-nightly (87e5904f5 2026-07-20) | Task 1, 2026-09-26 |
 | All deps cross-compile (anyhow, flate2, semver, serde, serde_json, sha2, toml) | yes | Task 1, 2026-09-26 |
 | QNX 6.5 libgcc lacks `_Unwind_FindEnclosingFunction` (std backtrace via anyhow) | mibpkg defines it for `target_os = "nto"` in `src/main.rs` | Task 1, 2026-09-26 (link error, then clean link) |
-| Smoke binary runs on the unit | pending | Task 19 |
+| Binary runs on the unit | `mibpkg list` from /tmp: unit MHI2Q, reads /fs/sda0 collection (carmqtt, mibpkg 0.1.0) | Task 19, 2026-09-26 |
 | `/mnt/app` free space | 233346 KB (~228 MB) free of 995312 KB (77% used) | Task 19, 2026-09-26 (`df -k`) |
 | `/mnt/system` free space | 3023 KB free | Task 19, 2026-09-26 |
 | `df -k` format | `<dev> <1k-blocks> <used> <avail> <cap%> <mount>`: 4th field = available (matches `free_bytes`) | Task 19, 2026-09-26 |
