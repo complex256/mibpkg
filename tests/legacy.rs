@@ -50,3 +50,26 @@ fn card_config_wins_over_legacy_config() {
     install::install(&ctx, &[f.sd()], &c, "carmqtt").unwrap();
     assert_eq!(fs::read_to_string(f.layout.config_dir("carmqtt").join("carmqtt.toml")).unwrap(), "card");
 }
+
+#[test]
+fn failed_migration_is_retried_on_the_next_install() {
+    let f = common::fixture();
+    let old = f.root().join("mnt/app/root/carmqtt");
+    fs::create_dir_all(&old).unwrap();
+    fs::write(old.join("carmqtt.toml"), "broker = \"x\"\n").unwrap();
+    fs::write(old.join("carmqtt.sh"), "exit 0\n").unwrap();
+    let startup = common::STARTUP.replace("    echo after\n", &format!("{OLD_HOOK}    echo after\n"));
+    fs::write(f.layout.startup_sh(), &startup).unwrap();
+    let src = common::pkg_src(f.root(), "carmqtt", "1.0.0", "sleep 30", "");
+    let c = Collection::load(&common::collection(&f.sd(), "complex256", &[src])).unwrap();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    sys.syntax_bad.set(true);
+    assert!(install::install(&ctx, &[f.sd()], &c, "carmqtt").is_err());
+    assert!(f.layout.run("reload").exists(), "new service is started even though migration failed");
+    sys.syntax_bad.set(false);
+    let msg = install::install(&ctx, &[f.sd()], &c, "carmqtt").unwrap();
+    assert!(msg.contains("migrated"), "{msg}");
+    assert!(!old.exists());
+    assert_eq!(fs::read_to_string(f.layout.startup_sh()).unwrap(), common::STARTUP);
+}

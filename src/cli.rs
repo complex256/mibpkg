@@ -85,6 +85,8 @@ pub fn run(args: &[String]) -> Result<i32> {
             Ok(0)
         }
         "install" | "remove" | "rollback" | "restart" | "rescan" | "update-all" => {
+            // One lock across the action, the screens and the result: a second action changes nothing.
+            let _lock = Lock::acquire(&ctx.layout, ctx.sys)?;
             let r = action(&ctx, &cmd, args);
             after(&ctx);
             println!("{}", r?);
@@ -92,6 +94,14 @@ pub fn run(args: &[String]) -> Result<i32> {
         }
         "gem" => {
             let verb = args.first().context("gem needs an action")?.clone();
+            let _lock = match Lock::acquire(&ctx.layout, ctx.sys) {
+                Ok(l) => l,
+                Err(e) => {
+                    // Double tap: the running action refreshes the screens when it finishes.
+                    println!("FAILED: {e:#}");
+                    return Ok(0);
+                }
+            };
             let key = match verb.as_str() {
                 "install" | "remove" | "rollback" | "restart" => args.get(1).cloned().unwrap_or_else(|| "_".into()),
                 _ => "_".into(),
@@ -147,8 +157,8 @@ fn arg<'a>(args: &'a [String], i: usize, what: &str) -> Result<&'a str> {
     args.get(i).map(|s| s.as_str()).with_context(|| format!("missing {what}"))
 }
 
+/// Caller holds the action lock.
 fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
-    let _lock = Lock::acquire(&ctx.layout, ctx.sys)?;
     let media_roots = media::roots(&ctx.layout);
     let colls: Vec<Collection> = media::loaded(&media::scan(&ctx.layout));
     let state = State::load(&ctx.layout)?;

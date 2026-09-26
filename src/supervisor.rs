@@ -189,8 +189,10 @@ impl<'a> Supervisor<'a> {
             let id = e.id();
             seen.push(id.clone());
             let cur = current_version(self.layout, &e.package);
+            // Replace on a changed entry, a moved `current` (even if not running, so an
+            // update revives a failed service), or an invalid one (retry after install).
             let keep = match self.services.get(&id) {
-                Some(s) => s.entry == e && (s.child.is_none() || s.version == cur),
+                Some(s) => s.entry == e && s.state != SvcState::Invalid && (s.version.is_none() || s.version == cur),
                 None => false,
             };
             if !keep {
@@ -303,6 +305,7 @@ impl<'a> Supervisor<'a> {
                 return;
             }
         };
+        s.version = current_version(self.layout, &e.package);
         let pkg_s = pkg_dir.display().to_string();
         let cfg_s = self.layout.config_dir(&e.package).display().to_string();
         let res = |x: &str| resolve(x, &pkg_s, &cfg_s);
@@ -342,7 +345,6 @@ impl<'a> Supervisor<'a> {
                 s.starts += 1;
                 s.started_at = Some(now);
                 s.error = None;
-                s.version = current_version(self.layout, &e.package);
             }
             Err(err) => {
                 s.error = Some(format!("starting {id}: {err}"));

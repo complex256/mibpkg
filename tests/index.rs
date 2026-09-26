@@ -51,3 +51,17 @@ fn build_index_rejects_misnamed_archive() {
     fs::rename(dir.join("packages/alpha-1.0.0.mpk"), dir.join("packages/wrong.mpk")).unwrap();
     assert!(mibpkg::index::build_index(&dir, "c", "c").is_err());
 }
+
+#[test]
+fn load_rejects_bad_entry_names_and_versions() {
+    let t = tempfile::tempdir().unwrap();
+    let d = t.path();
+    for (name, ver) in [("x/../Main", "1.0.0"), ("ok", "1.0")] {
+        fs::write(
+            d.join("index.json"),
+            format!(r#"{{"format":1,"collection":{{"id":"x","name":"x"}},"packages":[{{"name":"{name}","version":"{ver}","file":"packages/a.mpk","sha256":"0","size":1}}]}}"#),
+        )
+        .unwrap();
+        assert!(Collection::load(d).is_err(), "{name} {ver}");
+    }
+}

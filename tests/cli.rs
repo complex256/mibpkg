@@ -40,11 +40,14 @@ fn gem_actions_record_results_and_never_fail() {
     assert_eq!(run(&args(f.root(), &["gem", "install", "nope"])).unwrap(), 0);
     let st = State::load(&f.layout).unwrap();
     assert!(st.results["nope"].starts_with("FAILED:"), "{:?}", st.results);
+    // Double tap: another action holds the lock. The busy tap must write nothing at all.
     fs::write(f.layout.run("lock"), std::process::id().to_string()).unwrap();
-    run(&args(f.root(), &["gem", "remove", "alpha"])).unwrap();
-    let st = State::load(&f.layout).unwrap();
-    assert!(st.results["alpha"].starts_with("FAILED: busy"), "double tap: {:?}", st.results);
-    assert!(st.packages.contains_key("alpha"), "busy action changed nothing");
+    let state_before = fs::read(State::path(&f.layout)).unwrap();
+    let esd = f.layout.engdefs().join("mibpkg_alpha.esd");
+    fs::write(&esd, "sentinel").unwrap();
+    assert_eq!(run(&args(f.root(), &["gem", "remove", "alpha"])).unwrap(), 0);
+    assert_eq!(fs::read(State::path(&f.layout)).unwrap(), state_before, "busy tap wrote installed.json");
+    assert_eq!(fs::read_to_string(&esd).unwrap(), "sentinel", "busy tap rewrote screens");
     fs::remove_file(f.layout.run("lock")).unwrap();
 }
 

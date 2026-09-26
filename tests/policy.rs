@@ -59,3 +59,15 @@ fn status_roundtrip() {
     assert_eq!(r.services["demo.demo"].state, SvcState::NeedsConfig);
     assert_eq!(SvcState::NeedsConfig.to_string(), "needs-config");
 }
+
+#[test]
+fn background_supervisor_survives_hangup() {
+    let t = tempfile::tempdir().unwrap();
+    let exe = t.path().join("fake");
+    let out = t.path().join("alive");
+    fs::write(&exe, format!("#!/bin/sh\nkill -HUP $$\necho yes > {}\n", out.display())).unwrap();
+    fs::set_permissions(&exe, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let mut c = mibpkg::control::supervisor_command(&exe, t.path());
+    c.status().unwrap();
+    assert_eq!(fs::read_to_string(&out).unwrap_or_default().trim(), "yes", "SIGHUP must be ignored");
+}

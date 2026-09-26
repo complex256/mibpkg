@@ -101,3 +101,24 @@ fn gem_forwards_action() {
         .unwrap();
     assert_eq!(fs::read_to_string(run.join("args")).unwrap().trim(), "gem install carmqtt complex256");
 }
+
+#[test]
+fn gem_and_launch_set_a_unit_path() {
+    let t = tempfile::tempdir().unwrap();
+    let (home, run) = fake_home(t.path());
+    fs::write(home.join("bin/mibpkg"), format!("#!/bin/sh\necho \"$PATH\" > {}/path\n", run.display())).unwrap();
+    for script in ["gem.sh", "launch.sh"] {
+        let _ = fs::remove_file(run.join("mibpkg"));
+        Command::new("/bin/sh")
+            .arg(shell(script))
+            .arg("rescan")
+            .env("PATH", "/usr/bin")
+            .env("MIBPKG_HOME", &home)
+            .env("MIBPKG_RUN", &run)
+            .env("MIBPKG_MEDIA", t.path())
+            .status()
+            .unwrap();
+        let p = fs::read_to_string(run.join("path")).unwrap();
+        assert!(p.contains("/proc/boot") && p.contains("/sbin"), "{script}: {p}");
+    }
+}

@@ -3,6 +3,9 @@
 # Persistent storage cannot exec binaries, so mibpkg runs from /tmp (RAM).
 # /tmp cannot hold directories: every runtime file is a flat /tmp/mibpkg.* name.
 # pdksh subset only; the unit has no dirname, tail, nohup or date.
+# GEM and boot environments may not have /sbin (mount) on PATH.
+PATH=/proc/boot:/bin:/usr/bin:/usr/sbin:/sbin:/mnt/app/armle/bin:/mnt/app/armle/usr/bin:$PATH
+export PATH
 HOME_DIR=${MIBPKG_HOME:-/mnt/app/root/mibpkg}
 RUN=${MIBPKG_RUN:-/tmp}
 ROOTS=${MIBPKG_MEDIA:-"/fs/sda0 /fs/sdb0 /fs/sd0 /fs/sd1 /fs/usb0"}

@@ -157,3 +157,30 @@ fn run_loop_honours_stop_request_and_disable() {
     mibpkg::supervisor::run(&f.layout, &sys, fast()).unwrap();
     assert!(mibpkg::status::read(&f.layout).unwrap().disabled);
 }
+
+#[test]
+fn update_revives_a_failed_service() {
+    let f = common::fixture();
+    install_pkg(&f, "1.0.0", "exit 1", "");
+    let sys = RealSys { mounts: false };
+    let mut sup = Supervisor::new(&f.layout, &sys, fast());
+    sup.reload();
+    assert!(until(&mut sup, |s| state(s) == SvcState::Failed));
+    install_pkg(&f, "1.1.0", "sleep 30", "");
+    sup.reload();
+    assert!(until(&mut sup, |s| state(s) == SvcState::Running), "fixed version must run after update");
+    sup.stop_all();
+}
+
+#[test]
+fn stopped_service_stays_stopped_on_unrelated_reload() {
+    let f = common::fixture();
+    install_pkg(&f, "1.0.0", "exit 0", "restart = \"on-failure\"\n");
+    let sys = RealSys { mounts: false };
+    let mut sup = Supervisor::new(&f.layout, &sys, fast());
+    sup.reload();
+    assert!(until(&mut sup, |s| state(s) == SvcState::Stopped));
+    sup.reload();
+    sup.tick(Instant::now());
+    assert_eq!(state(&sup), SvcState::Stopped);
+}

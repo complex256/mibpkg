@@ -66,13 +66,19 @@ pub fn ensure_supervisor(layout: &Layout, sys: &dyn Sys) -> Result<()> {
     }
     let exe = std::env::current_exe().unwrap_or_else(|_| layout.tmp_bin());
     let log = fs::OpenOptions::new().create(true).append(true).open(layout.run("log"))?;
-    Command::new(exe)
-        .arg("--root")
-        .arg(&layout.root)
-        .arg("supervise")
+    supervisor_command(&exe, &layout.root)
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log)
         .spawn()?;
     Ok(())
+}
+
+/// The command that runs `<exe> --root <root> supervise` in the background.
+/// SIGHUP is ignored (and inherited by services): a supervisor started from an ssh
+/// session must not die when the session closes.
+pub fn supervisor_command(exe: &Path, root: &Path) -> Command {
+    let mut c = Command::new("/bin/sh");
+    c.arg("-c").arg("trap '' HUP; exec \"$0\" --root \"$1\" supervise").arg(exe).arg(root);
+    c
 }

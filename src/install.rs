@@ -126,7 +126,16 @@ pub fn install(ctx: &Ctx, media: &[PathBuf], coll: &Collection, name: &str) -> R
             bail!("{name} is installed from collection {}; remove it before installing it from {coll_id}", p.collection);
         }
         match cmp_versions(&entry.version, &p.version) {
-            Ordering::Equal => return Ok(format!("{name} {} is already installed", p.version)),
+            Ordering::Equal => {
+                // Retry a hand-install migration that failed after an earlier commit.
+                return match legacy::migrate(ctx, name)? {
+                    Some(note) => {
+                        control::request_reload(layout)?;
+                        Ok(format!("{name} {} is already installed; {note}", p.version))
+                    }
+                    None => Ok(format!("{name} {} is already installed", p.version)),
+                };
+            }
             Ordering::Less => bail!(
                 "the card has {name} {}, older than the installed {} (use Roll back instead)",
                 entry.version,
@@ -205,7 +214,12 @@ pub fn install(ctx: &Ctx, media: &[PathBuf], coll: &Collection, name: &str) -> R
         Some(v) => format!("updated {name} {v} -> {}", entry.version),
         None => format!("installed {name} {}", entry.version),
     };
-    if let Some(note) = legacy::migrate(ctx, name)? {
+    let migrated = legacy::migrate(ctx, name);
+    if migrated.is_err() {
+        // The new version is committed: start it even if moving the old install aside failed.
+        control::request_reload(layout)?;
+    }
+    if let Some(note) = migrated.context("migrating the old install failed; install again to retry")? {
         msg.push_str("; ");
         msg.push_str(&note);
     }

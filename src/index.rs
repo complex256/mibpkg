@@ -59,6 +59,12 @@ impl Collection {
             bail!("{}: collection id {:?} must be 1-40 of [a-z0-9-]", p.display(), index.collection.id);
         }
         for e in &index.packages {
+            // Names become file names and script arguments on the unit.
+            if !valid_name(&e.name) {
+                bail!("{}: package name {:?} must be 1-40 of [a-z0-9-]", p.display(), e.name);
+            }
+            semver::Version::parse(&e.version)
+                .with_context(|| format!("{}: {} version {:?} is not semver", p.display(), e.name, e.version))?;
             safe_rel(&e.file).with_context(|| format!("{}: package {}", p.display(), e.name))?;
         }
         Ok(Collection { dir: dir.to_path_buf(), index })
