@@ -16,3 +16,5 @@ pub mod media;
 pub mod control;
 pub mod install;
 pub mod legacy;
+pub mod status;
+pub mod supervisor;
