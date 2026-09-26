@@ -27,6 +27,11 @@ Tags: [v1] = in the first implementation, [later] = design must allow it, not bu
   - after GPS fix / time sync
   Needs readiness signals per phase ([?] which /dev, /ramdisk/pps, or process markers to watch).
 - [later] Dependencies between packages' services (carmqtt after tailscale).
+  Evidence 2026-09-26 (first managed boot): carmqtt started at ~49 s, broker over Tailscale unreachable
+  ("no route to host", then timeouts) until ~110-170 s; with carmqtt's 60 s backoff cap it connected at
+  172 s, so HA was stale ~3 min after boot. An "after tailnet / after network" phase fixes this;
+  readiness signals seen in /tmp: `ppp_connected` (SIM data), `tailscaled.sock`, `net.external`.
+- [carmqtt] Lower the MQTT reconnect backoff cap (60 s -> ~10 s) so it catches the network sooner.
 - [?] Alternatives to editing startup.sh: /armle/scripts/common.sh is sourced by startup.sh
   (stock file, sourced by many scripts — rejected for now); mcd AUTORUN / autorunner (unknown behaviour).
 

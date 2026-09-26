@@ -27,6 +27,9 @@ Facts the code depends on, with how and when they were verified.
 | Clock | unset at boot (files dated Jan 01 00:0x) | Task 20, 2026-09-26 |
 | GEM screen refresh | GEM caches loaded .esd screens while open; rewritten files show only after leaving and re-entering GEM (no reboot). Console panel is the only live view | Task 20, 2026-09-26 |
 | First real install | GEM install of carmqtt 0.1.0: migrated hand install, service running under supervisor, old hook removed | Task 20, 2026-09-26 |
+| Boot autostart | after a real reboot: supervisor + carmqtt up at ~49 s after boot (30 s hook sleep + launch wait); no DISABLE logged | Task 20, 2026-09-26 |
+| Network readiness at boot | Tailscale route to the HA broker not usable until ~110-170 s after boot; `/tmp/ppp_connected` exists when SIM data is up | Task 20, 2026-09-26 |
+| Shell tools | also missing: `tail`, `wc`, `grep -A/-B`; `netstat` is `/mnt/app/armle/usr/bin/netstat` (not on ssh PATH) | Task 20, 2026-09-26 |
 
 ## Pending checks for Task 19 (added by the final review, 2026-09-26)
 
