@@ -25,6 +25,8 @@ Facts the code depends on, with how and when they were verified.
 | rename in `/tmp` (/dev/shmem) | EXDEV even within one dir — copy+remove fallback (`fsutil::rename`); `mv` does this itself | Task 20, 2026-09-26 |
 | Background supervisor from an ssh action | survives the ssh session closing (`trap '' HUP` wrapper) | Task 20, 2026-09-26 |
 | Clock | unset at boot (files dated Jan 01 00:0x) | Task 20, 2026-09-26 |
+| GEM screen refresh | GEM caches loaded .esd screens while open; rewritten files show only after leaving and re-entering GEM (no reboot). Console panel is the only live view | Task 20, 2026-09-26 |
+| First real install | GEM install of carmqtt 0.1.0: migrated hand install, service running under supervisor, old hook removed | Task 20, 2026-09-26 |
 
 ## Pending checks for Task 19 (added by the final review, 2026-09-26)
 

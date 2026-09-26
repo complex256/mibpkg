@@ -105,6 +105,12 @@ Tags: [v1] = in the first implementation, [later] = design must allow it, not bu
 - [v1] In-car picker: GEM (engineering menu) screen — installed / update / install / remove, then Apply.
   (Decided 2026-09-26: offline users choose IN THE CAR from what's on the SD card.)
 - [later] Web UI on the hotspot.
+- [later] Live values on GEM screens: GEM caches .esd files while open (verified 2026-09-26), so status
+  rows are snapshots until GEM is re-entered. Stock screens use `keyValue ... poll N` rows that read
+  live values (persistence/sys) — research whether a row can poll a file or value mibpkg writes.
+- [v1.1] "last result" timestamps show 1970 because the unit clock is unset at boot — omit the stamp
+  when the clock is obviously unset (< 2020).
+- [v1.1] Print progress lines during install/update (GEM Console shows stdout live, verified).
 
 ## Migration of existing projects
 - [v1] Migrate carmqtt only (the only project with a single developer) and remove its startup.sh line
