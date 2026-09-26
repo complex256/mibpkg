@@ -74,7 +74,7 @@ engine and supervisor run on the host against a temp directory in tests.
 /mnt/app/root/mibpkg/
   bin/mibpkg                 stored binary (never executed in place)
   bin/launch.sh, bin/gem.sh
-  boot.d/<service>.toml      one file per service, written by mibpkg from manifests
+  boot.d/<pkg>.<service>.toml  one file per service, written by mibpkg from manifests
   pkgs/<name>/<version>/     unpacked package files
   pkgs/<name>/current        text file naming the active version
   state/installed.json       installed packages, source collection, files placed outside pkgs/
@@ -84,6 +84,7 @@ engine and supervisor run on the host against a temp directory in tests.
 
 /tmp (flat)
   mibpkg, mibpkg.pid, mibpkg.lock, mibpkg.status, mibpkg.log
+  mibpkg.reload, mibpkg.restart.<id>, mibpkg.selfupdate, mibpkg.stop   request files polled by the supervisor
   mibpkg.<pkg>.<bin>         service binaries copied from pkgs/
   mibpkg.<svc>.log[.1]       service logs, ~256 KB cap, one rotation
 
@@ -110,19 +111,23 @@ tailscale / mibwg / carmqtt hooks use):
 - `mibpkg uninstall-self` removes the line and restores the backup if nothing else changed it.
 - Packages never touch `startup.sh`; they get a `boot.d/` file.
 
-`boot.d/<service>.toml`:
+`boot.d/<pkg>.<service>.toml` (service id = `<pkg>.<service>`):
 
 ```toml
-package = "carmqtt"
-name    = "carmqtt"
-exec    = "/mnt/app/root/mibpkg/pkgs/carmqtt/1.2.0/bin/carmqtt"
-args    = ["--config", "/mnt/app/root/mibpkg/state/config/carmqtt/carmqtt.toml"]
-phase   = "default"
-restart = "always"          # always | on-failure | never
+package  = "carmqtt"
+name     = "carmqtt"
+exec     = "@pkg/bin/carmqtt"
+args     = ["--config", "@config/carmqtt.toml"]
+phase    = "default"
+restart  = "always"          # always | on-failure | never
+requires = ["@config/carmqtt.toml"]
 ```
 
-Placeholders are resolved when the file is written. An unknown `phase` is reported as an error
-for that service and the service is not started (so future phases fail safe on an old mibpkg).
+Placeholders stay unresolved in `boot.d/`; the supervisor resolves `@pkg` through
+`pkgs/<pkg>/current` each time it starts a service. That makes the `current` flip the single
+commit point of an install: `boot.d/` files never name a version directory. An unknown `phase`
+is reported as an error for that service and the service is not started (so future phases fail
+safe on an old mibpkg).
 
 ## Supervisor
 
@@ -136,9 +141,15 @@ for that service and the service is not started (so future phases fail safe on a
 - Log files capped at ~256 KB with one rotation (`.1`). Logs stay in RAM (flash wear).
 - `/tmp/mibpkg.status` (JSON, written via temp + rename): per service state
   (`starting|running|backoff|failed|stopped|needs-config`), pid, restarts, last exit, since.
-- `SIGHUP` ⇒ reread `boot.d/`: start new services, stop removed ones, restart changed ones.
-  CLI actions send it after install/remove. `mibpkg restart <svc>` writes a request and sends
-  `SIGHUP`.
+- Control is by request files in `/tmp`, polled every second (std-only: no `libc`/signal crate on
+  the tier-3 QNX 6.5 target): `mibpkg.reload` ⇒ reread `boot.d/`, start new services, stop removed
+  ones, restart changed ones and ones whose package `current` version changed;
+  `mibpkg.restart.<id>` ⇒ restart one service; `mibpkg.selfupdate` ⇒ stop all, re-run `launch.sh`,
+  exit; `mibpkg.stop` ⇒ stop all and exit. Stopping a service = `kill <pid>` (TERM), 5 s grace, then
+  kill.
+- On start the supervisor refuses to run if the pid in `/tmp/mibpkg.pid` is alive, and terminates
+  any still-alive service pids recorded in a stale `/tmp/mibpkg.status` (orphans of a supervisor
+  that died), so a restarted supervisor never runs duplicates.
 - If the supervisor is not running when a CLI/GEM action needs it, the action starts it.
   Running services are not killed if the supervisor dies.
 - A service whose required config is missing is not started and shows `needs-config`.
@@ -156,8 +167,11 @@ version     = "1.2.0"            # semver
 description = "Car status to Home Assistant over MQTT"
 
 [compat]                         # omitted = any unit
-units    = ["MHI2Q"]             # matched against unit identity (see Verification items)
-firmware = []                    # optional list of accepted firmware trains/versions
+units    = ["MHI2Q"]             # unit identity: first line of /mnt/app/img_ver.txt contains
+                                 # MMX2QC => MHI2Q, else MMX2 => MHI2 (verify on an MHI2);
+                                 # settings.toml `unit = "..."` overrides detection
+
+firmware = []                    # optional; each is a substring of the img_ver.txt first line
 
 [[file]]
 src  = "bin/carmqtt"             # destination defaults to the package version dir
@@ -231,15 +245,16 @@ All actions take `/tmp/mibpkg.lock`; a second concurrent action exits immediatel
 4. `mount -uw /mnt/app` (abort cleanly if it fails).
 5. Unpack into `pkgs/<name>/<version>.new/`, validate manifest, rename to `<version>/`.
 6. Copy config files from the card if present.
-7. Run `post_install` script if any (timeout; failure ⇒ roll back steps 5–6).
-8. Write `boot.d/` files for the package's services.
-9. Write `pkgs/<name>/current` (temp + rename) — the commit point.
+7. Run `post_install` script if any (timeout; failure ⇒ delete the new version dir; imported
+   config files are user data and stay).
+8. Write `pkgs/<name>/current` (temp + rename) — the commit point.
+9. Write `boot.d/` files for the package's services (version-independent, see Boot integration).
 10. Update `state/installed.json` (temp + rename). Keep the previous version dir (one level of
     rollback); delete older ones.
 11. `mount -ur /mnt/app` (always, including on error paths). Signal the supervisor.
 12. Record the result (for `mibpkg.log` and the GEM "last result" line).
 
-Any failure before step 9 deletes the new version dir and leaves the previous install
+Any failure before step 8 deletes the new version dir and leaves the previous install
 untouched. `rollback <pkg>` points `current` back at the kept previous version.
 
 Remove: run `pre_remove`, delete `boot.d/` files, signal the supervisor to stop services, delete
@@ -260,8 +275,10 @@ its own files (prefixed `mibpkg`, no clashes with stock or M.I.B. names):
   service states, `⚠ runs scripts` if applicable, last result; buttons *Install* / *Update to X* /
   *Remove* / *Restart* / *Roll back* as they apply.
 
-Every button runs `gem.sh <action> [args]` → `/tmp/mibpkg gem <action>`, which performs the
-action and then regenerates all mibpkg screens (writing `/eso/hmi/engdefs` needs a transient
+GEM `script` elements take a fixed command path, so every button points at a generated one-line
+script in `/mnt/app/root/mibpkg/gem/` (e.g. `install-carmqtt-complex256.sh`) that runs
+`gem.sh install carmqtt complex256` → `/tmp/mibpkg gem install carmqtt complex256`, which performs
+the action and then regenerates all mibpkg screens (writing `/eso/hmi/engdefs` needs a transient
 `/mnt/app` rw mount, done inside the same lock).
 
 ## Bootstrap and self-update
@@ -280,8 +297,8 @@ action and then regenerates all mibpkg screens (writing `/eso/hmi/engdefs` needs
   jobs (copy to /tmp, pid, log) move into the supervisor; the service runs the binary directly.
 - One-time migration for the existing hand install, run by `mibpkg install carmqtt` when it
   detects `/mnt/app/root/carmqtt/`: import `carmqtt.toml` into `state/config/carmqtt/`, stop the
-  old process, remove the old `startup.sh` line (restoring from `startup.sh.pre-carmqtt` only if
-  the current file differs from it by exactly that line; otherwise remove the line in place), and
+  old process, remove the old `startup.sh` hook line and its `##` comment in place (same
+  `ksh -n`-validated edit path as mibpkg's own hook), and
   move the old directory to `/mnt/app/root/carmqtt.pre-mibpkg`.
 - Behaviour to preserve: carmqtt relies on `Value::Lost` on disconnect and LWT; the supervisor's
   restart must not break its availability topic semantics (verify on the car).
