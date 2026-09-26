@@ -4,6 +4,11 @@ Living list from brainstorming (started 2026-09-26). Design: docs/superpowers/sp
 Tags: [v1] = in the first implementation, [later] = design must allow it, not built yet,
 [?] = open question / needs investigation.
 
+## Status (2026-09-26)
+v1 shipped to main and verified end to end on the MHI2Q (see docs/unit-facts.md): M.I.B. bootstrap,
+GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred review minors are in the
+"Review minors" section below.
+
 ## Decisions so far (2026-09-26)
 - v1 = M.I.B. bootstrap, SD install/update/remove, in-car GEM picker, multiple collections, boot .d
   folder, service supervisor, carmqtt migrated. NOT v1: online (v2), signatures (after v2), slim zip, other migrations.
@@ -125,3 +130,12 @@ Tags: [v1] = in the first implementation, [later] = design must allow it, not bu
 
 ## Before going public
 - [later] Scrub history for excluded names; licensing; contribution/signing model for third-party authors.
+
+## Review minors (deferred from the v1 final review, 2026-09-26)
+- startup.sh staged file not fsynced before rename; lock create/pid-write race; boot.d remove-before-write.
+- Power loss between `current` flip and state save -> next Update deletes the active dir.
+- cleanup_stale only on verified installs; removed services leave /tmp binary + logs; /tmp/mibpkg.log uncapped.
+- Package named "restart" collides with restart request files; GEM script names can collide across dashes.
+- reap_orphans doesn't wait before starting new copies; stale /tmp/mibpkg.stop after failed uninstall-self.
+- Bootstrap doesn't register mibpkg in installed.json (GEM shows Install for mibpkg).
+- Only the newest version offered even if incompatible; df parse failure skips the space check silently.
