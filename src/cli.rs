@@ -2,6 +2,7 @@
 use crate::archive;
 use crate::config;
 use crate::control;
+use crate::fsutil;
 use crate::ctx::Ctx;
 use crate::gem;
 use crate::hook;
@@ -11,7 +12,7 @@ use crate::lock::Lock;
 use crate::manifest::Manifest;
 use crate::media;
 use crate::paths::Layout;
-use crate::state::State;
+use crate::state::{Installed, State};
 use crate::status::{self, now_secs};
 use crate::supervisor::{self, Timing};
 use crate::sys::RealSys;
@@ -61,6 +62,8 @@ pub fn run(args: &[String]) -> Result<i32> {
     let layout = Layout::load(&root)?;
     let sys = RealSys { mounts: root == Path::new("/") };
     let ctx = Ctx::new(layout, &sys);
+    // The shims append every action's output to /tmp/mibpkg.log (RAM): keep it bounded.
+    let _ = fsutil::cap_file(&ctx.layout.run("log"), supervisor::LOG_CAP);
     let after = |ctx: &Ctx| {
         if let Err(e) = gem::regenerate(ctx) {
             eprintln!("warning: updating GEM screens: {e:#}");
@@ -124,6 +127,7 @@ pub fn run(args: &[String]) -> Result<i32> {
                 for d in [ctx.layout.boot_d(), ctx.layout.state_dir(), ctx.layout.gem_dir(), ctx.layout.pkgs_dir()] {
                     fs::create_dir_all(&d).with_context(|| format!("creating {}", d.display()))?;
                 }
+                register_self(&ctx)?;
             }
             let changed = hook::install_hook(&ctx)?;
             after(&ctx);
@@ -151,6 +155,30 @@ pub fn run(args: &[String]) -> Result<i32> {
         }
         other => bail!("unknown command {other:?}\n{USAGE}"),
     }
+}
+
+/// Record the running mibpkg as installed (once), so GEM offers updates, not "Install".
+fn register_self(ctx: &Ctx) -> Result<()> {
+    let mut st = State::load(&ctx.layout)?;
+    if st.packages.contains_key(install::SELF) {
+        return Ok(());
+    }
+    let collection = media::loaded(&media::scan(&ctx.layout))
+        .into_iter()
+        .find(|c| c.latest(install::SELF).is_some())
+        .map(|c| c.id().to_string())
+        .unwrap_or_else(|| "complex256".into());
+    st.packages.insert(
+        install::SELF.to_string(),
+        Installed {
+            collection,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            previous: None,
+            services: Vec::new(),
+            uses_scripts: false,
+        },
+    );
+    st.save(&ctx.layout)
 }
 
 fn arg<'a>(args: &'a [String], i: usize, what: &str) -> Result<&'a str> {

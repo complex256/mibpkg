@@ -69,3 +69,21 @@ pub fn copy_atomic(src: &Path, dst: &Path, mode: u32) -> io::Result<()> {
     set_mode(&tmp, mode)?;
     rename(&tmp, dst)
 }
+
+/// Keep an append-only log under `max` bytes: once over, copy it to `<path>.1` and
+/// truncate it. Truncating keeps other writers' O_APPEND descriptors valid (the shims
+/// and the supervisor all append to /tmp/mibpkg.log).
+pub fn cap_file(path: &Path, max: u64) -> io::Result<()> {
+    let len = match fs::metadata(path) {
+        Ok(m) => m.len(),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    if len <= max {
+        return Ok(());
+    }
+    let mut rotated = path.as_os_str().to_owned();
+    rotated.push(".1");
+    fs::copy(path, PathBuf::from(rotated))?;
+    fs::OpenOptions::new().write(true).open(path)?.set_len(0)
+}

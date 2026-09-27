@@ -109,7 +109,8 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
-const LOG_CAP: u64 = 256 * 1024;
+/// Size cap for service logs and /tmp/mibpkg.log.
+pub const LOG_CAP: u64 = 256 * 1024;
 
 struct Service {
     entry: BootEntry,
@@ -206,6 +207,10 @@ impl<'a> Supervisor<'a> {
         for id in gone {
             if let Some(mut s) = self.services.remove(&id) {
                 self.stop(&mut s);
+            }
+            // The /tmp copy and logs are RAM; nothing reads them once the service is gone.
+            for f in [id.clone(), format!("{id}.log"), format!("{id}.log.1")] {
+                let _ = fs::remove_file(self.layout.run(&f));
             }
         }
     }
@@ -435,6 +440,7 @@ pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
             sup.restart(&id);
         }
         sup.tick(Instant::now());
+        let _ = crate::fsutil::cap_file(&layout.run("log"), LOG_CAP);
         if let Err(e) = status::write(layout, &sup.status()) {
             eprintln!("mibpkg: writing status: {e:#}");
         }

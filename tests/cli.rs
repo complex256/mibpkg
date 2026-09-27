@@ -84,3 +84,26 @@ fn unknown_command_is_an_error() {
     let f = common::fixture();
     assert!(run(&args(f.root(), &["frobnicate"])).is_err());
 }
+
+#[test]
+fn bootstrap_registers_mibpkg_itself() {
+    let f = common::fixture();
+    run(&args(f.root(), &["bootstrap"])).unwrap();
+    let st = State::load(&f.layout).unwrap();
+    let me = st.packages.get("mibpkg").expect("mibpkg registered");
+    assert_eq!(me.version, env!("CARGO_PKG_VERSION"));
+    assert_eq!(me.collection, "complex256");
+    assert!(me.previous.is_none());
+    let esd = fs::read_to_string(f.layout.engdefs().join("mibpkg_mibpkg.esd")).unwrap();
+    assert!(!esd.contains("Install "), "no Install button for the running mibpkg: {esd}");
+    assert!(!esd.contains("Roll back"));
+}
+
+#[test]
+fn big_main_log_is_capped_by_an_action() {
+    let f = common::fixture();
+    fs::write(f.layout.run("log"), vec![b'x'; 300 * 1024]).unwrap();
+    run(&args(f.root(), &["gem", "rescan"])).unwrap();
+    assert!(fs::metadata(f.layout.run("log")).unwrap().len() < 256 * 1024);
+    assert!(f.layout.run("log.1").exists());
+}

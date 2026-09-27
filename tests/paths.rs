@@ -87,3 +87,17 @@ fn rename_fallback_copies_and_removes_source() {
     assert!(fsutil::is_cross_device(&std::io::Error::from(std::io::ErrorKind::CrossesDevices)));
     assert!(!fsutil::is_cross_device(&std::io::Error::from(std::io::ErrorKind::NotFound)));
 }
+
+#[test]
+fn cap_file_rotates_once_over_the_limit() {
+    let t = tempfile::tempdir().unwrap();
+    let p = t.path().join("log");
+    fsutil::cap_file(&p, 10).unwrap(); // missing file is fine
+    fs::write(&p, "12345").unwrap();
+    fsutil::cap_file(&p, 10).unwrap();
+    assert_eq!(fs::read_to_string(&p).unwrap(), "12345", "under the cap: untouched");
+    fs::write(&p, "0123456789ab").unwrap();
+    fsutil::cap_file(&p, 10).unwrap();
+    assert_eq!(fs::read_to_string(&p).unwrap(), "");
+    assert_eq!(fs::read_to_string(t.path().join("log.1")).unwrap(), "0123456789ab");
+}

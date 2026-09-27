@@ -196,13 +196,16 @@ pub fn install(ctx: &Ctx, media: &[PathBuf], coll: &Collection, name: &str) -> R
     atomic_write(&pkg_dir.join("current"), entry.version.as_bytes())?; // commit point
     bootd::write_for_package(layout, name, &bootd::entries(&pkg.manifest))?;
     let old_version = previous.as_ref().map(|p| p.version.clone());
-    prune_versions(&pkg_dir, &entry.version, old_version.as_deref())?;
+    // Only a version whose files are still here can be rolled back to (mibpkg itself,
+    // registered by bootstrap, has none for its first version).
+    let kept = old_version.clone().filter(|v| pkg_dir.join(v).is_dir());
+    prune_versions(&pkg_dir, &entry.version, kept.as_deref())?;
     state.packages.insert(
         name.to_string(),
         Installed {
             collection: coll_id.clone(),
             version: entry.version.clone(),
-            previous: old_version.clone(),
+            previous: kept,
             services: pkg.manifest.services.iter().map(|s| format!("{name}.{}", s.name)).collect(),
             uses_scripts: pkg.manifest.uses_scripts(),
         },

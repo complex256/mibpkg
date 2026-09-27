@@ -162,3 +162,20 @@ fn needs_config_is_reported() {
     let msg = install::install(&ctx, &[f.sd()], &c, "demo").unwrap();
     assert!(msg.contains("needs config: c.toml"), "{msg}");
 }
+
+#[test]
+fn previous_is_only_kept_when_its_dir_exists() {
+    // mibpkg registered by bootstrap has no pkgs/ dir for its version: no rollback target.
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let mut st = State::default();
+    st.packages.insert(
+        "demo".into(),
+        mibpkg::state::Installed { collection: "complex256".into(), version: "0.9.0".into(), previous: None, services: vec![], uses_scripts: false },
+    );
+    st.save(&f.layout).unwrap();
+    let c = setup(&f, &["1.0.0"], "");
+    install::install(&ctx, &[f.sd()], &c, "demo").unwrap();
+    assert!(State::load(&f.layout).unwrap().packages["demo"].previous.is_none());
+}

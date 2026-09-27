@@ -184,3 +184,21 @@ fn stopped_service_stays_stopped_on_unrelated_reload() {
     sup.tick(Instant::now());
     assert_eq!(state(&sup), SvcState::Stopped);
 }
+
+#[test]
+fn removed_service_leaves_no_tmp_files() {
+    let f = common::fixture();
+    install_pkg(&f, "1.0.0", "echo hi; sleep 30", "");
+    let sys = RealSys { mounts: false };
+    let mut sup = Supervisor::new(&f.layout, &sys, fast());
+    sup.reload();
+    assert!(until(&mut sup, |_| fs::read_to_string(f.layout.run("demo.demo.log")).unwrap_or_default().contains("hi")));
+    fs::write(f.layout.run("demo.demo.log.1"), "old").unwrap();
+    let rs = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &rs);
+    install::remove(&ctx, "demo", false).unwrap();
+    sup.reload();
+    for n in ["demo.demo", "demo.demo.log", "demo.demo.log.1"] {
+        assert!(!f.layout.run(n).exists(), "{n} left in /tmp");
+    }
+}
