@@ -52,7 +52,7 @@ fn status_roundtrip() {
     let mut s = Status { updated: 1, pid: 2, ..Default::default() };
     s.services.insert(
         "demo.demo".into(),
-        SvcStatus { state: SvcState::NeedsConfig, pid: None, restarts: 0, last_exit: None, error: None },
+        SvcStatus { state: SvcState::NeedsConfig, pid: None, restarts: 0, last_exit: None, error: None, waiting_for: vec![], waiting_secs: None, note: None },
     );
     status::write(&f.layout, &s).unwrap();
     let r = status::read(&f.layout).unwrap();

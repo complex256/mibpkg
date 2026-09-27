@@ -16,6 +16,8 @@ pub enum SvcState {
     Stopped,
     NeedsConfig,
     Invalid,
+    /// Start conditions not met yet.
+    Waiting,
 }
 
 impl fmt::Display for SvcState {
@@ -28,6 +30,7 @@ impl fmt::Display for SvcState {
             SvcState::Stopped => "stopped",
             SvcState::NeedsConfig => "needs-config",
             SvcState::Invalid => "invalid",
+            SvcState::Waiting => "waiting",
         };
         f.write_str(s)
     }
@@ -40,6 +43,14 @@ pub struct SvcStatus {
     pub restarts: u32,
     pub last_exit: Option<String>,
     pub error: Option<String>,
+    /// Unmet start conditions while waiting.
+    #[serde(default)]
+    pub waiting_for: Vec<String>,
+    #[serde(default)]
+    pub waiting_secs: Option<u64>,
+    /// e.g. "started without tailnet after 5m".
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

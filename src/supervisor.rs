@@ -94,6 +94,7 @@ impl CappedLog {
 }
 
 use crate::bootd::{self, BootEntry};
+use crate::conditions::{self, fmt_secs, RealView, SystemView, TickCache};
 use crate::control;
 use crate::fsutil::{atomic_write, copy_atomic};
 use crate::install::{current_dir, current_version};
@@ -125,6 +126,11 @@ struct Service {
     error: Option<String>,
     /// Package version the running child was started from.
     version: Option<String>,
+    /// When the current wait for start conditions began.
+    wait_since: Option<Instant>,
+    waiting_for: Vec<String>,
+    /// Timeout note, e.g. "started without tailnet after 5m".
+    note: Option<String>,
 }
 
 impl Service {
@@ -141,6 +147,9 @@ impl Service {
             last_exit: None,
             error: None,
             version: None,
+            wait_since: None,
+            waiting_for: Vec::new(),
+            note: None,
         }
     }
 }
@@ -151,6 +160,7 @@ pub struct Supervisor<'a> {
     timing: Timing,
     services: BTreeMap<String, Service>,
     invalid: BTreeMap<String, String>,
+    view: Box<dyn SystemView>,
 }
 
 fn pump(mut r: impl Read + Send + 'static, log: Arc<Mutex<CappedLog>>) {
@@ -171,7 +181,13 @@ fn pump(mut r: impl Read + Send + 'static, log: Arc<Mutex<CappedLog>>) {
 
 impl<'a> Supervisor<'a> {
     pub fn new(layout: &'a Layout, sys: &'a dyn Sys, timing: Timing) -> Supervisor<'a> {
-        Supervisor { layout, sys, timing, services: BTreeMap::new(), invalid: BTreeMap::new() }
+        Supervisor { layout, sys, timing, services: BTreeMap::new(), invalid: BTreeMap::new(), view: Box::new(RealView) }
+    }
+
+    /// Replace how start conditions read the system (tests).
+    pub fn with_view(mut self, view: Box<dyn SystemView>) -> Self {
+        self.view = view;
+        self
     }
 
     /// Re-read boot.d: start new services, stop removed ones, restart changed
@@ -253,14 +269,39 @@ impl<'a> Supervisor<'a> {
 
     pub fn tick(&mut self, now: Instant) {
         let ids: Vec<String> = self.services.keys().cloned().collect();
+        let cache = TickCache::new(self.view.as_ref());
         for id in ids {
             let mut s = self.services.remove(&id).unwrap();
-            self.tick_one(&mut s, now);
+            self.tick_one(&mut s, now, &cache);
             self.services.insert(id, s);
         }
     }
 
-    fn tick_one(&self, s: &mut Service, now: Instant) {
+    /// Gate a start on the service's `after` conditions. Returns true to start now.
+    /// A start with every condition met clears an earlier timeout note.
+    fn conditions_allow(&self, s: &mut Service, now: Instant, cache: &TickCache) -> bool {
+        let unmet = conditions::unmet(&s.entry.after, &self.layout.settings, cache);
+        if unmet.is_empty() {
+            s.wait_since = None;
+            s.waiting_for.clear();
+            s.note = None;
+            return true;
+        }
+        let since = *s.wait_since.get_or_insert(now);
+        if let Some(limit) = s.entry.after_timeout_secs {
+            if now.duration_since(since) >= Duration::from_secs(limit) {
+                s.note = Some(format!("started without {} after {}", unmet.join(", "), fmt_secs(limit)));
+                s.wait_since = None;
+                s.waiting_for.clear();
+                return true;
+            }
+        }
+        s.state = SvcState::Waiting;
+        s.waiting_for = unmet;
+        false
+    }
+
+    fn tick_one(&self, s: &mut Service, now: Instant, cache: &TickCache) {
         let t = &self.timing;
         if let Some(child) = s.child.as_mut() {
             match child.try_wait() {
@@ -293,9 +334,12 @@ impl<'a> Supervisor<'a> {
         }
         let due = s.next_start.map_or(true, |at| now >= at);
         if s.child.is_none()
-            && matches!(s.state, SvcState::Starting | SvcState::Backoff | SvcState::NeedsConfig)
+            && matches!(s.state, SvcState::Starting | SvcState::Backoff | SvcState::NeedsConfig | SvcState::Waiting)
             && due
         {
+            if !self.conditions_allow(s, now, cache) {
+                return;
+            }
             self.start(s, now);
         }
     }
@@ -378,6 +422,12 @@ impl<'a> Supervisor<'a> {
                         restarts: s.starts.saturating_sub(1),
                         last_exit: s.last_exit.clone(),
                         error: s.error.clone(),
+                        waiting_for: s.waiting_for.clone(),
+                        waiting_secs: s
+                            .wait_since
+                            .filter(|_| s.state == SvcState::Waiting)
+                            .map(|w| Instant::now().duration_since(w).as_secs()),
+                        note: s.note.clone(),
                     },
                 )
             })

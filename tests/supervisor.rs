@@ -202,3 +202,62 @@ fn removed_service_leaves_no_tmp_files() {
         assert!(!f.layout.run(n).exists(), "{n} left in /tmp");
     }
 }
+
+fn marker(f: &common::Fixture) -> std::path::PathBuf {
+    f.root().join("ready-flag")
+}
+
+#[test]
+fn waits_for_a_file_condition_then_starts() {
+    let f = common::fixture();
+    let flag = marker(&f);
+    install_pkg(&f, "1.0.0", "sleep 30", &format!("after = [\"file:{}\"]\n", flag.display()));
+    let sys = RealSys { mounts: false };
+    let mut sup = Supervisor::new(&f.layout, &sys, fast());
+    sup.reload();
+    sup.tick(Instant::now());
+    let st = sup.status().services["demo.demo"].clone();
+    assert_eq!(st.state, SvcState::Waiting);
+    assert_eq!(st.waiting_for, vec![format!("file:{}", flag.display())]);
+    fs::write(&flag, "").unwrap();
+    assert!(until(&mut sup, |s| state(s) == SvcState::Running));
+    assert!(sup.status().services["demo.demo"].waiting_for.is_empty());
+    sup.stop_all();
+}
+
+#[test]
+fn timeout_starts_anyway_with_a_note() {
+    let f = common::fixture();
+    install_pkg(&f, "1.0.0", "sleep 30", "after = [\"file:/nonexistent/flag\"]\nafter_timeout = \"1s\"\n");
+    let sys = RealSys { mounts: false };
+    let mut sup = Supervisor::new(&f.layout, &sys, fast());
+    sup.reload();
+    sup.tick(Instant::now());
+    assert_eq!(state(&sup), SvcState::Waiting);
+    assert!(until(&mut sup, |s| state(s) == SvcState::Running));
+    let note = sup.status().services["demo.demo"].note.clone().unwrap();
+    assert!(note.contains("started without file:/nonexistent/flag after 1s"), "{note}");
+    sup.stop_all();
+}
+
+#[test]
+fn crash_restart_waits_again_and_waiting_is_not_a_crash() {
+    let f = common::fixture();
+    let flag = marker(&f);
+    fs::write(&flag, "").unwrap();
+    // exits after 0.2 s; flag removed before the restart
+    install_pkg(&f, "1.0.0", "sleep 0.2; exit 1", &format!("after = [\"file:{}\"]\n", flag.display()));
+    let sys = RealSys { mounts: false };
+    let mut sup = Supervisor::new(&f.layout, &sys, fast());
+    sup.reload();
+    assert!(until(&mut sup, |s| state(s) == SvcState::Running));
+    fs::remove_file(&flag).unwrap();
+    assert!(until(&mut sup, |s| state(s) == SvcState::Waiting), "restart after a crash waits for the condition");
+    let t0 = Instant::now();
+    while t0.elapsed() < Duration::from_millis(500) {
+        sup.tick(Instant::now());
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(state(&sup), SvcState::Waiting, "waiting never turns into failed");
+    assert_eq!(sup.status().services["demo.demo"].restarts, 0);
+}
