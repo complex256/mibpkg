@@ -22,6 +22,8 @@ fn entries_write_load_remove() {
             phase: "default".into(),
             restart: Restart::OnFailure,
             requires: vec!["@config/carmqtt.toml".into()],
+            after: vec![],
+            after_timeout_secs: None,
         }]
     );
     assert_eq!(es[0].id(), "carmqtt.carmqtt");
@@ -67,4 +69,19 @@ fn config_import_prev_and_missing() {
     config::import(&f.layout, &[f.sd()], &m).unwrap();
     assert_eq!(fs::read_to_string(&dst).unwrap(), "v2");
     assert_eq!(fs::read_to_string(dst.with_file_name("carmqtt.toml.prev")).unwrap(), "v1");
+}
+
+#[test]
+fn after_fields_flow_into_bootd_and_old_files_still_load() {
+    let f = common::fixture();
+    let m = Manifest::parse(&M.replace("restart = \"on-failure\"", "restart = \"on-failure\"\nafter = [\"tailnet\"]\nafter_timeout = \"5m\"")).unwrap();
+    let es = bootd::entries(&m);
+    assert_eq!(es[0].after, vec!["tailnet"]);
+    assert_eq!(es[0].after_timeout_secs, Some(300));
+    bootd::write_for_package(&f.layout, "carmqtt", &es).unwrap();
+    assert_eq!(bootd::load_all(&f.layout)[0].1.as_ref().unwrap(), &es[0]);
+    // a v1 boot.d file without the new fields
+    fs::write(f.layout.boot_d().join("old.svc.toml"), "package = \"old\"\nname = \"svc\"\nexec = \"@pkg/x\"\nphase = \"default\"\n").unwrap();
+    let old = bootd::load_all(&f.layout).into_iter().find(|(n, _)| n == "old.svc.toml").unwrap().1.unwrap();
+    assert!(old.after.is_empty() && old.after_timeout_secs.is_none());
 }

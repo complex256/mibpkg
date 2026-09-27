@@ -86,3 +86,15 @@ fn safe_rel_and_resolve() {
     }
     assert_eq!(resolve("@pkg/bin/x --c @config/y", "/P", "/C"), "/P/bin/x --c /C/y");
 }
+
+#[test]
+fn after_and_timeout_validation() {
+    let m = Manifest::parse(&CARMQTT.replace("args = [", "after = [\"tailnet\", \"file:/tmp/x\"]\nafter_timeout = \"5m\"\nargs = [")).unwrap();
+    assert_eq!(m.services[0].after, vec!["tailnet", "file:/tmp/x"]);
+    assert_eq!(m.services[0].after_timeout.as_deref(), Some("5m"));
+    let e = Manifest::parse(&CARMQTT.replace("args = [", "after = [\"service:tailscale.x\"]\nargs = [")).unwrap_err();
+    assert!(format!("{e:#}").contains("requires a newer mibpkg"), "{e:#}");
+    assert!(Manifest::parse(&CARMQTT.replace("args = [", "after = [\"tailnet\"]\nafter_timeout = \"5\"\nargs = [")).is_err());
+    assert!(Manifest::parse(&CARMQTT.replace("args = [", "after_timeout = \"5m\"\nargs = [")).is_err(), "timeout without after");
+    assert!(Manifest::parse(CARMQTT).unwrap().services[0].after.is_empty());
+}

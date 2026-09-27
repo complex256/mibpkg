@@ -20,6 +20,11 @@ pub struct BootEntry {
     /// Files that must exist before the service starts (required configs).
     #[serde(default)]
     pub requires: Vec<String>,
+    /// Start conditions (unresolved; see conditions.rs).
+    #[serde(default)]
+    pub after: Vec<String>,
+    #[serde(default)]
+    pub after_timeout_secs: Option<u64>,
 }
 
 impl BootEntry {
@@ -41,6 +46,9 @@ pub fn entries(m: &Manifest) -> Vec<BootEntry> {
             phase: s.phase.clone(),
             restart: s.restart,
             requires: requires.clone(),
+            after: s.after.clone(),
+            // Manifest::parse already validated the timeout.
+            after_timeout_secs: s.after_timeout.as_deref().map(|t| crate::conditions::parse_timeout(t).expect("validated")),
         })
         .collect()
 }

@@ -77,6 +77,12 @@ pub struct ServiceEntry {
     pub phase: String,
     #[serde(default)]
     pub restart: Restart,
+    /// Start conditions (all must hold). See conditions.rs.
+    #[serde(default)]
+    pub after: Vec<String>,
+    /// Start anyway after waiting this long ("30s", "5m", "2h"); omitted = wait forever.
+    #[serde(default)]
+    pub after_timeout: Option<String>,
 }
 
 fn default_phase() -> String {
@@ -143,6 +149,15 @@ impl Manifest {
             }
             if !KNOWN_PHASES.contains(&s.phase.as_str()) {
                 bail!("service {} uses boot phase {:?}, which requires a newer mibpkg", s.name, s.phase);
+            }
+            for a in &s.after {
+                crate::conditions::validate(a).with_context(|| format!("service {}", s.name))?;
+            }
+            if let Some(t) = &s.after_timeout {
+                if s.after.is_empty() {
+                    bail!("service {}: after_timeout needs an `after` list", s.name);
+                }
+                crate::conditions::parse_timeout(t).with_context(|| format!("service {}", s.name))?;
             }
             let rel = s
                 .exec
