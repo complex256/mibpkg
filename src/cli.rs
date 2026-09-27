@@ -228,7 +228,7 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
 fn record_result(ctx: &Ctx, key: &str, text: &str) -> Result<()> {
     let _rw = ctx.mounts.rw("/mnt/app")?;
     let mut st = State::load(&ctx.layout)?;
-    st.results.insert(key.to_string(), format!("{text} ({})", utc_stamp(now_secs())));
+    st.results.insert(key.to_string(), format!("{text}{}", result_stamp(now_secs())));
     st.save(&ctx.layout)
 }
 
@@ -306,6 +306,17 @@ fn host_index(args: &[String]) -> Result<i32> {
     write_index(dir, &idx)?;
     println!("{} packages in {}", idx.packages.len(), dir.join("index.json").display());
     Ok(0)
+}
+
+/// " (YYYY-MM-DD HH:MM UTC)" for a result line, or "" while the unit clock is still unset
+/// at boot (it starts at 1970 until time sync).
+pub fn result_stamp(secs: u64) -> String {
+    const Y2020: u64 = 1_577_836_800;
+    if secs < Y2020 {
+        String::new()
+    } else {
+        format!(" ({})", utc_stamp(secs))
+    }
 }
 
 /// "YYYY-MM-DD HH:MM UTC" without a date crate (the unit has no `date` either).

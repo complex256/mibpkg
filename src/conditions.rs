@@ -7,6 +7,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Condition {
@@ -171,32 +172,67 @@ pub trait SystemView {
 /// Not on the unit's PATH.
 pub const NETSTAT: &str = "/mnt/app/armle/usr/bin/netstat";
 
-#[derive(Default)]
-pub struct RealView;
+/// Reads the unit through `ifconfig` and `netstat`, each call bounded by `timeout` so a hung
+/// command can never freeze the supervisor loop.
+pub struct RealView {
+    pub netstat: PathBuf,
+    pub ifconfig: PathBuf,
+    pub timeout: Duration,
+}
+
+impl Default for RealView {
+    fn default() -> Self {
+        RealView { netstat: PathBuf::from(NETSTAT), ifconfig: PathBuf::from("ifconfig"), timeout: Duration::from_secs(3) }
+    }
+}
+
+/// Run `cmd arg` with a deadline: (exited successfully, stdout).
+fn run_limited(cmd: &Path, arg: &str, timeout: Duration) -> Result<(bool, String), String> {
+    let name = cmd.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let mut child = Command::new(cmd)
+        .arg(arg)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("{name}: {e}"))?;
+    // Read on a thread so a full pipe can't stall the child while we wait on it.
+    let mut out = child.stdout.take().unwrap();
+    let reader = std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = std::io::Read::read_to_string(&mut out, &mut s);
+        s
+    });
+    let end = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(st)) => return Ok((st.success(), reader.join().unwrap_or_default())),
+            Ok(None) if Instant::now() < end => std::thread::sleep(Duration::from_millis(20)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("{name}: timed out after {}", fmt_secs(timeout.as_secs().max(1))));
+            }
+            Err(e) => return Err(format!("{name}: {e}")),
+        }
+    }
+}
 
 impl SystemView for RealView {
     fn file_exists(&self, p: &Path) -> bool {
         p.exists()
     }
     fn iface_up(&self, name: &str) -> Result<bool, String> {
-        let out = Command::new("ifconfig")
-            .arg(name)
-            .stderr(Stdio::null())
-            .output()
-            .map_err(|e| format!("ifconfig: {e}"))?;
+        let (ok, out) = run_limited(&self.ifconfig, name, self.timeout)?;
         // A missing interface makes ifconfig exit non-zero: that is "not up", not an error.
-        Ok(out.status.success() && parse_ifconfig_up(&String::from_utf8_lossy(&out.stdout)))
+        Ok(ok && parse_ifconfig_up(&out))
     }
     fn routes(&self) -> Result<Vec<RouteEntry>, String> {
-        let out = Command::new(NETSTAT)
-            .arg("-rn")
-            .stderr(Stdio::null())
-            .output()
-            .map_err(|e| format!("netstat: {e}"))?;
-        if !out.status.success() {
-            return Err(format!("netstat exited with {}", out.status));
+        let (ok, out) = run_limited(&self.netstat, "-rn", self.timeout)?;
+        if !ok {
+            return Err("netstat exited with an error".into());
         }
-        Ok(parse_netstat_rn(&String::from_utf8_lossy(&out.stdout)))
+        Ok(parse_netstat_rn(&out))
     }
 }
 

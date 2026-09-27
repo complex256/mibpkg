@@ -53,11 +53,13 @@ pub struct Ctx<'a> {
     pub sys: &'a dyn Sys,
     pub mounts: Mounts<'a>,
     pub unit: UnitInfo,
+    /// Step-by-step progress of an action; GEM's Console shows stdout live.
+    pub progress: Box<dyn Fn(&str) + 'a>,
 }
 
 impl<'a> Ctx<'a> {
     pub fn new(layout: Layout, sys: &'a dyn Sys) -> Ctx<'a> {
         let unit = detect(&layout);
-        Ctx { layout, sys, mounts: Mounts::new(sys), unit }
+        Ctx { layout, sys, mounts: Mounts::new(sys), unit, progress: Box::new(|m: &str| println!("{m}")) }
     }
 }

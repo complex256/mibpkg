@@ -179,3 +179,21 @@ fn previous_is_only_kept_when_its_dir_exists() {
     install::install(&ctx, &[f.sd()], &c, "demo").unwrap();
     assert!(State::load(&f.layout).unwrap().packages["demo"].previous.is_none());
 }
+
+#[test]
+fn install_reports_progress_steps() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let mut ctx = Ctx::new(f.layout.clone(), &sys);
+    let seen = Rc::new(RefCell::new(Vec::<String>::new()));
+    let s2 = seen.clone();
+    ctx.progress = Box::new(move |m: &str| s2.borrow_mut().push(m.to_string()));
+    let c = setup(&f, &["1.0.0"], "");
+    install::install(&ctx, &[f.sd()], &c, "demo").unwrap();
+    let got = seen.borrow().join(" | ");
+    for step in ["checking demo 1.0.0", "unpacking", "switching demo to 1.0.0", "starting services"] {
+        assert!(got.contains(step), "missing {step:?} in {got}");
+    }
+}

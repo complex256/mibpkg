@@ -144,6 +144,7 @@ pub fn install(ctx: &Ctx, media: &[PathBuf], coll: &Collection, name: &str) -> R
             Ordering::Greater => {}
         }
     }
+    (ctx.progress)(&format!("checking {name} {}", entry.version));
     let archive = coll.archive_path(&entry);
     let (sha, size) = sha256_file(&archive).with_context(|| format!("reading {}", archive.display()))?;
     if size != entry.size || sha != entry.sha256 {
@@ -176,11 +177,13 @@ pub fn install(ctx: &Ctx, media: &[PathBuf], coll: &Collection, name: &str) -> R
         // rollback moved away from. Re-extract it fresh.
         fs::remove_dir_all(&ver_dir)?;
     }
+    (ctx.progress)("unpacking");
     let staged = (|| -> Result<()> {
         pkg.extract_to(&new_dir)?;
         fs::rename(&new_dir, &ver_dir)?;
         config::import(layout, media, &pkg.manifest)?;
         if let Some(s) = &pkg.manifest.scripts.post_install {
+            (ctx.progress)("running post_install");
             ctx.sys
                 .run_script(&ver_dir.join(s), &[], &script_env(layout, name, &ver_dir, &entry.version), SCRIPT_TIMEOUT)
                 .context("post_install script failed")?;
@@ -193,6 +196,7 @@ pub fn install(ctx: &Ctx, media: &[PathBuf], coll: &Collection, name: &str) -> R
         return Err(e);
     }
 
+    (ctx.progress)(&format!("switching {name} to {}", entry.version));
     atomic_write(&pkg_dir.join("current"), entry.version.as_bytes())?; // commit point
     bootd::write_for_package(layout, name, &bootd::entries(&pkg.manifest))?;
     let old_version = previous.as_ref().map(|p| p.version.clone());
@@ -237,6 +241,7 @@ pub fn install(ctx: &Ctx, media: &[PathBuf], coll: &Collection, name: &str) -> R
             missing.join(", ")
         ));
     }
+    (ctx.progress)("starting services");
     control::request_reload(layout)?;
     Ok(msg)
 }
@@ -290,6 +295,7 @@ pub fn remove(ctx: &Ctx, name: &str, purge: bool) -> Result<String> {
                 .context("pre_remove script failed; package left installed")?;
         }
     }
+    (ctx.progress)(&format!("stopping {name} and removing its files"));
     bootd::remove_for_package(layout, name)?;
     control::request_reload(layout)?;
     match fs::remove_dir_all(layout.pkg_dir(name)) {
@@ -318,6 +324,7 @@ pub fn rollback(ctx: &Ctx, name: &str) -> Result<String> {
             .with_context(|| format!("{name} {prev} is no longer on the unit"))?,
     )?;
     let _rw = ctx.mounts.rw("/mnt/app")?;
+    (ctx.progress)(&format!("switching {name} back to {prev}"));
     atomic_write(&layout.pkg_dir(name).join("current"), prev.as_bytes())?;
     bootd::write_for_package(layout, name, &bootd::entries(&m))?;
     if name == SELF {

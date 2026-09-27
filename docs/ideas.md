@@ -122,9 +122,9 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
 - [later] Live values on GEM screens: GEM caches .esd files while open (verified 2026-09-26), so status
   rows are snapshots until GEM is re-entered. Stock screens use `keyValue ... poll N` rows that read
   live values (persistence/sys) — research whether a row can poll a file or value mibpkg writes.
-- [v1.1] "last result" timestamps show 1970 because the unit clock is unset at boot — omit the stamp
+- [done 2026-09-26] "last result" timestamps show 1970 because the unit clock is unset at boot — omit the stamp
   when the clock is obviously unset (< 2020).
-- [v1.1] Print progress lines during install/update (GEM Console shows stdout live, verified).
+- [done 2026-09-26] Print progress lines during install/update (GEM Console shows stdout live, verified).
 
 ## Migration of existing projects
 - [v1] Migrate carmqtt only (the only project with a single developer) and remove its startup.sh line
@@ -145,7 +145,7 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
 - Only the newest version offered even if incompatible; df parse failure skips the space check silently.
 
 ## Start-conditions review minors (deferred, 2026-09-26)
-- netstat/ifconfig calls have no time limit; a hang would freeze the supervisor loop (measure in Task 6).
+- [done 2026-09-26] netstat/ifconfig calls limited to 3 s each (hung call -> "timed out", service keeps waiting).
 - A long wait spawns netstat every second forever; consider every 5 s after the first minute.
 - `[conditions]` edits in settings.toml need a supervisor restart (reload doesn't re-read settings).
 - Rolling mibpkg back to 0.1.0 with `[conditions]` in settings.toml breaks settings loading — note in release notes.

@@ -107,3 +107,10 @@ fn big_main_log_is_capped_by_an_action() {
     assert!(fs::metadata(f.layout.run("log")).unwrap().len() < 256 * 1024);
     assert!(f.layout.run("log.1").exists());
 }
+
+#[test]
+fn result_stamp_is_omitted_while_the_clock_is_unset() {
+    use mibpkg::cli::result_stamp;
+    assert_eq!(result_stamp(960), "", "unit clock at boot: 1970");
+    assert_eq!(result_stamp(1_700_000_000), " (2023-11-14 22:13 UTC)");
+}

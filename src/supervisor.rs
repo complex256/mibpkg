@@ -185,7 +185,7 @@ fn pump(mut r: impl Read + Send + 'static, log: Arc<Mutex<CappedLog>>) {
 
 impl<'a> Supervisor<'a> {
     pub fn new(layout: &'a Layout, sys: &'a dyn Sys, timing: Timing) -> Supervisor<'a> {
-        Supervisor { layout, sys, timing, services: BTreeMap::new(), invalid: BTreeMap::new(), view: Box::new(RealView) }
+        Supervisor { layout, sys, timing, services: BTreeMap::new(), invalid: BTreeMap::new(), view: Box::new(RealView::default()) }
     }
 
     /// Replace how start conditions read the system (tests).

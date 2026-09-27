@@ -152,3 +152,33 @@ fn parse_timeout_never_panics_on_odd_input() {
         assert!(parse_timeout(bad).is_err(), "{bad:?}");
     }
 }
+
+#[test]
+fn hung_system_commands_time_out() {
+    use mibpkg::conditions::RealView;
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+    let t = tempfile::tempdir().unwrap();
+    let slow = t.path().join("slow");
+    fs::write(&slow, "#!/bin/sh\nsleep 10\n").unwrap();
+    fs::set_permissions(&slow, fs::Permissions::from_mode(0o755)).unwrap();
+    let v = RealView { netstat: slow.clone(), ifconfig: slow, timeout: Duration::from_millis(300) };
+    let t0 = Instant::now();
+    let e = v.routes().unwrap_err();
+    assert!(e.contains("timed out"), "{e}");
+    assert!(v.iface_up("tun9").unwrap_err().contains("timed out"));
+    assert!(t0.elapsed() < Duration::from_secs(3), "{:?}", t0.elapsed());
+}
+
+#[test]
+fn real_view_reads_command_output() {
+    use mibpkg::conditions::RealView;
+    use std::os::unix::fs::PermissionsExt;
+    let t = tempfile::tempdir().unwrap();
+    let ns = t.path().join("netstat");
+    fs::write(&ns, format!("#!/bin/sh\ncat {}\n", Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/netstat-rn-sample.txt").display())).unwrap();
+    fs::set_permissions(&ns, fs::Permissions::from_mode(0o755)).unwrap();
+    let v = RealView { netstat: ns, ifconfig: "/nonexistent/ifconfig".into(), timeout: std::time::Duration::from_secs(3) };
+    assert!(v.routes().unwrap().iter().any(|r| r.dest == "default"));
+    assert!(v.iface_up("tun9").is_err(), "a missing ifconfig binary is an error, not 'down'");
+}
