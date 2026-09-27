@@ -161,7 +161,13 @@ pub fn install(ctx: &Ctx, media: &[PathBuf], coll: &Collection, name: &str) -> R
             entry.version
         );
     }
+    // `current` already names this version but the state file doesn't: power was lost after
+    // the commit point. Keep the active files and finish the bookkeeping (nothing to extract,
+    // so no space check: the disk is at its fullest exactly now).
+    let repair = current_version(layout, name).as_deref() == Some(entry.version.as_str())
+        && layout.pkg_dir(name).join(&entry.version).join("manifest.toml").is_file();
     match ctx.sys.free_bytes(&layout.p("/mnt/app")) {
+        _ if repair => {}
         Some(free) => {
             let need = pkg.unpacked_size() * 2 + 1024 * 1024;
             if free < need {
@@ -176,10 +182,6 @@ pub fn install(ctx: &Ctx, media: &[PathBuf], coll: &Collection, name: &str) -> R
     let pkg_dir = layout.pkg_dir(name);
     let ver_dir = pkg_dir.join(&entry.version);
     let new_dir = pkg_dir.join(format!("{}.new", entry.version));
-    // `current` already names this version but the state file doesn't: power was lost after
-    // the commit point. Keep the active files and finish the bookkeeping.
-    let repair = current_version(layout, name).as_deref() == Some(entry.version.as_str())
-        && ver_dir.join("manifest.toml").is_file();
     if !repair && ver_dir.exists() {
         // Newer than current, so never the active version: a leftover or the version a
         // rollback moved away from. Re-extract it fresh.

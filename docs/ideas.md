@@ -155,3 +155,15 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
 - A long wait spawns netstat every second forever; consider every 5 s after the first minute.
 - `[conditions]` edits in settings.toml need a supervisor restart (reload doesn't re-read settings).
 - Rolling mibpkg back to 0.1.0 with `[conditions]` in settings.toml breaks settings loading — note in release notes.
+
+## Robustness-pass review minors (deferred, 2026-09-27)
+- Repair uses the card's manifest; if a same-numbered version was rebuilt with other services, boot.d could
+  point at missing files — use the on-disk manifest in repair (or refuse when they differ).
+- Orphans that ignore SIGTERM still overlap after the grace period — add a `kill -9` fallback to Sys.
+- pid reuse after a supervisor crash (no reboot): verify `/proc/<pid>/exefile` is `/tmp/mibpkg.<id>` before
+  terminating a recorded pid.
+- Lock: an empty lock older than a few seconds (mtime) should count as stale, not after a fixed 100 ms.
+- Installed version marked incompatible on the card: the "older than installed" message should mention compatibility.
+- Tiny race: uninstall-self touching `stop` between a new supervisor's pid write and its stale-stop cleanup.
+- RESERVED: `lock` isn't a real collision; add a comment explaining the `<pkg>.<svc>` reasoning.
+- mibpkg self: power loss after state save but before self_update leaves old binaries; Equal branch never retries.

@@ -480,9 +480,9 @@ pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
         }
     }
     atomic_write(&layout.run("pid"), std::process::id().to_string().as_bytes())?;
-    // Stop/self-update requests left before this supervisor existed are stale.
+    // A stop request left before this supervisor existed is stale. A pending self-update
+    // is not: acting on it (re-running launch.sh) is always right and harmless if redundant.
     let _ = fs::remove_file(layout.run("stop"));
-    let _ = fs::remove_file(layout.run("selfupdate"));
     reap_orphans(layout, sys, timing.stop_grace);
     if media::disabled(layout) {
         println!("mibpkg: DISABLE marker on the card; starting nothing");

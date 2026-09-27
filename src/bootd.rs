@@ -72,6 +72,7 @@ pub fn remove_for_package(layout: &Layout, pkg: &str) -> Result<()> {
 /// Write the package's entries, then remove its entries that are no longer listed
 /// (in that order, so a power cut never leaves the package without its boot entries).
 pub fn write_for_package(layout: &Layout, pkg: &str, entries: &[BootEntry]) -> Result<()> {
+    fs::create_dir_all(layout.boot_d())?; // a package without services writes nothing first
     let mut keep = Vec::new();
     for e in entries {
         let name = format!("{}.toml", e.id());

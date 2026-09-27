@@ -259,3 +259,34 @@ fn unknown_free_space_is_reported() {
     install::install(&ctx, &[f.sd()], &c, "demo").unwrap();
     assert!(seen.borrow().iter().any(|m| m.contains("free space unknown")), "{:?}", seen.borrow());
 }
+
+#[test]
+fn a_package_without_services_installs_without_a_boot_d_dir() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let s = f.root().join("src-lib");
+    fs::create_dir_all(s.join("share")).unwrap();
+    fs::write(s.join("manifest.toml"), "[package]\nname = \"lib\"\nversion = \"1.0.0\"\n\n[[file]]\nsrc = \"share/data.txt\"\n").unwrap();
+    fs::write(s.join("share/data.txt"), "x").unwrap();
+    let c = Collection::load(&common::collection(&f.sd(), "complex256", &[s])).unwrap();
+    assert!(!f.layout.boot_d().exists());
+    assert_eq!(install::install(&ctx, &[f.sd()], &c, "lib").unwrap(), "installed lib 1.0.0");
+}
+
+#[test]
+fn repair_is_not_blocked_by_the_free_space_check() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let c1 = setup(&f, &["1.0.0"], "");
+    install::install(&ctx, &[f.sd()], &c1, "demo").unwrap();
+    let c2 = setup(&f, &["1.0.0", "1.1.0"], "");
+    install::install(&ctx, &[f.sd()], &c2, "demo").unwrap();
+    let mut st = State::load(&f.layout).unwrap();
+    st.packages.get_mut("demo").unwrap().version = "1.0.0".into();
+    st.save(&f.layout).unwrap();
+    sys.free.set(Some(10)); // disk nearly full: old and new versions are both still there
+    let msg = install::install(&ctx, &[f.sd()], &c2, "demo").unwrap();
+    assert!(msg.contains("repaired"), "{msg}");
+}

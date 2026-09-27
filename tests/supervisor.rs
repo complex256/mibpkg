@@ -335,3 +335,20 @@ fn a_stale_stop_request_does_not_kill_a_new_supervisor() {
     mibpkg::control::request_stop(&f.layout).unwrap();
     h.join().unwrap();
 }
+
+#[test]
+fn a_pending_self_update_is_acted_on_by_a_newly_started_supervisor() {
+    // The supervisor had died; the user updated mibpkg; ensure_supervisor starts the old
+    // binary, which must still relaunch through launch.sh to pick up the new one.
+    let f = common::fixture();
+    let marker = f.root().join("launched");
+    fs::create_dir_all(f.layout.bin_dir()).unwrap();
+    fs::write(f.layout.bin_dir().join("launch.sh"), format!(": > {}\n", marker.display())).unwrap();
+    fs::write(f.layout.run("selfupdate"), "").unwrap();
+    mibpkg::supervisor::run(&f.layout, &RealSys { mounts: false }, fast()).unwrap();
+    let end = Instant::now() + Duration::from_secs(3);
+    while !marker.exists() && Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(marker.exists(), "launch.sh was not run for the pending self-update");
+}
