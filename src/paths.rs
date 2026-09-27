@@ -17,6 +17,8 @@ pub struct Settings {
     pub gem_parent: String,
     /// Overrides unit detection (e.g. "MHI2Q").
     pub unit: Option<String>,
+    /// Alias overrides for start conditions, e.g. `hmi-ready = "file:/tmp/startupFinishedFlag"`.
+    pub conditions: std::collections::BTreeMap<String, String>,
 }
 
 impl Default for Settings {
@@ -29,6 +31,7 @@ impl Default for Settings {
                 .collect(),
             gem_parent: "Main".into(),
             unit: None,
+            conditions: Default::default(),
         }
     }
 }
@@ -46,6 +49,8 @@ impl Layout {
         if f.exists() {
             let text = std::fs::read_to_string(&f).with_context(|| format!("reading {}", f.display()))?;
             l.settings = toml::from_str(&text).with_context(|| format!("parsing {}", f.display()))?;
+            crate::conditions::validate_overrides(&l.settings)
+                .with_context(|| format!("checking {}", f.display()))?;
         }
         Ok(l)
     }
