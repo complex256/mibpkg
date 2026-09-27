@@ -143,3 +143,9 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
 - reap_orphans doesn't wait before starting new copies; stale /tmp/mibpkg.stop after failed uninstall-self.
 - [done 2026-09-26] Bootstrap registers mibpkg in installed.json.
 - Only the newest version offered even if incompatible; df parse failure skips the space check silently.
+
+## Start-conditions review minors (deferred, 2026-09-26)
+- netstat/ifconfig calls have no time limit; a hang would freeze the supervisor loop (measure in Task 6).
+- A long wait spawns netstat every second forever; consider every 5 s after the first minute.
+- `[conditions]` edits in settings.toml need a supervisor restart (reload doesn't re-read settings).
+- Rolling mibpkg back to 0.1.0 with `[conditions]` in settings.toml breaks settings loading — note in release notes.
