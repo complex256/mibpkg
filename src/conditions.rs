@@ -96,14 +96,22 @@ pub fn validate_overrides(settings: &Settings) -> Result<()> {
 
 /// "30s" / "5m" / "2h" -> seconds, 1 s .. 24 h.
 pub fn parse_timeout(s: &str) -> Result<u64> {
-    let (num, unit) = s.split_at(s.len().saturating_sub(1));
-    let n: u64 = num.parse().with_context(|| format!("timeout {s:?}: expected like 30s, 5m or 2h"))?;
-    let secs = match unit {
-        "s" => n,
-        "m" => n * 60,
-        "h" => n * 3600,
+    let unit = s.chars().last().with_context(|| format!("timeout {s:?}: expected like 30s, 5m or 2h"))?;
+    let num = &s[..s.len() - unit.len_utf8()];
+    if num.is_empty() || !num.bytes().all(|b| b.is_ascii_digit()) {
+        bail!("timeout {s:?}: expected like 30s, 5m or 2h");
+    }
+    let mult: u64 = match unit {
+        's' => 1,
+        'm' => 60,
+        'h' => 3600,
         _ => bail!("timeout {s:?}: unit must be s, m or h"),
     };
+    let secs = num
+        .parse::<u64>()
+        .ok()
+        .and_then(|n| n.checked_mul(mult))
+        .with_context(|| format!("timeout {s:?}: too large"))?;
     if secs == 0 || secs > 24 * 3600 {
         bail!("timeout {s:?}: must be between 1s and 24h");
     }

@@ -261,3 +261,23 @@ fn crash_restart_waits_again_and_waiting_is_not_a_crash() {
     assert_eq!(state(&sup), SvcState::Waiting, "waiting never turns into failed");
     assert_eq!(sup.status().services["demo.demo"].restarts, 0);
 }
+
+#[test]
+fn timeout_then_missing_config_shows_the_error_and_starts_once_config_arrives() {
+    let f = common::fixture();
+    install_pkg(&f, "1.0.0", "sleep 30", "after = [\"file:/nonexistent/flag\"]\nafter_timeout = \"1s\"\n\n[[config]]\npath = \"c.toml\"\nrequired = true\n");
+    let sys = RealSys { mounts: false };
+    let mut sup = Supervisor::new(&f.layout, &sys, fast());
+    sup.reload();
+    assert!(until(&mut sup, |s| state(s) == SvcState::NeedsConfig));
+    let line = mibpkg::status::describe(&sup.status().services["demo.demo"]);
+    assert!(line.contains("missing"), "the missing-config error must stay visible: {line}");
+    fs::create_dir_all(f.layout.config_dir("demo")).unwrap();
+    fs::write(f.layout.config_dir("demo").join("c.toml"), "x").unwrap();
+    let t0 = Instant::now();
+    assert!(until(&mut sup, |s| state(s) == SvcState::Running));
+    assert!(t0.elapsed() < Duration::from_millis(900), "no second full timeout: {:?}", t0.elapsed());
+    let note = sup.status().services["demo.demo"].note.clone().unwrap_or_default();
+    assert!(note.contains("started without"), "note is set once it really starts: {note}");
+    sup.stop_all();
+}

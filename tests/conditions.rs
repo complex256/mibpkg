@@ -145,3 +145,10 @@ fn one_netstat_per_tick_however_many_services() {
     }
     assert_eq!(v.netstat_calls.get(), 1);
 }
+
+#[test]
+fn parse_timeout_never_panics_on_odd_input() {
+    for bad in ["5\u{b5}", "+5m", "5124095576030432h", "\u{b5}", "1\u{1f600}m", " 5m"] {
+        assert!(parse_timeout(bad).is_err(), "{bad:?}");
+    }
+}

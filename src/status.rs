@@ -97,9 +97,11 @@ pub fn describe(s: &SvcStatus) -> String {
     if s.restarts > 0 {
         out.push_str(&format!(" restarts {}", s.restarts));
     }
-    if let Some(n) = &s.note {
+    // The timeout note describes the last start; it means nothing while waiting again.
+    if let Some(n) = s.note.as_ref().filter(|_| s.state != SvcState::Waiting) {
         out.push_str(&format!(" ({n})"));
-    } else if let Some(e) = &s.error {
+    }
+    if let Some(e) = &s.error {
         out.push_str(&format!(" ({e})"));
     }
     out

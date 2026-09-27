@@ -83,3 +83,11 @@ fn describe_renders_each_state() {
     let e = SvcStatus { state: SvcState::NeedsConfig, pid: None, restarts: 0, error: Some("missing /x".into()), ..base };
     assert_eq!(status::describe(&e), "needs-config (missing /x)");
 }
+
+#[test]
+fn describe_shows_note_and_error_and_hides_note_while_waiting() {
+    let base = SvcStatus { state: SvcState::Backoff, pid: None, restarts: 1, last_exit: None, error: Some("spawn failed".into()), waiting_for: vec![], waiting_secs: None, note: Some("started without tailnet after 5m".into()) };
+    assert_eq!(status::describe(&base), "backoff restarts 1 (started without tailnet after 5m) (spawn failed)");
+    let w = SvcStatus { state: SvcState::Waiting, waiting_for: vec!["tailnet".into()], waiting_secs: Some(30), error: None, ..base };
+    assert_eq!(status::describe(&w), "waiting: tailnet (30s) restarts 1");
+}

@@ -129,8 +129,11 @@ struct Service {
     /// When the current wait for start conditions began.
     wait_since: Option<Instant>,
     waiting_for: Vec<String>,
-    /// Timeout note, e.g. "started without tailnet after 5m".
+    /// Timeout note, e.g. "started without tailnet after 5m"; only for a real start.
     note: Option<String>,
+    /// The wait's timeout has fired ("tailnet after 5m"): do not wait again until the next
+    /// real start, even if the start is held up by a missing config.
+    timed_out: Option<String>,
 }
 
 impl Service {
@@ -150,6 +153,7 @@ impl Service {
             wait_since: None,
             waiting_for: Vec::new(),
             note: None,
+            timed_out: None,
         }
     }
 }
@@ -284,13 +288,21 @@ impl<'a> Supervisor<'a> {
         if unmet.is_empty() {
             s.wait_since = None;
             s.waiting_for.clear();
+            s.timed_out = None;
             s.note = None;
             return true;
         }
+        let limit = s.entry.after_timeout_secs;
+        if s.timed_out.is_some() {
+            // Timeout already spent on this wait (the start was held up by something else).
+            s.timed_out = Some(format!("{} after {}", unmet.join(", "), fmt_secs(limit.unwrap_or(0))));
+            s.waiting_for.clear();
+            return true;
+        }
         let since = *s.wait_since.get_or_insert(now);
-        if let Some(limit) = s.entry.after_timeout_secs {
+        if let Some(limit) = limit {
             if now.duration_since(since) >= Duration::from_secs(limit) {
-                s.note = Some(format!("started without {} after {}", unmet.join(", "), fmt_secs(limit)));
+                s.timed_out = Some(format!("{} after {}", unmet.join(", "), fmt_secs(limit)));
                 s.wait_since = None;
                 s.waiting_for.clear();
                 return true;
@@ -298,6 +310,7 @@ impl<'a> Supervisor<'a> {
         }
         s.state = SvcState::Waiting;
         s.waiting_for = unmet;
+        s.note = None;
         false
     }
 
@@ -390,6 +403,9 @@ impl<'a> Supervisor<'a> {
                     pump(er, log);
                 }
                 s.child = Some(child);
+                if let Some(t) = s.timed_out.take() {
+                    s.note = Some(format!("started without {t}"));
+                }
                 s.state = SvcState::Running;
                 s.starts += 1;
                 s.started_at = Some(now);
