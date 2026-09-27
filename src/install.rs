@@ -115,10 +115,11 @@ fn self_update(layout: &Layout, ver_dir: &Path) -> Result<()> {
 pub fn install(ctx: &Ctx, media: &[PathBuf], coll: &Collection, name: &str) -> Result<String> {
     let layout = &ctx.layout;
     let coll_id = coll.id().to_string();
-    let entry = coll.latest(name).with_context(|| format!("{name} is not in collection {coll_id}"))?.clone();
-    if !entry.compat.matches(&ctx.unit) {
-        bail!("{name} {} is not compatible with this unit: {}", entry.version, ctx.unit.describe());
-    }
+    let newest = coll.latest(name).with_context(|| format!("{name} is not in collection {coll_id}"))?;
+    let entry = coll
+        .latest_compatible(name, &ctx.unit)
+        .with_context(|| format!("{name} {} is not compatible with this unit: {}", newest.version, ctx.unit.describe()))?
+        .clone();
     let mut state = State::load(layout)?;
     let previous = state.packages.get(name).cloned();
     if let Some(p) = &previous {
@@ -160,11 +161,14 @@ pub fn install(ctx: &Ctx, media: &[PathBuf], coll: &Collection, name: &str) -> R
             entry.version
         );
     }
-    if let Some(free) = ctx.sys.free_bytes(&layout.p("/mnt/app")) {
-        let need = pkg.unpacked_size() * 2 + 1024 * 1024;
-        if free < need {
-            bail!("not enough space on /mnt/app: {free} bytes free, {need} needed");
+    match ctx.sys.free_bytes(&layout.p("/mnt/app")) {
+        Some(free) => {
+            let need = pkg.unpacked_size() * 2 + 1024 * 1024;
+            if free < need {
+                bail!("not enough space on /mnt/app: {free} bytes free, {need} needed");
+            }
         }
+        None => (ctx.progress)("free space unknown (could not read df); continuing"),
     }
 
     let _rw = ctx.mounts.rw("/mnt/app")?;
@@ -172,13 +176,20 @@ pub fn install(ctx: &Ctx, media: &[PathBuf], coll: &Collection, name: &str) -> R
     let pkg_dir = layout.pkg_dir(name);
     let ver_dir = pkg_dir.join(&entry.version);
     let new_dir = pkg_dir.join(format!("{}.new", entry.version));
-    if ver_dir.exists() {
+    // `current` already names this version but the state file doesn't: power was lost after
+    // the commit point. Keep the active files and finish the bookkeeping.
+    let repair = current_version(layout, name).as_deref() == Some(entry.version.as_str())
+        && ver_dir.join("manifest.toml").is_file();
+    if !repair && ver_dir.exists() {
         // Newer than current, so never the active version: a leftover or the version a
         // rollback moved away from. Re-extract it fresh.
         fs::remove_dir_all(&ver_dir)?;
     }
-    (ctx.progress)("unpacking");
-    let staged = (|| -> Result<()> {
+    let staged = if repair {
+        Ok(())
+    } else {
+        (ctx.progress)("unpacking");
+        (|| -> Result<()> {
         pkg.extract_to(&new_dir)?;
         fs::rename(&new_dir, &ver_dir)?;
         config::import(layout, media, &pkg.manifest)?;
@@ -189,7 +200,8 @@ pub fn install(ctx: &Ctx, media: &[PathBuf], coll: &Collection, name: &str) -> R
                 .context("post_install script failed")?;
         }
         Ok(())
-    })();
+        })()
+    };
     if let Err(e) = staged {
         let _ = fs::remove_dir_all(&new_dir);
         let _ = fs::remove_dir_all(&ver_dir);
@@ -218,6 +230,7 @@ pub fn install(ctx: &Ctx, media: &[PathBuf], coll: &Collection, name: &str) -> R
     state.save(layout)?;
 
     let mut msg = match &old_version {
+        _ if repair => format!("repaired {name} {} (an earlier install was interrupted)", entry.version),
         Some(v) => format!("updated {name} {v} -> {}", entry.version),
         None => format!("installed {name} {}", entry.version),
     };
@@ -247,11 +260,11 @@ pub fn install(ctx: &Ctx, media: &[PathBuf], coll: &Collection, name: &str) -> R
 }
 
 /// (name, newer version) for installed packages whose collection offers something newer.
-pub fn updates_available(state: &State, colls: &[Collection]) -> Vec<(String, String)> {
+pub fn updates_available(state: &State, colls: &[Collection], unit: &crate::unit::UnitInfo) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for (name, inst) in &state.packages {
         if let Some(c) = colls.iter().find(|c| c.id() == inst.collection) {
-            if let Some(e) = c.latest(name) {
+            if let Some(e) = c.latest_compatible(name, unit) {
                 if cmp_versions(&e.version, &inst.version) == Ordering::Greater {
                     out.push((name.clone(), e.version.clone()));
                 }
@@ -263,7 +276,7 @@ pub fn updates_available(state: &State, colls: &[Collection]) -> Vec<(String, St
 
 pub fn update_all(ctx: &Ctx, media: &[PathBuf], colls: &[Collection]) -> Result<Vec<String>> {
     let state = State::load(&ctx.layout)?;
-    let todo = updates_available(&state, colls);
+    let todo = updates_available(&state, colls, &ctx.unit);
     if todo.is_empty() {
         return Ok(vec!["everything is up to date".into()]);
     }
@@ -288,6 +301,7 @@ pub fn remove(ctx: &Ctx, name: &str, purge: bool) -> Result<String> {
         bail!("{name} is not installed");
     }
     let _rw = ctx.mounts.rw("/mnt/app")?;
+    cleanup_stale(layout)?;
     if let (Ok(m), Some(dir)) = (current_manifest(layout, name), current_dir(layout, name)) {
         if let Some(s) = &m.scripts.pre_remove {
             ctx.sys
@@ -324,6 +338,7 @@ pub fn rollback(ctx: &Ctx, name: &str) -> Result<String> {
             .with_context(|| format!("{name} {prev} is no longer on the unit"))?,
     )?;
     let _rw = ctx.mounts.rw("/mnt/app")?;
+    cleanup_stale(layout)?;
     (ctx.progress)(&format!("switching {name} back to {prev}"));
     atomic_write(&layout.pkg_dir(name).join("current"), prev.as_bytes())?;
     bootd::write_for_package(layout, name, &bootd::entries(&m))?;

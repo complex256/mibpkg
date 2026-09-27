@@ -22,7 +22,12 @@ fn render_matches_stock_esd_shape() {
         gem::render(&s, "/mnt/app/root/mibpkg/gem"),
         "screen mibpkg Main\n\nkeyValue\n\tvalue String sys 0x00000000 0\n\t\tlabel \"hello 'world' ?\"\n\t\tpoll 0\n\nscript\n\tvalue sys 1 0x100 \"/mnt/app/root/mibpkg/gem/rescan.sh\"\n\tlabel \"Rescan SD card\"\n"
     );
-    assert_eq!(gem::script_name(&["install".into(), "car-mqtt".into(), "c".into()]), "install-car-mqtt-c.sh");
+    assert_eq!(gem::script_name(&["install".into(), "car-mqtt".into(), "c".into()]), "install.car-mqtt.c.sh");
+    assert_ne!(
+        gem::script_name(&["install".into(), "a-b".into(), "c".into()]),
+        gem::script_name(&["install".into(), "a".into(), "b-c".into()]),
+        "package a-b from c and a from b-c must not share a script"
+    );
     assert_eq!(gem::screen_name("car-mqtt"), "mibpkg_car_mqtt");
     assert!(gem::script_body(&["rescan".into()]).contains("gem.sh rescan"));
 }
@@ -89,7 +94,7 @@ fn regenerate_writes_esd_and_scripts_and_cleans_old() {
     assert!(eng.join("mibpkg_alpha.esd").is_file());
     assert!(!eng.join("mibpkg_old.esd").exists());
     assert_eq!(fs::read_to_string(eng.join("Audio_prod.esd")).unwrap(), "stock");
-    let script = f.layout.gem_dir().join("install-alpha-complex256.sh");
+    let script = f.layout.gem_dir().join("install.alpha.complex256.sh");
     assert!(fs::read_to_string(&script).unwrap().contains("gem.sh install alpha complex256"));
     assert_eq!(*sys.calls.borrow(), vec!["rw /mnt/app", "ro /mnt/app"]);
     gem::remove_screens(&f.layout).unwrap();
@@ -123,4 +128,20 @@ fn package_screen_shows_waiting() {
     let m = Model { layout: &f.layout, unit: &ctx.unit, state: &state, status: Some(&st), scan: &scan, disabled: false, supervisor_running: true };
     let screen = gem::screens(&m).into_iter().find(|s| s.name == "mibpkg_demo").unwrap();
     assert!(labels(&screen).iter().any(|l| l == "demo.demo: waiting: tailnet (45s)"), "{:?}", labels(&screen));
+}
+
+#[test]
+fn install_button_offers_the_newest_compatible_version() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let old = common::pkg_src(f.root(), "demo", "0.1.0", "sleep 30", "");
+    let new = common::pkg_src(f.root(), "demo", "0.2.0", "sleep 30", "[compat]\nunits = [\"MHI2\"]\n");
+    common::collection(&f.sd(), "complex256", &[old, new]);
+    let scan = media::scan(&f.layout);
+    let state = State::load(&f.layout).unwrap();
+    let m = Model { layout: &f.layout, unit: &ctx.unit, state: &state, status: None, scan: &scan, disabled: false, supervisor_running: false };
+    let screen = gem::screens(&m).into_iter().find(|s| s.name == "mibpkg_demo").unwrap();
+    let l = labels(&screen);
+    assert!(l.iter().any(|x| x == "[Install 0.1.0 from complex256]"), "{l:?}");
 }

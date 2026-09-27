@@ -70,3 +70,19 @@ fn process_alive_and_terminate() {
     assert!(!sys.process_alive(child.id()));
     assert!(sys.free_bytes(std::path::Path::new("/")).unwrap_or(1) > 0);
 }
+
+#[test]
+fn lock_file_without_its_pid_yet_is_busy_not_stale() {
+    let f = common::fixture();
+    let sys = RealSys { mounts: false };
+    let p = f.layout.run("lock");
+    fs::write(&p, "").unwrap(); // another process has created the lock but not written its pid
+    let p2 = p.clone();
+    let w = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(30));
+        fs::write(&p2, std::process::id().to_string()).unwrap();
+    });
+    let e = Lock::acquire(&f.layout, &sys).unwrap_err();
+    assert!(format!("{e}").starts_with("busy"), "{e}");
+    w.join().unwrap();
+}

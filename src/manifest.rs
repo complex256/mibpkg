@@ -7,6 +7,9 @@ use std::path::{Component, Path, PathBuf};
 /// Boot phases this mibpkg implements. Anything else "requires a newer mibpkg".
 pub const KNOWN_PHASES: &[&str] = &["default"];
 
+/// Package names that would collide with mibpkg's own /tmp/mibpkg.<name>* files.
+pub const RESERVED: &[&str] = &["restart", "reload", "stop", "selfupdate", "pid", "lock", "status", "log"];
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
@@ -127,6 +130,9 @@ impl Manifest {
         }
         if !valid_name(&self.package.name) {
             bail!("package name {:?} must be 1-40 of [a-z0-9-]", self.package.name);
+        }
+        if RESERVED.contains(&self.package.name.as_str()) {
+            bail!("package name {:?} is reserved (mibpkg uses it for its own /tmp files)", self.package.name);
         }
         self.version()?;
         for f in &self.files {

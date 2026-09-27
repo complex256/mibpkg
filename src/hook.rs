@@ -4,6 +4,7 @@ use crate::backups::backup_once;
 use crate::ctx::Ctx;
 use anyhow::{bail, Context, Result};
 use std::fs;
+use std::io::Write;
 
 pub const MARKER: &str = "/mnt/app/root/mibpkg/bin/launch.sh";
 pub const HOOK: [&str; 2] = [
@@ -74,7 +75,12 @@ where
     backup_once(&ctx.layout, STARTUP_UNIT)?;
     let staged = path.with_file_name("startup.sh.mibpkg-new");
     fs::copy(&path, &staged).context("staging startup.sh")?; // carries the mode
-    fs::write(&staged, &new).context("writing staged startup.sh")?;
+    {
+        // Flush before the rename: this is the one file that can stop the unit booting.
+        let mut f = fs::OpenOptions::new().write(true).truncate(true).open(&staged).context("writing staged startup.sh")?;
+        f.write_all(new.as_bytes()).context("writing staged startup.sh")?;
+        crate::fsutil::sync_result(f.sync_all()).context("syncing staged startup.sh")?;
+    }
     if !ctx.sys.shell_syntax_ok(&staged) {
         let _ = fs::remove_file(&staged);
         bail!("the edited startup.sh failed `ksh -n`; startup.sh left untouched");

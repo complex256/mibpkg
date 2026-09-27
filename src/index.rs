@@ -78,6 +78,15 @@ impl Collection {
         self.dir.join(&e.file)
     }
 
+    /// Newest version of `name` that runs on this unit.
+    pub fn latest_compatible(&self, name: &str, unit: &crate::unit::UnitInfo) -> Option<&IndexEntry> {
+        self.index
+            .packages
+            .iter()
+            .filter(|e| e.name == name && e.compat.matches(unit))
+            .max_by(|a, b| cmp_versions(&a.version, &b.version))
+    }
+
     /// Newest version of `name` in this collection.
     pub fn latest(&self, name: &str) -> Option<&IndexEntry> {
         self.index

@@ -208,6 +208,7 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
         }
         "rescan" => {
             let _rw = ctx.mounts.rw("/mnt/app")?;
+            install::cleanup_stale(&ctx.layout)?;
             let mut msgs = Vec::new();
             for name in state.packages.keys() {
                 if let Ok(m) = install::current_manifest(&ctx.layout, name) {

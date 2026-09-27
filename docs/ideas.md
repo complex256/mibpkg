@@ -144,13 +144,11 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
 - [later] Scrub history for excluded names; licensing; contribution/signing model for third-party authors.
 
 ## Review minors (deferred from the v1 final review, 2026-09-26)
-- startup.sh staged file not fsynced before rename; lock create/pid-write race; boot.d remove-before-write.
-- Power loss between `current` flip and state save -> next Update deletes the active dir.
-- cleanup_stale only on verified installs. [done 2026-09-26: /tmp cleanup on removal; /tmp/mibpkg.log capped]
-- Package named "restart" collides with restart request files; GEM script names can collide across dashes.
-- reap_orphans doesn't wait before starting new copies; stale /tmp/mibpkg.stop after failed uninstall-self.
-- [done 2026-09-26] Bootstrap registers mibpkg in installed.json.
-- Only the newest version offered even if incompatible; df parse failure skips the space check silently.
+- [done 2026-09-27, robustness pass] all v1 review minors: fsync staged startup.sh; boot.d write-then-prune;
+  repair after a power loss between `current` flip and state save; stale `.new` cleanup on every action;
+  lock pid-write race; orphans waited for before new copies; stale stop/selfupdate requests ignored;
+  reserved package names; collision-free GEM script names; newest *compatible* version offered;
+  unknown free space reported. (Earlier: /tmp cleanup on removal, capped mibpkg.log, bootstrap registers mibpkg.)
 
 ## Start-conditions review minors (deferred, 2026-09-26)
 - [done 2026-09-26] netstat/ifconfig calls limited to 3 s each (hung call -> "timed out", service keeps waiting).

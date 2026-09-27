@@ -98,3 +98,11 @@ fn after_and_timeout_validation() {
     assert!(Manifest::parse(&CARMQTT.replace("args = [", "after_timeout = \"5m\"\nargs = [")).is_err(), "timeout without after");
     assert!(Manifest::parse(CARMQTT).unwrap().services[0].after.is_empty());
 }
+
+#[test]
+fn reserved_package_names_are_refused() {
+    for n in ["restart", "reload", "stop", "selfupdate", "pid", "lock", "status", "log"] {
+        let e = Manifest::parse(&CARMQTT.replace("name = \"carmqtt\"\nversion", &format!("name = \"{n}\"\nversion"))).unwrap_err();
+        assert!(format!("{e:#}").contains("reserved"), "{n}: {e:#}");
+    }
+}

@@ -38,7 +38,7 @@ fn update_keeps_one_previous_and_rollback_switches_back() {
     let c1 = setup(&f, &["1.0.0"], "");
     install::install(&ctx, &[f.sd()], &c1, "demo").unwrap();
     let c2 = setup(&f, &["1.0.0", "1.1.0", "1.2.0"], "");
-    assert_eq!(install::updates_available(&State::load(&f.layout).unwrap(), &[c2.clone()]), vec![("demo".to_string(), "1.2.0".to_string())]);
+    assert_eq!(install::updates_available(&State::load(&f.layout).unwrap(), &[c2.clone()], &ctx.unit), vec![("demo".to_string(), "1.2.0".to_string())]);
     assert_eq!(install::install(&ctx, &[f.sd()], &c2, "demo").unwrap(), "updated demo 1.0.0 -> 1.2.0");
     let st = State::load(&f.layout).unwrap();
     assert_eq!(st.packages["demo"].previous.as_deref(), Some("1.0.0"));
@@ -196,4 +196,66 @@ fn install_reports_progress_steps() {
     for step in ["checking demo 1.0.0", "unpacking", "switching demo to 1.0.0", "starting services"] {
         assert!(got.contains(step), "missing {step:?} in {got}");
     }
+}
+
+#[test]
+fn power_loss_after_current_flip_is_repaired_not_deleted() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let c1 = setup(&f, &["1.0.0"], "");
+    install::install(&ctx, &[f.sd()], &c1, "demo").unwrap();
+    let c2 = setup(&f, &["1.0.0", "1.1.0"], "");
+    install::install(&ctx, &[f.sd()], &c2, "demo").unwrap();
+    // Power lost after `current` flipped to 1.1.0 but before the state file was saved.
+    let mut st = State::load(&f.layout).unwrap();
+    let e = st.packages.get_mut("demo").unwrap();
+    e.version = "1.0.0".into();
+    e.previous = None;
+    st.save(&f.layout).unwrap();
+    let msg = install::install(&ctx, &[f.sd()], &c2, "demo").unwrap();
+    assert!(msg.contains("repaired"), "{msg}");
+    assert!(f.layout.pkg_dir("demo").join("1.1.0/bin/demo").is_file(), "the active version must survive");
+    assert_eq!(install::current_version(&f.layout, "demo").as_deref(), Some("1.1.0"));
+    assert_eq!(State::load(&f.layout).unwrap().packages["demo"].version, "1.1.0");
+}
+
+#[test]
+fn every_action_cleans_interrupted_installs() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let c = setup(&f, &["1.0.0"], "");
+    install::install(&ctx, &[f.sd()], &c, "demo").unwrap();
+    let stale = f.layout.pkg_dir("other").join("2.0.0.new");
+    fs::create_dir_all(&stale).unwrap();
+    install::remove(&ctx, "demo", false).unwrap();
+    assert!(!stale.exists());
+}
+
+#[test]
+fn newest_compatible_version_is_chosen() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let old = common::pkg_src(f.root(), "demo", "1.0.0", "sleep 30", "");
+    let new = common::pkg_src(f.root(), "demo", "2.0.0", "sleep 30", "[compat]\nunits = [\"MHI2\"]\n");
+    let c = Collection::load(&common::collection(&f.sd(), "complex256", &[old, new])).unwrap();
+    assert_eq!(install::install(&ctx, &[f.sd()], &c, "demo").unwrap(), "installed demo 1.0.0");
+    assert!(install::updates_available(&State::load(&f.layout).unwrap(), &[c.clone()], &ctx.unit).is_empty(), "2.0.0 is not for this unit");
+}
+
+#[test]
+fn unknown_free_space_is_reported() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let f = common::fixture();
+    let sys = RecordingSys::default(); // free: None = df unreadable
+    let mut ctx = Ctx::new(f.layout.clone(), &sys);
+    let seen = Rc::new(RefCell::new(Vec::<String>::new()));
+    let s2 = seen.clone();
+    ctx.progress = Box::new(move |m: &str| s2.borrow_mut().push(m.to_string()));
+    let c = setup(&f, &["1.0.0"], "");
+    install::install(&ctx, &[f.sd()], &c, "demo").unwrap();
+    assert!(seen.borrow().iter().any(|m| m.contains("free space unknown")), "{:?}", seen.borrow());
 }

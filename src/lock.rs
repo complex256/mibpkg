@@ -21,7 +21,13 @@ impl Lock {
                     return Ok(Lock { path });
                 }
                 Err(e) if e.kind() == ErrorKind::AlreadyExists => {
-                    let holder = fs::read_to_string(&path).ok().and_then(|s| s.trim().parse::<u32>().ok());
+                    let read = || fs::read_to_string(&path).ok().and_then(|s| s.trim().parse::<u32>().ok());
+                    let mut holder = read();
+                    if holder.is_none() && path.exists() {
+                        // Created but its pid not written yet: give the holder a moment.
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        holder = read();
+                    }
                     match holder {
                         Some(pid) if sys.process_alive(pid) => {
                             bail!("busy: another mibpkg action is running (pid {pid})")

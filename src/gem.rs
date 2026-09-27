@@ -42,8 +42,9 @@ pub fn screen_name(pkg: &str) -> String {
     format!("mibpkg_{}", pkg.replace('-', "_"))
 }
 
+/// "." cannot appear in package or collection names, so it can't make two actions collide.
 pub fn script_name(action: &[String]) -> String {
-    format!("{}.sh", action.join("-"))
+    format!("{}.sh", action.join("."))
 }
 
 pub fn script_body(action: &[String]) -> String {
@@ -87,7 +88,7 @@ fn button(label: impl Into<String>, action: &[&str]) -> Item {
 pub fn screens(m: &Model) -> Vec<Screen> {
     let colls: Vec<&Collection> = m.scan.iter().filter_map(|(_, c)| c.as_ref().ok()).collect();
     let owned: Vec<Collection> = colls.iter().map(|c| (*c).clone()).collect();
-    let updates = updates_available(m.state, &owned);
+    let updates = updates_available(m.state, &owned, m.unit);
 
     let mut main = vec![
         text(format!("mibpkg {} - unit {}", env!("CARGO_PKG_VERSION"), m.unit.describe())),
@@ -151,15 +152,19 @@ pub fn screens(m: &Model) -> Vec<Screen> {
         }
         match inst {
             None => {
-                for (c, e) in &avail {
-                    if e.compat.matches(m.unit) {
+                for (c, _) in &avail {
+                    if let Some(e) = c.latest_compatible(&name, m.unit) {
                         items.push(button(format!("Install {} from {}", e.version, c.id()), &["install", name.as_str(), c.id()]));
                     }
                 }
             }
             Some(i) => {
-                if let Some((c, e)) = avail.iter().find(|(c, _)| c.id() == i.collection) {
-                    if cmp_versions(&e.version, &i.version) == Ordering::Greater && e.compat.matches(m.unit) {
+                if let Some((c, e)) = avail
+                    .iter()
+                    .find(|(c, _)| c.id() == i.collection)
+                    .and_then(|(c, _)| c.latest_compatible(&name, m.unit).map(|e| (c, e)))
+                {
+                    if cmp_versions(&e.version, &i.version) == Ordering::Greater {
                         items.push(button(format!("Update to {}", e.version), &["install", name.as_str(), c.id()]));
                     }
                 }

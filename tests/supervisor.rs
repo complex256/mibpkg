@@ -281,3 +281,57 @@ fn timeout_then_missing_config_shows_the_error_and_starts_once_config_arrives() 
     assert!(note.contains("started without"), "note is set once it really starts: {note}");
     sup.stop_all();
 }
+
+fn wait_for_pid(f: &common::Fixture, not: Option<u32>) -> Option<u32> {
+    let end = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < end {
+        if let Some(p) = mibpkg::status::read(&f.layout).and_then(|s| s.services.get("demo.demo").and_then(|x| x.pid)) {
+            if Some(p) != not {
+                return Some(p);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    None
+}
+
+#[test]
+fn orphans_are_gone_before_new_copies_start() {
+    let f = common::fixture();
+    install_pkg(&f, "1.0.0", "sleep 30", "");
+    // An orphan from a supervisor that died: exits 0.4 s after TERM (like carmqtt sending its LWT).
+    let mut orphan = std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg("trap 'sleep 0.4; exit 0' TERM; while :; do sleep 0.05; done")
+        .spawn()
+        .unwrap();
+    let opid = orphan.id();
+    let reaper = std::thread::spawn(move || orphan.wait());
+    let mut st = mibpkg::status::Status::default();
+    st.services.insert(
+        "demo.demo".into(),
+        mibpkg::status::SvcStatus { state: SvcState::Running, pid: Some(opid), restarts: 0, last_exit: None, error: None, waiting_for: vec![], waiting_secs: None, note: None },
+    );
+    mibpkg::status::write(&f.layout, &st).unwrap();
+    std::thread::sleep(Duration::from_millis(100)); // let the orphan install its trap
+    let layout = f.layout.clone();
+    let h = std::thread::spawn(move || mibpkg::supervisor::run(&layout, &RealSys { mounts: false }, fast()).unwrap());
+    let newpid = wait_for_pid(&f, Some(opid)).expect("new copy started");
+    let sys = RealSys { mounts: false };
+    assert!(!sys.process_alive(opid), "orphan still alive when new copy {newpid} started");
+    mibpkg::control::request_stop(&f.layout).unwrap();
+    h.join().unwrap();
+    reaper.join().unwrap().unwrap();
+}
+
+#[test]
+fn a_stale_stop_request_does_not_kill_a_new_supervisor() {
+    let f = common::fixture();
+    install_pkg(&f, "1.0.0", "sleep 30", "");
+    mibpkg::control::request_stop(&f.layout).unwrap(); // left behind by a failed uninstall-self
+    let layout = f.layout.clone();
+    let h = std::thread::spawn(move || mibpkg::supervisor::run(&layout, &RealSys { mounts: false }, fast()).unwrap());
+    assert!(wait_for_pid(&f, None).is_some(), "supervisor must start its services");
+    mibpkg::control::request_stop(&f.layout).unwrap();
+    h.join().unwrap();
+}

@@ -453,15 +453,22 @@ impl<'a> Supervisor<'a> {
 }
 
 /// Kill service pids recorded by a supervisor that died without stopping them.
-fn reap_orphans(layout: &Layout, sys: &dyn Sys) {
+/// ... and wait (up to `grace`) for them to exit, so a new copy never overlaps the old one.
+fn reap_orphans(layout: &Layout, sys: &dyn Sys, grace: Duration) {
+    let mut pids = Vec::new();
     if let Some(prev) = status::read(layout) {
         for s in prev.services.values() {
             if let Some(pid) = s.pid {
                 if sys.process_alive(pid) {
                     sys.terminate(pid);
+                    pids.push(pid);
                 }
             }
         }
+    }
+    let end = Instant::now() + grace;
+    while pids.iter().any(|p| sys.process_alive(*p)) && Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 
@@ -473,7 +480,10 @@ pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
         }
     }
     atomic_write(&layout.run("pid"), std::process::id().to_string().as_bytes())?;
-    reap_orphans(layout, sys);
+    // Stop/self-update requests left before this supervisor existed are stale.
+    let _ = fs::remove_file(layout.run("stop"));
+    let _ = fs::remove_file(layout.run("selfupdate"));
+    reap_orphans(layout, sys, timing.stop_grace);
     if media::disabled(layout) {
         println!("mibpkg: DISABLE marker on the card; starting nothing");
         status::write(layout, &Status { updated: now_secs(), pid: std::process::id(), disabled: true, ..Default::default() })?;

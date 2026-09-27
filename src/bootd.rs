@@ -69,11 +69,23 @@ pub fn remove_for_package(layout: &Layout, pkg: &str) -> Result<()> {
     Ok(())
 }
 
+/// Write the package's entries, then remove its entries that are no longer listed
+/// (in that order, so a power cut never leaves the package without its boot entries).
 pub fn write_for_package(layout: &Layout, pkg: &str, entries: &[BootEntry]) -> Result<()> {
-    remove_for_package(layout, pkg)?;
+    let mut keep = Vec::new();
     for e in entries {
-        let p = layout.boot_d().join(format!("{}.toml", e.id()));
+        let name = format!("{}.toml", e.id());
+        let p = layout.boot_d().join(&name);
         atomic_write(&p, toml::to_string(e)?.as_bytes()).with_context(|| format!("writing {}", p.display()))?;
+        keep.push(name);
+    }
+    let prefix = format!("{pkg}.");
+    for e in fs::read_dir(layout.boot_d())? {
+        let e = e?;
+        let n = e.file_name().to_string_lossy().to_string();
+        if n.starts_with(&prefix) && n.ends_with(".toml") && !keep.contains(&n) {
+            fs::remove_file(e.path())?;
+        }
     }
     Ok(())
 }
