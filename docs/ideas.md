@@ -104,6 +104,14 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
 - [later] Slimmed-down zip: PC/phone web tool where the user ticks packages and downloads a
   smaller SD bundle (user wants this — people may not want everything on the card).
 - [later — v2, first after v1] Online: static index (GitHub Releases / R2) pulled when the car has network.
+  Spike 2026-09-26 (spikes/README.md): pure-Rust TLS does not build for QNX 6.5 arm (ring/aws-lc via
+  cc-rs: unknown arch; rustls-rustcrypto: `libc` crate fails for nto65). Unit ships libcurl 7.56.0 +
+  OpenSSL 1.0.2j (TLS 1.2) — plan: dlopen libcurl.so.2 with a hand-written FFI (probe builds, 235 KB),
+  ship our own CA bundle (unit bundles are old: VeriSign/GeoTrust/Equifax/GlobalSign + VW CAs),
+  and only fetch once the clock is sane (unit boots at 1970; TLS validity needs real time) —
+  a natural `clock-set` start condition. Alternative if TLS proves flaky: plain HTTP from our own
+  host + ed25519-signed index (verification needs no randomness/libc) — pulls signatures forward.
+  [?] VERIFY ON CAR: run spikes/curlspike against github.com and objects.githubusercontent.com.
 - [v1] SHA-256 per package in the index — integrity only (catches corrupt/truncated SD copies), not trust.
 - [later, after first online pass] Signature verification (ed25519/minisign style). DEFERRED 2026-09-26:
   user unsure it's wanted long-term since offline users already vet what they copy. v1 index format

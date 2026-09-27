@@ -1,0 +1,10 @@
+[package]
+name = "curlspike"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
