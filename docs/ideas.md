@@ -134,8 +134,8 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
 ## Review minors (deferred from the v1 final review, 2026-09-26)
 - startup.sh staged file not fsynced before rename; lock create/pid-write race; boot.d remove-before-write.
 - Power loss between `current` flip and state save -> next Update deletes the active dir.
-- cleanup_stale only on verified installs; removed services leave /tmp binary + logs; /tmp/mibpkg.log uncapped.
+- cleanup_stale only on verified installs. [done 2026-09-26: /tmp cleanup on removal; /tmp/mibpkg.log capped]
 - Package named "restart" collides with restart request files; GEM script names can collide across dashes.
 - reap_orphans doesn't wait before starting new copies; stale /tmp/mibpkg.stop after failed uninstall-self.
-- Bootstrap doesn't register mibpkg in installed.json (GEM shows Install for mibpkg).
+- [done 2026-09-26] Bootstrap registers mibpkg in installed.json.
 - Only the newest version offered even if incompatible; df parse failure skips the space check silently.
