@@ -71,3 +71,15 @@ fn background_supervisor_survives_hangup() {
     c.status().unwrap();
     assert_eq!(fs::read_to_string(&out).unwrap_or_default().trim(), "yes", "SIGHUP must be ignored");
 }
+
+#[test]
+fn describe_renders_each_state() {
+    let base = SvcStatus { state: SvcState::Running, pid: Some(7), restarts: 2, last_exit: None, error: None, waiting_for: vec![], waiting_secs: None, note: None };
+    assert_eq!(status::describe(&base), "running pid 7 restarts 2");
+    let w = SvcStatus { state: SvcState::Waiting, pid: None, restarts: 0, waiting_for: vec!["tailnet".into(), "hmi-ready".into()], waiting_secs: Some(130), ..base.clone() };
+    assert_eq!(status::describe(&w), "waiting: tailnet, hmi-ready (2m10s)");
+    let n = SvcStatus { restarts: 0, note: Some("started without tailnet after 5m".into()), ..base.clone() };
+    assert_eq!(status::describe(&n), "running pid 7 (started without tailnet after 5m)");
+    let e = SvcStatus { state: SvcState::NeedsConfig, pid: None, restarts: 0, error: Some("missing /x".into()), ..base };
+    assert_eq!(status::describe(&e), "needs-config (missing /x)");
+}

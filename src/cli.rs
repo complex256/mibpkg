@@ -244,13 +244,7 @@ fn print_status(ctx: &Ctx) {
                 if s.disabled { ", DISABLED" } else { "" }
             );
             for (id, v) in &s.services {
-                println!(
-                    "  {id}: {}{} restarts {}{}",
-                    v.state,
-                    v.pid.map(|p| format!(" pid {p}")).unwrap_or_default(),
-                    v.restarts,
-                    v.error.as_ref().map(|e| format!(" ({e})")).unwrap_or_default()
-                );
+                println!("  {id}: {}", status::describe(v));
             }
             for (f, e) in &s.invalid {
                 println!("  boot.d/{f}: {e}");

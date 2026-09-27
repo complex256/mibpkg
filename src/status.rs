@@ -79,3 +79,28 @@ pub fn write(layout: &Layout, s: &Status) -> Result<()> {
     atomic_write(&layout.run("status"), serde_json::to_string(s)?.as_bytes())?;
     Ok(())
 }
+
+/// One-line human description, shared by `mibpkg status` and GEM.
+pub fn describe(s: &SvcStatus) -> String {
+    let mut out = if s.state == SvcState::Waiting {
+        let mut w = format!("waiting: {}", s.waiting_for.join(", "));
+        if let Some(secs) = s.waiting_secs {
+            w.push_str(&format!(" ({})", crate::conditions::fmt_secs(secs)));
+        }
+        w
+    } else {
+        s.state.to_string()
+    };
+    if let Some(p) = s.pid {
+        out.push_str(&format!(" pid {p}"));
+    }
+    if s.restarts > 0 {
+        out.push_str(&format!(" restarts {}", s.restarts));
+    }
+    if let Some(n) = &s.note {
+        out.push_str(&format!(" ({n})"));
+    } else if let Some(e) = &s.error {
+        out.push_str(&format!(" ({e})"));
+    }
+    out
+}

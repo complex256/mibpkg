@@ -174,12 +174,7 @@ pub fn screens(m: &Model) -> Vec<Screen> {
                 }
                 for id in &i.services {
                     let line = match m.status.and_then(|s| s.services.get(id)) {
-                        Some(s) => format!(
-                            "{id}: {}{}{}",
-                            s.state,
-                            s.pid.map(|p| format!(" pid {p}")).unwrap_or_default(),
-                            if s.restarts > 0 { format!(" restarts {}", s.restarts) } else { String::new() }
-                        ),
+                        Some(s) => format!("{id}: {}", status::describe(s)),
                         None => format!("{id}: not started"),
                     };
                     items.push(text(line));

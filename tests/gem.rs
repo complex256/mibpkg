@@ -95,3 +95,32 @@ fn regenerate_writes_esd_and_scripts_and_cleans_old() {
     gem::remove_screens(&f.layout).unwrap();
     assert!(!eng.join("mibpkg.esd").exists());
 }
+
+#[test]
+fn package_screen_shows_waiting() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let a = common::pkg_src(f.root(), "demo", "1.0.0", "sleep 30", "");
+    let c = Collection::load(&common::collection(&f.sd(), "complex256", &[a])).unwrap();
+    install::install(&ctx, &[f.sd()], &c, "demo").unwrap();
+    let mut st = mibpkg::status::Status::default();
+    st.services.insert(
+        "demo.demo".into(),
+        mibpkg::status::SvcStatus {
+            state: mibpkg::status::SvcState::Waiting,
+            pid: None,
+            restarts: 0,
+            last_exit: None,
+            error: None,
+            waiting_for: vec!["tailnet".into()],
+            waiting_secs: Some(45),
+            note: None,
+        },
+    );
+    let scan = media::scan(&f.layout);
+    let state = State::load(&f.layout).unwrap();
+    let m = Model { layout: &f.layout, unit: &ctx.unit, state: &state, status: Some(&st), scan: &scan, disabled: false, supervisor_running: true };
+    let screen = gem::screens(&m).into_iter().find(|s| s.name == "mibpkg_demo").unwrap();
+    assert!(labels(&screen).iter().any(|l| l == "demo.demo: waiting: tailnet (45s)"), "{:?}", labels(&screen));
+}
