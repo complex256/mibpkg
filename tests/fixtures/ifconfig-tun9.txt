@@ -1,0 +1,2 @@
+tun9: flags=51<UP,POINTOPOINT,RUNNING> mtu 1280
+	inet 100.64.0.55 -> 100.64.0.55 netmask 0xffffffff

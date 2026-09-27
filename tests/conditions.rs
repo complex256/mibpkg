@@ -64,3 +64,84 @@ fn timeouts_parse_and_format() {
     assert_eq!(fmt_secs(130), "2m10s");
     assert_eq!(fmt_secs(3780), "1h3m");
 }
+
+use mibpkg::conditions::{parse_ifconfig_up, parse_netstat_rn, unmet, RouteEntry, SystemView, TickCache};
+use std::cell::Cell;
+use std::path::Path;
+
+fn fixture(name: &str) -> String {
+    fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)).unwrap()
+}
+
+#[test]
+fn netstat_and_ifconfig_parsers() {
+    let r = parse_netstat_rn(&fixture("netstat-rn-sample.txt"));
+    assert!(r.contains(&RouteEntry { dest: "default".into(), iface: "ecm0".into() }));
+    assert!(r.contains(&RouteEntry { dest: "100.64/10".into(), iface: "tun9".into() }));
+    assert!(!r.iter().any(|e| e.dest == "Destination" || e.dest.starts_with("Internet")));
+    assert!(parse_ifconfig_up(&fixture("ifconfig-tun9.txt")));
+    assert!(!parse_ifconfig_up(&fixture("ifconfig-down.txt")));
+    assert!(!parse_ifconfig_up(""));
+}
+
+struct FakeView {
+    files: Vec<&'static str>,
+    up: Vec<&'static str>,
+    routes: Result<Vec<RouteEntry>, String>,
+    netstat_calls: Cell<u32>,
+}
+
+impl SystemView for FakeView {
+    fn file_exists(&self, p: &Path) -> bool {
+        self.files.iter().any(|f| Path::new(f) == p)
+    }
+    fn iface_up(&self, name: &str) -> Result<bool, String> {
+        Ok(self.up.contains(&name))
+    }
+    fn routes(&self) -> Result<Vec<RouteEntry>, String> {
+        self.netstat_calls.set(self.netstat_calls.get() + 1);
+        self.routes.clone()
+    }
+}
+
+fn view(routes: Result<Vec<RouteEntry>, String>) -> FakeView {
+    FakeView { files: vec!["/tmp/smFlagStartupDone"], up: vec!["tun9"], routes, netstat_calls: Cell::new(0) }
+}
+
+fn rt(dest: &str, iface: &str) -> RouteEntry {
+    RouteEntry { dest: dest.into(), iface: iface.into() }
+}
+
+#[test]
+fn unmet_evaluates_aliases_and_raw_checks() {
+    let s = Settings::default();
+    let v = view(Ok(vec![rt("default", "ecm0"), rt("100.64/10", "tun9")]));
+    let c = TickCache::new(&v);
+    let all: Vec<String> = ["internet", "tailnet", "hmi-ready", "iface:tun9", "file:/tmp/smFlagStartupDone"].iter().map(|s| s.to_string()).collect();
+    assert!(unmet(&all, &s, &c).is_empty());
+    let v2 = view(Ok(vec![rt("default", "ecm0")])); // tailscale stuck: no tailnet route
+    let c2 = TickCache::new(&v2);
+    assert_eq!(unmet(&all, &s, &c2), vec!["tailnet"]);
+    let v3 = view(Ok(vec![rt("100.64/10", "eth0")])); // right dest, wrong interface
+    assert_eq!(unmet(&["tailnet".to_string()], &s, &TickCache::new(&v3)), vec!["tailnet"]);
+    assert_eq!(unmet(&["iface:ecm1".to_string()], &s, &TickCache::new(&v)), vec!["iface:ecm1"]);
+}
+
+#[test]
+fn a_check_that_cannot_run_is_unmet_with_reason() {
+    let s = Settings::default();
+    let v = view(Err("netstat: No such file or directory".into()));
+    let got = unmet(&["internet".to_string()], &s, &TickCache::new(&v));
+    assert_eq!(got, vec!["internet (netstat: No such file or directory)"]);
+}
+
+#[test]
+fn one_netstat_per_tick_however_many_services() {
+    let s = Settings::default();
+    let v = view(Ok(vec![rt("default", "ecm0")]));
+    let c = TickCache::new(&v);
+    for _ in 0..5 {
+        unmet(&["internet".to_string(), "tailnet".to_string()], &s, &c);
+    }
+    assert_eq!(v.netstat_calls.get(), 1);
+}
