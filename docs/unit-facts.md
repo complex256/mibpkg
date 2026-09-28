@@ -33,6 +33,10 @@ Facts the code depends on, with how and when they were verified.
 | Boot autostart | after a real reboot: supervisor + carmqtt up at ~49 s after boot (30 s hook sleep + launch wait); no DISABLE logged | Task 20, 2026-09-26 |
 | Network readiness at boot | Tailscale route to the HA broker not usable until ~110-170 s after boot; `/tmp/ppp_connected` exists when SIM data is up | Task 20, 2026-09-26 |
 | Shell tools | also missing: `tail`, `wc`, `grep -A/-B`; `netstat` is `/mnt/app/armle/usr/bin/netstat` (not on ssh PATH) | Task 20, 2026-09-26 |
+| `netstat -rn` (Tailscale up) | BSD format; `default` via `ecm0`; Tailscale adds per-peer `/32` routes, `100.100.100.100/32` and subnet `192.168/16` via `tun9` — **no `100.64/10` route**. `tailnet` default is therefore `route:100.100.100.100@tun` | Task 6, 2026-09-28 (fixture `netstat-rn-unit-tailnet-up.txt`) |
+| `ifconfig <missing>` | `SIOCGIFFLAGS nosuch0: No such device or address`, exit 1 → treated as not up | Task 6, 2026-09-28 |
+| HMI markers | `/tmp/smFlagStartupDone`, `/tmp/startupFinishedFlag`, `/tmp/MMX-startup-finished` all exist and predate `/tmp/mibpkg.pid` (1 s mtime resolution, tied): `hmi-ready` is already true at the default boot hook; default stays `smFlagStartupDone` | Task 6, 2026-09-28 |
+| Network timing at boot | `/tmp/ppp_connected` (SIM data) and `/tmp/tailscaled.pid` are newer than `/tmp/mibpkg.pid`: internet and tailnet come up after the supervisor starts | Task 6, 2026-09-28 |
 
 ## Pending checks for Task 19 (added by the final review, 2026-09-26)
 

@@ -1,0 +1,2 @@
+ifconfig: SIOCGIFFLAGS nosuch0: No such device or address
+exit=1

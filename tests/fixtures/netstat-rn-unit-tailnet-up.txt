@@ -1,0 +1,43 @@
+Routing tables
+Internet:
+Destination        Gateway            Flags    Refs      Use    Mtu  Interface
+default            203.0.113.177     UG          4    29418      -  ecm0
+10.255.0/24          link#3             UC          1        0      -  mmx0
+10.255.0.16          00:01:02:03:04:05  UHLc       27    15126      -  mmx0
+10.255.1/24      link#5             UC          3        0      -  uap0
+10.255.1.44      02:00:00:00:00:44  UHLc        6    40147      -  uap0
+10.255.1.67      02:00:00:00:00:67  UHLc        0      659      -  uap0
+10.255.1.255     link#5             UHbc        0       59      -  uap0
+203.0.113.176/29  link#6             UC          1        0      -  ecm0
+203.0.113.177     02:50:f3:00:00:00  UHLc        1        0      -  ecm0
+100.64.0.24/32   100.64.0.55       US          0        0      -  tun9
+100.64.0.109/32  100.64.0.55       US          1       73      -  tun9
+100.64.0.55       100.64.0.55       UH          0        0      -  tun9
+100.64.0.114/32  100.64.0.55       US          0      751      -  tun9
+100.100.100.100/32 100.64.0.55       US          0        0      -  tun9
+100.64.0.85/32   100.64.0.55       US          0        0      -  tun9
+127.0.0.1          127.0.0.1          UH          7     1632  33192  lo0
+192.168/16         100.64.0.55       US          1       86      -  tun9
+Internet6:
+Destination                        Gateway                        Flags    Refs      Use    Mtu  Interface
+::1                                ::1                            UH          0        0  33192  lo0
+fe80::%lo0/64                      fe80::1%lo0                    U           0        0      -  lo0
+fe80::1%lo0                        link#1             UHL         0        0      -  lo0
+fe80::%mmx0/64                     link#3             UC          0        0      -  mmx0
+fe80::1%mmx0        00:05:04:03:02:01  UHL         0        0      -  lo0
+fe80::%mlan0/64                    link#4             UC          0        0      -  mlan0
+fe80::1%mlan0    02:00:00:00:00:02  UHL         0        0      -  lo0
+fe80::%uap0/64                     link#5             UC          0        0      -  uap0
+fe80::1%uap0     02:00:00:00:00:01  UHL         0        0      -  lo0
+fe80::%ecm0/64                     link#6             UC          0        0      -  ecm0
+fe80::1%ecm0               02:00:00:00:00:00  UHL         0        0      -  lo0
+ff01:1::/32                        ::1                            UC          0        0      -  lo0
+ff01:3::/32                        link#3             UC          0        0      -  mmx0
+ff01:4::/32                        link#4             UC          0        0      -  mlan0
+ff01:5::/32                        link#5             UC          0        0      -  uap0
+ff01:6::/32                        link#6             UC          0        0      -  ecm0
+ff02::%lo0/32                      ::1                            UC          0        0      -  lo0
+ff02::%mmx0/32                     link#3             UC          0        0      -  mmx0
+ff02::%mlan0/32                    link#4             UC          0        0      -  mlan0
+ff02::%uap0/32                     link#5             UC          0        0      -  uap0
+ff02::%ecm0/32                     link#6             UC          0        0      -  ecm0

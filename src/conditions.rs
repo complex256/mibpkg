@@ -21,7 +21,9 @@ pub const ALIASES: &[&str] = &["internet", "tailnet", "hmi-ready"];
 /// Built-in alias meanings; `settings.toml` `[conditions]` overrides them per unit.
 pub const DEFAULTS: &[(&str, &str)] = &[
     ("internet", "route:default"),
-    ("tailnet", "route:100.64@tun"),
+    // Tailscale on QNX adds per-peer /32 routes plus its DNS address once its router is
+    // configured (not a 100.64/10 route); a stuck tailscaled never gets that far (unit, 2026-09-28).
+    ("tailnet", "route:100.100.100.100@tun"),
     ("hmi-ready", "file:/tmp/smFlagStartupDone"),
 ];
 

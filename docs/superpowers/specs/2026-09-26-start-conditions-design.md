@@ -82,7 +82,7 @@ Built-in aliases, defaults in `Settings` and overridable in `settings.toml` unde
 ```toml
 [conditions]
 internet  = "route:default"
-tailnet   = "route:100.64@tun"          # exact dest spelling set from real QNX netstat output
+tailnet   = "route:100.100.100.100@tun" # measured 2026-09-28: per-peer /32 routes + Quad100, no 100.64/10
 hmi-ready = "file:/tmp/smFlagStartupDone"  # chosen by on-car timing, see Verification
 ```
 

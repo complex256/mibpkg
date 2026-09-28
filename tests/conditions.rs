@@ -29,12 +29,12 @@ fn validate_accepts_aliases_and_refuses_unknown_as_newer() {
 fn aliases_resolve_to_defaults_or_settings_override() {
     let s = Settings::default();
     assert_eq!(resolve("internet", &s).unwrap(), Condition::Route { dest: "default".into(), iface: None });
-    assert_eq!(resolve("tailnet", &s).unwrap(), Condition::Route { dest: "100.64".into(), iface: Some("tun".into()) });
+    assert_eq!(resolve("tailnet", &s).unwrap(), Condition::Route { dest: "100.100.100.100".into(), iface: Some("tun".into()) });
     assert_eq!(resolve("hmi-ready", &s).unwrap(), Condition::File(PathBuf::from("/tmp/smFlagStartupDone")));
     let mut s2 = Settings::default();
     s2.conditions.insert("hmi-ready".into(), "file:/tmp/startupFinishedFlag".into());
     assert_eq!(resolve("hmi-ready", &s2).unwrap(), Condition::File(PathBuf::from("/tmp/startupFinishedFlag")));
-    assert_eq!(resolve("tailnet", &s2).unwrap(), Condition::Route { dest: "100.64".into(), iface: Some("tun".into()) }, "other aliases keep defaults");
+    assert_eq!(resolve("tailnet", &s2).unwrap(), Condition::Route { dest: "100.100.100.100".into(), iface: Some("tun".into()) }, "other aliases keep defaults");
     assert_eq!(resolve("iface:tun9", &s2).unwrap(), Condition::Iface("tun9".into()));
 }
 
@@ -77,7 +77,7 @@ fn fixture(name: &str) -> String {
 fn netstat_and_ifconfig_parsers() {
     let r = parse_netstat_rn(&fixture("netstat-rn-sample.txt"));
     assert!(r.contains(&RouteEntry { dest: "default".into(), iface: "ecm0".into() }));
-    assert!(r.contains(&RouteEntry { dest: "100.64/10".into(), iface: "tun9".into() }));
+    assert!(r.contains(&RouteEntry { dest: "100.100.100.100/32".into(), iface: "tun9".into() }));
     assert!(!r.iter().any(|e| e.dest == "Destination" || e.dest.starts_with("Internet")));
     assert!(parse_ifconfig_up(&fixture("ifconfig-tun9.txt")));
     assert!(!parse_ifconfig_up(&fixture("ifconfig-down.txt")));
@@ -115,14 +115,14 @@ fn rt(dest: &str, iface: &str) -> RouteEntry {
 #[test]
 fn unmet_evaluates_aliases_and_raw_checks() {
     let s = Settings::default();
-    let v = view(Ok(vec![rt("default", "ecm0"), rt("100.64/10", "tun9")]));
+    let v = view(Ok(vec![rt("default", "ecm0"), rt("100.100.100.100/32", "tun9")]));
     let c = TickCache::new(&v);
     let all: Vec<String> = ["internet", "tailnet", "hmi-ready", "iface:tun9", "file:/tmp/smFlagStartupDone"].iter().map(|s| s.to_string()).collect();
     assert!(unmet(&all, &s, &c).is_empty());
     let v2 = view(Ok(vec![rt("default", "ecm0")])); // tailscale stuck: no tailnet route
     let c2 = TickCache::new(&v2);
     assert_eq!(unmet(&all, &s, &c2), vec!["tailnet"]);
-    let v3 = view(Ok(vec![rt("100.64/10", "eth0")])); // right dest, wrong interface
+    let v3 = view(Ok(vec![rt("100.100.100.100/32", "eth0")])); // right dest, wrong interface
     assert_eq!(unmet(&["tailnet".to_string()], &s, &TickCache::new(&v3)), vec!["tailnet"]);
     assert_eq!(unmet(&["iface:ecm1".to_string()], &s, &TickCache::new(&v)), vec!["iface:ecm1"]);
 }
@@ -181,4 +181,40 @@ fn real_view_reads_command_output() {
     let v = RealView { netstat: ns, ifconfig: "/nonexistent/ifconfig".into(), timeout: std::time::Duration::from_secs(3) };
     assert!(v.routes().unwrap().iter().any(|r| r.dest == "default"));
     assert!(v.iface_up("tun9").is_err(), "a missing ifconfig binary is an error, not 'down'");
+}
+
+struct Routes(Vec<RouteEntry>);
+impl SystemView for Routes {
+    fn file_exists(&self, _: &Path) -> bool {
+        false
+    }
+    fn iface_up(&self, _: &str) -> Result<bool, String> {
+        Ok(false)
+    }
+    fn routes(&self) -> Result<Vec<RouteEntry>, String> {
+        Ok(self.0.clone())
+    }
+}
+
+#[test]
+fn real_unit_netstat_has_default_and_tailnet_routes() {
+    // Captured on the MHI2Q 2026-09-28 with Tailscale up: per-peer /32 routes, no 100.64/10.
+    let r = parse_netstat_rn(&fixture("netstat-rn-unit-tailnet-up.txt"));
+    let v = Routes(r);
+    let s = Settings::default();
+    assert!(unmet(&["internet".to_string(), "tailnet".to_string()], &s, &TickCache::new(&v)).is_empty());
+}
+
+#[test]
+fn tailnet_is_unmet_when_only_the_tun_address_exists() {
+    // The stuck-Tailscale state: tun9 has its own address but no routes were configured.
+    let v = Routes(vec![rt("default", "ecm0"), rt("100.64.0.55", "tun9")]);
+    assert_eq!(unmet(&["tailnet".to_string()], &Settings::default(), &TickCache::new(&v)), vec!["tailnet"]);
+}
+
+#[test]
+fn real_unit_ifconfig() {
+    assert!(parse_ifconfig_up(&fixture("ifconfig-unit-tun9.txt")));
+    let missing = fixture("ifconfig-unit-missing.txt");
+    assert!(missing.contains("exit=1"), "missing interface exits non-zero: {missing}");
 }
