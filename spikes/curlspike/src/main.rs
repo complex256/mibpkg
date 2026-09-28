@@ -18,6 +18,27 @@ const CURLOPT_ERRORBUFFER: c_int = 10010;
 const CURLOPT_SSL_VERIFYPEER: c_int = 64;
 const CURLOPT_USERAGENT: c_int = 10018;
 const CURLINFO_RESPONSE_CODE: c_int = 0x200002;
+const CURLOPT_SSL_CTX_FUNCTION: c_int = 20108;
+const CURLOPT_SSL_CTX_DATA: c_int = 10109;
+
+/// Verification time for OpenSSL, set from the ctx callback (unit clock is 1970).
+static mut VERIFY_TIME: i32 = 0;
+static mut SSL_GET0_PARAM: Option<unsafe extern "C" fn(*mut c_void) -> *mut c_void> = None;
+static mut PARAM_SET_TIME: Option<unsafe extern "C" fn(*mut c_void, i32)> = None;
+
+extern "C" fn ssl_ctx_cb(_curl: *mut c_void, ssl_ctx: *mut c_void, _parm: *mut c_void) -> c_int {
+    unsafe {
+        if VERIFY_TIME != 0 {
+            if let (Some(get0), Some(set)) = (SSL_GET0_PARAM, PARAM_SET_TIME) {
+                let param = get0(ssl_ctx);
+                if !param.is_null() {
+                    set(param, VERIFY_TIME);
+                }
+            }
+        }
+    }
+    0
+}
 
 type Init = unsafe extern "C" fn() -> *mut c_void;
 type SetOpt = unsafe extern "C" fn(*mut c_void, c_int, ...) -> c_int;
@@ -41,12 +62,25 @@ unsafe fn sym<T>(h: *mut c_void, name: &str) -> T {
 fn main() {
     let url = std::env::args().nth(1).expect("url");
     let ca = std::env::args().nth(2).expect("ca bundle");
+    // optional 3rd arg: seconds to add to time() for certificate checks
+    let offset: i64 = std::env::args().nth(3).map(|o| o.parse().unwrap()).unwrap_or(0);
     unsafe {
         let lib = CString::new("libcurl.so.2").unwrap();
         let h = dlopen(lib.as_ptr(), RTLD_NOW);
         if h.is_null() {
             eprintln!("dlopen: {}", CStr::from_ptr(dlerror()).to_string_lossy());
             std::process::exit(2);
+        }
+        if offset != 0 {
+            extern "C" {
+                fn time(t: *mut i32) -> i32;
+            }
+            VERIFY_TIME = (time(std::ptr::null_mut()) as i64 + offset) as i32;
+            let ssl = dlopen(CString::new("libssl.so.2").unwrap().as_ptr(), RTLD_NOW);
+            let cry = dlopen(CString::new("libcrypto.so.2").unwrap().as_ptr(), RTLD_NOW);
+            SSL_GET0_PARAM = Some(sym(ssl, "SSL_CTX_get0_param"));
+            PARAM_SET_TIME = Some(sym(cry, "X509_VERIFY_PARAM_set_time"));
+            println!("verify time {}", VERIFY_TIME);
         }
         let version: Version = sym(h, "curl_version");
         println!("{}", CStr::from_ptr(version()).to_string_lossy());
@@ -68,6 +102,10 @@ fn main() {
         setopt(c, CURLOPT_ERRORBUFFER, err.as_mut_ptr());
         setopt(c, CURLOPT_WRITEFUNCTION, write_cb as extern "C" fn(*const u8, usize, usize, *mut c_void) -> usize);
         setopt(c, CURLOPT_WRITEDATA, &mut body as *mut Vec<u8> as *mut c_void);
+        if offset != 0 {
+            setopt(c, CURLOPT_SSL_CTX_FUNCTION, ssl_ctx_cb as extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> c_int);
+            setopt(c, CURLOPT_SSL_CTX_DATA, std::ptr::null_mut::<c_void>());
+        }
         let rc = perform(c);
         let mut code: c_long = 0;
         getinfo(c, CURLINFO_RESPONSE_CODE, &mut code as *mut c_long);

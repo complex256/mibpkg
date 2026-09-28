@@ -111,7 +111,9 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
   and only fetch once the clock is sane (unit boots at 1970; TLS validity needs real time) —
   a natural `clock-set` start condition. Alternative if TLS proves flaky: plain HTTP from our own
   host + ed25519-signed index (verification needs no randomness/libc) — pulls signatures forward.
-  [?] VERIFY ON CAR: run spikes/curlspike against github.com and objects.githubusercontent.com.
+  [done 2026-09-28] VERIFIED ON CAR: libcurl via dlopen + our CA bundle + OpenSSL verify time set via
+  CURLOPT_SSL_CTX_FUNCTION/X509_VERIFY_PARAM_set_time = full HTTPS to github.com (200), cloudflare (200).
+  Needs a network-time offset (SNTP in std Rust, or Tailscale's /tmp/ts_clock_offset); system clock untouched.
 - [v1] SHA-256 per package in the index — integrity only (catches corrupt/truncated SD copies), not trust.
 - [later, after first online pass] Signature verification (ed25519/minisign style). DEFERRED 2026-09-26:
   user unsure it's wanted long-term since offline users already vet what they copy. v1 index format

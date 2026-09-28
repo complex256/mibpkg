@@ -21,3 +21,19 @@ ssh -n audi 'LD_LIBRARY_PATH=/mnt/app/armle/usr/lib:$LD_LIBRARY_PATH /tmp/curlsp
 Expect `rc=0 http=200` (or 30x/404 from the second host — any HTTP code proves TLS works).
 Watch for: dlopen failure (library path), cert errors while the unit clock is still 1970
 (TLS needs a sane clock), and TLS handshake failures from the 2016 OpenSSL.
+
+### Result (on the MHI2Q, 2026-09-28)
+
+- `dlopen("libcurl.so.2")` works (with `LD_LIBRARY_PATH=/mnt/app/armle/usr/lib`):
+  `libcurl/7.56.0 OpenSSL/1.0.2j zlib/1.2.3 c-ares/1.12.0`.
+- Plain run: `rc=60 SSL certificate problem: certificate is not yet valid` — the system clock is
+  1970. Tailscale's `libtsclock.so` shim does not help: OpenSSL 1.0.2 checks against `time()`,
+  which the shim does not interpose.
+- **Fix that works:** `CURLOPT_SSL_CTX_FUNCTION` callback → `SSL_CTX_get0_param(ctx)` (libssl) →
+  `X509_VERIFY_PARAM_set_time(param, time() + offset)` (libcrypto), offset = network time − system
+  time (here from `/tmp/ts_clock_offset`). With it, full verification against the macOS root bundle:
+  `https://github.com` → 200 (576 KB), `https://objects.githubusercontent.com/` → 404 (TLS fine),
+  `https://www.cloudflare.com/` → 200.
+- Consequence for online updates: mibpkg needs its own network-time offset (a small SNTP query over
+  UDP in std Rust, or reuse Tailscale's offset file when present) and sets the verify time per
+  request; the system clock is never touched.
