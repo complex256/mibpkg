@@ -9,7 +9,8 @@ use std::io::Write;
 pub const MARKER: &str = "/mnt/app/root/mibpkg/bin/launch.sh";
 pub const HOOK: [&str; 2] = [
     "    ## mibpkg supervisor. Best effort: detached, no stdio, never blocks boot.\n",
-    "    ( sleep 30; [ -x /mnt/app/root/mibpkg/bin/launch.sh ] && /mnt/app/root/mibpkg/bin/launch.sh ) </dev/null >/dev/null 2>&1 &\n",
+    // No fixed sleep: services that must wait say so with start conditions (`after`).
+    "    ( [ -x /mnt/app/root/mibpkg/bin/launch.sh ] && /mnt/app/root/mibpkg/bin/launch.sh ) </dev/null >/dev/null 2>&1 &\n",
 ];
 const STARTUP_UNIT: &str = "/mnt/system/etc/boot/startup.sh";
 

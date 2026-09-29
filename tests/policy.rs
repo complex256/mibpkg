@@ -91,3 +91,19 @@ fn describe_shows_note_and_error_and_hides_note_while_waiting() {
     let w = SvcStatus { state: SvcState::Waiting, waiting_for: vec!["tailnet".into()], waiting_secs: Some(30), error: None, ..base };
     assert_eq!(status::describe(&w), "waiting: tailnet (30s) restarts 1");
 }
+
+#[test]
+fn boot_markers_are_logged_once_with_their_time() {
+    use mibpkg::supervisor::MarkerWatch;
+    let f = common::fixture();
+    let a = f.layout.p("/tmp/smFlagStartupDone");
+    let b = f.layout.p("/tmp/ppp_connected");
+    fs::write(&a, "").unwrap();
+    let mut w = MarkerWatch::new(&f.layout, &["/tmp/smFlagStartupDone", "/tmp/ppp_connected"]);
+    assert_eq!(w.check(&f.layout, 19), vec!["boot marker /tmp/smFlagStartupDone: already present at 19 s"]);
+    assert!(w.check(&f.layout, 20).is_empty(), "nothing new");
+    fs::write(&b, "").unwrap();
+    assert_eq!(w.check(&f.layout, 57), vec!["boot marker /tmp/ppp_connected: appeared at 57 s"]);
+    assert!(w.check(&f.layout, 58).is_empty(), "each marker logged once");
+    assert!(w.done());
+}

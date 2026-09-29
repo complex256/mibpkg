@@ -56,3 +56,10 @@ fn syntax_failure_leaves_startup_untouched() {
     assert_eq!(fs::read_to_string(&p).unwrap(), common::STARTUP);
     assert!(!p.with_file_name("startup.sh.mibpkg-new").exists());
 }
+
+#[test]
+fn hook_starts_launch_without_a_fixed_sleep() {
+    // Start conditions replace the old `sleep 30`; the supervisor starts as soon as startup.sh gets here.
+    assert!(!mibpkg::hook::HOOK[1].contains("sleep"), "{}", mibpkg::hook::HOOK[1]);
+    assert!(mibpkg::hook::HOOK[1].contains(MARKER));
+}

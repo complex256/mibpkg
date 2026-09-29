@@ -452,6 +452,49 @@ impl<'a> Supervisor<'a> {
     }
 }
 
+/// Files the unit creates during boot, logged with their appearance time to learn the boot
+/// sequence (startup markers, SIM data, network, Tailscale).
+pub const BOOT_MARKERS: &[&str] = &[
+    "/tmp/MMX-startup-finished",
+    "/tmp/startupFinishedFlag",
+    "/tmp/smFlagStartupDone",
+    "/tmp/ppp_connected",
+    "/tmp/net.external",
+    "/tmp/tailscaled.sock",
+];
+
+/// Reports each boot marker once: present when first checked, or when it appears later.
+pub struct MarkerWatch {
+    pending: Vec<String>,
+    first: bool,
+}
+
+impl MarkerWatch {
+    pub fn new(_layout: &Layout, markers: &[&str]) -> MarkerWatch {
+        MarkerWatch { pending: markers.iter().map(|m| m.to_string()).collect(), first: true }
+    }
+
+    /// Lines for markers seen now; `now` is seconds since boot.
+    pub fn check(&mut self, layout: &Layout, now: u64) -> Vec<String> {
+        let first = std::mem::replace(&mut self.first, false);
+        let mut out = Vec::new();
+        self.pending.retain(|m| {
+            if layout.p(m).exists() {
+                let how = if first { "already present at" } else { "appeared at" };
+                out.push(format!("boot marker {m}: {how} {now} s"));
+                false
+            } else {
+                true
+            }
+        });
+        out
+    }
+
+    pub fn done(&self) -> bool {
+        self.pending.is_empty()
+    }
+}
+
 /// Kill service pids recorded by a supervisor that died without stopping them.
 /// ... and wait (up to `grace`) for them to exit, so a new copy never overlaps the old one.
 fn reap_orphans(layout: &Layout, sys: &dyn Sys, grace: Duration) {
@@ -492,7 +535,19 @@ pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
     }
     let mut sup = Supervisor::new(layout, sys, timing.clone());
     sup.reload();
+    // Until time sync the unit clock reads seconds since boot, which makes these log lines a
+    // boot timeline; once the clock is real they would be meaningless, so stop.
+    let clock_is_uptime = || now_secs() < 1_577_836_800;
+    let mut markers = MarkerWatch::new(layout, BOOT_MARKERS);
+    if clock_is_uptime() {
+        println!("mibpkg: supervisor started at {} s", now_secs());
+    }
     loop {
+        if !markers.done() && clock_is_uptime() {
+            for line in markers.check(layout, now_secs()) {
+                println!("mibpkg: {line}");
+            }
+        }
         if control::take(&layout.run("stop")) {
             sup.stop_all();
             break;
