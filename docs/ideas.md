@@ -129,7 +129,10 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
 - [v1] In-car picker: GEM (engineering menu) screen — installed / update / install / remove, then Apply.
   (Decided 2026-09-26: offline users choose IN THE CAR from what's on the SD card.)
 - [later] Web UI on the hotspot.
-- [later] Live values on GEM screens: GEM caches .esd files while open (verified 2026-09-26), so status
+- [next — feasible, verified 2026-09-28] Live GEM status: supervisor writes status strings with `pc` into an
+  unlisted persistence namespace (SQLite backend, e.g. 1835626603) and GEM rows poll them (`per <ns> <key>`,
+  poll 1000). Writes land on flash (/mnt/persist SQLite): write on state changes only, never a per-second timer.
+- [was] Live values on GEM screens: GEM caches .esd files while open (verified 2026-09-26), so status
   rows are snapshots until GEM is re-entered. Stock screens use `keyValue ... poll N` rows that read
   live values (persistence/sys) — research whether a row can poll a file or value mibpkg writes.
 - [done 2026-09-26] "last result" timestamps show 1970 because the unit clock is unset at boot — omit the stamp

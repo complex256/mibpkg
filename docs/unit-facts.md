@@ -40,6 +40,10 @@ Facts the code depends on, with how and when they were verified.
 | Self-update (0.1.x → 0.2.0) | GEM Update on mibpkg: new binaries in bin/ and /tmp, new supervisor pid, carmqtt restarted under it; the old binary ran the update, so no step lines that time | Task 7, 2026-09-28 |
 | Start conditions on a real boot | carmqtt 0.1.2 (`after = ["tailnet"]`): started at 114 s (supervisor up ~49 s), first MQTT connect succeeded at 115 s (vs. 172 s after minutes of retries before) | Task 7, 2026-09-28 |
 | GEM Console step lines | shown for the carmqtt 0.1.2 update (mibpkg 0.2.0) | Task 7, 2026-09-28 |
+| Boot timeline (no hook sleep) | supervisor 19 s; `MMX-startup-finished`/`startupFinishedFlag`/`smFlagStartupDone` 38 s; `tailscaled.sock` 50 s; `ppp_connected`/`net.external` 55 s; tailnet route ~114 s; first broker packet a few s after the route (carmqtt connected 120 s) | 2026-09-28 (mibpkg.log markers) |
+| Persistence client `pc` | `/eso/bin/apps/pc s:<ns>:<key> ["value"]`; needs `IPL_CONFIG_DIR=/etc/eso/production` (else aborts + writes a core dump to /mnt/ota/system/core) | 2026-09-28 |
+| Persistence namespaces | /etc/eso/production/persistence.json maps ns 0-37 and listed ids to RCC (unknown keys → TIMEOUT); any unlisted ns falls to the SQLite default backend (/mnt/persist/var/fw/persistence.sqlite) which accepts new keys. mibpkg probe ns 1835626603 (0x6d69706b "mipk") key 1 | 2026-09-28 |
+| GEM live values | `keyValue value String per <ns> <key> poll 1000` re-reads while the screen is open: probe stepped 1→2→3→4 live, no re-entry | 2026-09-28 |
 
 ## Pending checks for Task 19 (added by the final review, 2026-09-26)
 
