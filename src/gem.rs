@@ -236,34 +236,45 @@ pub fn regenerate(ctx: &Ctx) -> Result<()> {
         supervisor_running: supervisor_pid(layout, ctx.sys).is_some(),
     };
     let screens = screens(&model);
-    // Live rows read these; results only change on actions, so writing them here is cheap.
-    for (k, v) in &state.results {
-        if let Err(e) = ctx.sys.persist_write(crate::persist::NS, crate::persist::result_key(k), v) {
-            eprintln!("warning: live result: {e:#}");
+    let gem_unit = layout.unit_path(&layout.gem_dir());
+    // Every file the screens need, with its content.
+    let mut want: Vec<(PathBuf, String, u32)> = Vec::new();
+    for sc in &screens {
+        want.push((layout.engdefs().join(format!("{}.esd", sc.name)), render(sc, &gem_unit), 0o644));
+        for it in &sc.items {
+            if let Item::Button { action, .. } = it {
+                want.push((layout.gem_dir().join(script_name(action)), script_body(action), 0o755));
+            }
         }
+    }
+    let wanted = |p: &PathBuf| want.iter().any(|(w, _, _)| w == p);
+    // Leave unchanged files alone: rewriting the .esd of a screen that is open in GEM stops its
+    // live rows from updating, and every write is flash wear.
+    let writes: Vec<&(PathBuf, String, u32)> =
+        want.iter().filter(|(p, c, _)| fs::read_to_string(p).ok().as_deref() != Some(c.as_str())).collect();
+    let mut stale: Vec<PathBuf> = Vec::new();
+    for (dir, is_ours) in [
+        (layout.engdefs(), (|n: &str| n.starts_with("mibpkg") && n.ends_with(".esd")) as fn(&str) -> bool),
+        (layout.gem_dir(), |n: &str| n.ends_with(".sh")),
+    ] {
+        if let Ok(rd) = fs::read_dir(&dir) {
+            for e in rd.filter_map(|e| e.ok()) {
+                if is_ours(&e.file_name().to_string_lossy()) && !wanted(&e.path()) {
+                    stale.push(e.path());
+                }
+            }
+        }
+    }
+    if writes.is_empty() && stale.is_empty() {
+        return Ok(());
     }
     let _rw = ctx.mounts.rw("/mnt/app")?;
-    fs::create_dir_all(layout.engdefs())?;
-    remove_screens(layout)?;
-    let gd = layout.gem_dir();
-    if let Ok(rd) = fs::read_dir(&gd) {
-        for e in rd.filter_map(|e| e.ok()) {
-            if e.file_name().to_string_lossy().ends_with(".sh") {
-                fs::remove_file(e.path())?;
-            }
-        }
+    for (p, content, mode) in writes {
+        atomic_write(p, content.as_bytes())?;
+        set_mode(p, *mode)?;
     }
-    fs::create_dir_all(&gd)?;
-    let gem_unit = layout.unit_path(&gd);
-    for s in &screens {
-        atomic_write(&layout.engdefs().join(format!("{}.esd", s.name)), render(s, &gem_unit).as_bytes())?;
-        for it in &s.items {
-            if let Item::Button { action, .. } = it {
-                let p = gd.join(script_name(action));
-                atomic_write(&p, script_body(action).as_bytes())?;
-                set_mode(&p, 0o755)?;
-            }
-        }
+    for p in stale {
+        fs::remove_file(&p)?;
     }
     Ok(())
 }

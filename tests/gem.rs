@@ -161,15 +161,37 @@ fn live_rows_poll_persistence() {
 }
 
 #[test]
-fn regenerate_publishes_results_for_live_rows() {
+fn regenerate_leaves_unchanged_screens_and_persistence_alone() {
+    use std::os::unix::fs::MetadataExt;
     let f = common::fixture();
     let sys = RecordingSys::default();
     let ctx = Ctx::new(f.layout.clone(), &sys);
     let mut st = State::default();
     st.results.insert("_".into(), "OK: rescanned".into());
     st.save(&f.layout).unwrap();
+    let a = common::pkg_src(f.root(), "alpha", "1.0.0", "sleep 30", "");
+    common::collection(&f.sd(), "complex256", &[a]);
     gem::regenerate(&ctx).unwrap();
-    assert!(sys.persisted.borrow().iter().any(|(_, k, v)| *k == mibpkg::persist::KEY_RESULT_GLOBAL && v == "OK: rescanned"));
-    let main = std::fs::read_to_string(f.layout.engdefs().join("mibpkg.esd")).unwrap();
-    assert!(main.contains(&format!("per {} 0x00000001", mibpkg::persist::NS)), "live supervisor row: {main}");
+    let main = f.layout.engdefs().join("mibpkg.esd");
+    let script = f.layout.gem_dir().join("install.alpha.complex256.sh");
+    let (ino_main, ino_script) = (std::fs::metadata(&main).unwrap().ino(), std::fs::metadata(&script).unwrap().ino());
+    gem::regenerate(&ctx).unwrap();
+    assert_eq!(std::fs::metadata(&main).unwrap().ino(), ino_main, "unchanged screen must not be rewritten (an open GEM screen stops polling)");
+    assert_eq!(std::fs::metadata(&script).unwrap().ino(), ino_script);
+    assert!(std::fs::read_to_string(&main).unwrap().contains(&format!("per {} 0x00000001", mibpkg::persist::NS)), "live supervisor row");
+    assert!(sys.persisted.borrow().is_empty(), "results are published by the action that records them, not by every regeneration");
+}
+
+#[test]
+fn regenerate_still_removes_screens_that_went_away() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    std::fs::write(f.layout.engdefs().join("mibpkg_probe.esd"), "x").unwrap();
+    std::fs::create_dir_all(f.layout.gem_dir()).unwrap();
+    std::fs::write(f.layout.gem_dir().join("install-old-format.sh"), "x").unwrap();
+    gem::regenerate(&ctx).unwrap();
+    assert!(!f.layout.engdefs().join("mibpkg_probe.esd").exists());
+    assert!(!f.layout.gem_dir().join("install-old-format.sh").exists());
+    assert!(f.layout.engdefs().join("mibpkg.esd").exists());
 }

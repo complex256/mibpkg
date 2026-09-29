@@ -229,8 +229,14 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
 fn record_result(ctx: &Ctx, key: &str, text: &str) -> Result<()> {
     let _rw = ctx.mounts.rw("/mnt/app")?;
     let mut st = State::load(&ctx.layout)?;
-    st.results.insert(key.to_string(), format!("{text}{}", result_stamp(now_secs())));
-    st.save(&ctx.layout)
+    let line = format!("{text}{}", result_stamp(now_secs()));
+    st.results.insert(key.to_string(), line.clone());
+    st.save(&ctx.layout)?;
+    // The live "last result" row reads this.
+    if let Err(e) = ctx.sys.persist_write(crate::persist::NS, crate::persist::result_key(key), &line) {
+        eprintln!("warning: live result: {e:#}");
+    }
+    Ok(())
 }
 
 fn print_status(ctx: &Ctx) {
