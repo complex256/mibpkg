@@ -37,6 +37,9 @@ Facts the code depends on, with how and when they were verified.
 | `ifconfig <missing>` | `SIOCGIFFLAGS nosuch0: No such device or address`, exit 1 → treated as not up | Task 6, 2026-09-28 |
 | HMI markers | `/tmp/smFlagStartupDone`, `/tmp/startupFinishedFlag`, `/tmp/MMX-startup-finished` all exist and predate `/tmp/mibpkg.pid` (1 s mtime resolution, tied): `hmi-ready` is already true at the default boot hook; default stays `smFlagStartupDone` | Task 6, 2026-09-28 |
 | Network timing at boot | `/tmp/ppp_connected` (SIM data) and `/tmp/tailscaled.pid` are newer than `/tmp/mibpkg.pid`: internet and tailnet come up after the supervisor starts | Task 6, 2026-09-28 |
+| Self-update (0.1.x → 0.2.0) | GEM Update on mibpkg: new binaries in bin/ and /tmp, new supervisor pid, carmqtt restarted under it; the old binary ran the update, so no step lines that time | Task 7, 2026-09-28 |
+| Start conditions on a real boot | carmqtt 0.1.2 (`after = ["tailnet"]`): started at 114 s (supervisor up ~49 s), first MQTT connect succeeded at 115 s (vs. 172 s after minutes of retries before) | Task 7, 2026-09-28 |
+| GEM Console step lines | shown for the carmqtt 0.1.2 update (mibpkg 0.2.0) | Task 7, 2026-09-28 |
 
 ## Pending checks for Task 19 (added by the final review, 2026-09-26)
 

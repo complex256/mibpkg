@@ -24,7 +24,7 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
 - [v1] Single startup.sh hook, installed/removed only by the manager, ksh -n validated, backup kept.
 - [v1] Runner provides drop-in dir (e.g. boot.d/) — packages add files, never touch startup.sh.
 - [v1] Detached, best-effort, never blocks boot (same pattern as tailscale/mibwg hooks).
-- [designing 2026-09-26] Start conditions: spec docs/superpowers/specs/2026-09-26-start-conditions-design.md
+- [done 2026-09-28, verified on the unit] Start conditions: spec docs/superpowers/specs/2026-09-26-start-conditions-design.md
   (per-service `after = ["internet"|"tailnet"|"hmi-ready"|file:|iface:|route:]`, opt-in `after_timeout`).
   `phase = "early"` (earlier startup.sh hook, before HMI/nav): no concrete use yet (user, 2026-09-26) —
   reserved, not built. `service:` dependencies fit the same syntax later.
