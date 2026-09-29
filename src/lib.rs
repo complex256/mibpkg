@@ -21,3 +21,4 @@ pub mod supervisor;
 pub mod gem;
 pub mod cli;
 pub mod conditions;
+pub mod persist;

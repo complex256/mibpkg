@@ -20,6 +20,8 @@ use std::path::PathBuf;
 pub enum Item {
     Text(String),
     Button { label: String, action: Vec<String> },
+    /// A row GEM re-reads from persistence every second while the screen is open.
+    Live { label: String, key: u32 },
 }
 
 pub struct Screen {
@@ -66,6 +68,12 @@ pub fn render(s: &Screen, gem_dir_unit: &str) -> String {
                 "keyValue\n\tvalue String sys 0x00000000 0\n\t\tlabel \"{}\"\n\t\tpoll 0\n",
                 clean(t)
             )),
+            Item::Live { label, key } => o.push_str(&format!(
+                "keyValue\n\tvalue String per {} 0x{:08x}\n\t\tlabel \"{}\"\n\t\tpoll 1000\n",
+                crate::persist::NS,
+                key,
+                clean(label)
+            )),
             Item::Button { label, action } => o.push_str(&format!(
                 "script\n\tvalue sys 1 0x100 \"{}/{}\"\n\tlabel \"{}\"\n",
                 gem_dir_unit,
@@ -92,7 +100,7 @@ pub fn screens(m: &Model) -> Vec<Screen> {
 
     let mut main = vec![
         text(format!("mibpkg {} - unit {}", env!("CARGO_PKG_VERSION"), m.unit.describe())),
-        text(format!("supervisor: {}", if m.supervisor_running { "running" } else { "not running" })),
+        Item::Live { label: "supervisor".into(), key: crate::persist::KEY_SUPERVISOR },
     ];
     if m.disabled {
         main.push(text("DISABLE marker on the card: no services are started"));
@@ -111,8 +119,8 @@ pub fn screens(m: &Model) -> Vec<Screen> {
     if !updates.is_empty() {
         main.push(button(format!("Update all ({})", updates.len()), &["update-all"]));
     }
-    if let Some(r) = m.state.results.get("_") {
-        main.push(text(format!("last result: {r}")));
+    if m.state.results.contains_key("_") {
+        main.push(Item::Live { label: "last result".into(), key: crate::persist::KEY_RESULT_GLOBAL });
     }
     let mut out = vec![Screen { name: "mibpkg".into(), parent: m.layout.settings.gem_parent.clone(), items: main }];
 
@@ -178,11 +186,7 @@ pub fn screens(m: &Model) -> Vec<Screen> {
                     items.push(button("Remove", &["remove", name.as_str()]));
                 }
                 for id in &i.services {
-                    let line = match m.status.and_then(|s| s.services.get(id)) {
-                        Some(s) => format!("{id}: {}", status::describe(s)),
-                        None => format!("{id}: not started"),
-                    };
-                    items.push(text(line));
+                    items.push(Item::Live { label: id.clone(), key: crate::persist::service_key(id) });
                 }
                 if let Ok(man) = current_manifest(m.layout, &name) {
                     let missing = missing_required(m.layout, &man);
@@ -195,8 +199,8 @@ pub fn screens(m: &Model) -> Vec<Screen> {
                 }
             }
         }
-        if let Some(r) = m.state.results.get(&name) {
-            items.push(text(format!("last result: {r}")));
+        if m.state.results.contains_key(&name) {
+            items.push(Item::Live { label: "last result".into(), key: crate::persist::result_key(&name) });
         }
         out.push(Screen { name: screen_name(&name), parent: "mibpkg".into(), items });
     }
@@ -232,6 +236,12 @@ pub fn regenerate(ctx: &Ctx) -> Result<()> {
         supervisor_running: supervisor_pid(layout, ctx.sys).is_some(),
     };
     let screens = screens(&model);
+    // Live rows read these; results only change on actions, so writing them here is cheap.
+    for (k, v) in &state.results {
+        if let Err(e) = ctx.sys.persist_write(crate::persist::NS, crate::persist::result_key(k), v) {
+            eprintln!("warning: live result: {e:#}");
+        }
+    }
     let _rw = ctx.mounts.rw("/mnt/app")?;
     fs::create_dir_all(layout.engdefs())?;
     remove_screens(layout)?;

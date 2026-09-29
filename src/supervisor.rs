@@ -527,7 +527,9 @@ pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
     // is not: acting on it (re-running launch.sh) is always right and harmless if redundant.
     let _ = fs::remove_file(layout.run("stop"));
     reap_orphans(layout, sys, timing.stop_grace);
+    let mut live = crate::persist::Publisher::default();
     if media::disabled(layout) {
+        live.set(sys, crate::persist::KEY_SUPERVISOR, "DISABLE card present: nothing started");
         println!("mibpkg: DISABLE marker on the card; starting nothing");
         status::write(layout, &Status { updated: now_secs(), pid: std::process::id(), disabled: true, ..Default::default() })?;
         let _ = fs::remove_file(layout.run("pid"));
@@ -541,6 +543,9 @@ pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
     let mut markers = MarkerWatch::new(layout, BOOT_MARKERS);
     if clock_is_uptime() {
         println!("mibpkg: supervisor started at {} s", now_secs());
+        live.set(sys, crate::persist::KEY_SUPERVISOR, &format!("running since {} s after boot", now_secs()));
+    } else {
+        live.set(sys, crate::persist::KEY_SUPERVISOR, "running");
     }
     loop {
         if !markers.done() && clock_is_uptime() {
@@ -572,12 +577,21 @@ pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
         }
         sup.tick(Instant::now());
         let _ = crate::fsutil::cap_file(&layout.run("log"), LOG_CAP);
-        if let Err(e) = status::write(layout, &sup.status()) {
+        let st = sup.status();
+        for (id, s) in &st.services {
+            live.set(sys, crate::persist::service_key(id), &crate::persist::persist_text(s));
+        }
+        if let Err(e) = status::write(layout, &st) {
             eprintln!("mibpkg: writing status: {e:#}");
         }
         std::thread::sleep(timing.poll);
     }
-    let _ = status::write(layout, &sup.status());
+    let st = sup.status();
+    for (id, s) in &st.services {
+        live.set(sys, crate::persist::service_key(id), &crate::persist::persist_text(s));
+    }
+    live.set(sys, crate::persist::KEY_SUPERVISOR, "stopped");
+    let _ = status::write(layout, &st);
     let _ = fs::remove_file(layout.run("pid"));
     Ok(())
 }

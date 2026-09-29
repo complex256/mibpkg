@@ -17,7 +17,43 @@ pub trait Sys {
     fn terminate(&self, pid: u32);
     /// Free bytes on the filesystem holding `path`, if `df` can tell.
     fn free_bytes(&self, path: &Path) -> Option<u64>;
+    /// Store a string in the unit's persistence (read live by GEM `per` rows).
+    fn persist_write(&self, ns: u32, key: u32, value: &str) -> Result<()>;
 }
+
+/// Run `cmd args` with a deadline, stdin closed: (exited successfully, stdout+stderr).
+pub fn run_limited(cmd: &Path, args: &[String], env: &[(String, String)], timeout: Duration) -> std::result::Result<(bool, String), String> {
+    let name = cmd.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let mut c = Command::new(cmd);
+    c.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    for (k, v) in env {
+        c.env(k, v);
+    }
+    let mut child = c.spawn().map_err(|e| format!("{name}: {e}"))?;
+    // Read on a thread so a full pipe can't stall the child while we wait on it.
+    let mut out = child.stdout.take().unwrap();
+    let reader = std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = std::io::Read::read_to_string(&mut out, &mut s);
+        s
+    });
+    let end = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(st)) => return Ok((st.success(), reader.join().unwrap_or_default())),
+            Ok(None) if Instant::now() < end => std::thread::sleep(Duration::from_millis(20)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("{name}: timed out after {}s", timeout.as_secs().max(1)));
+            }
+            Err(e) => return Err(format!("{name}: {e}")),
+        }
+    }
+}
+
+/// The unit's persistence client; aborts (and writes a core dump) without IPL_CONFIG_DIR.
+pub const PC: &str = "/eso/bin/apps/pc";
 
 pub struct RealSys {
     pub mounts: bool,
@@ -84,6 +120,20 @@ impl Sys for RealSys {
         quiet_status(Command::new("/bin/sh").arg("-c").arg(format!("kill {pid}")));
     }
 
+    fn persist_write(&self, ns: u32, key: u32, value: &str) -> Result<()> {
+        if !self.mounts {
+            return Ok(()); // not on the unit (tests / --root): there is no persistence service
+        }
+        let env = [("IPL_CONFIG_DIR".to_string(), "/etc/eso/production".to_string())];
+        let args = [format!("s:{ns}:{key}"), value.to_string()];
+        let (ok, out) = run_limited(Path::new(PC), &args, &env, Duration::from_secs(5)).map_err(anyhow::Error::msg)?;
+        // pc prints "[PersistenceClient::...] error: ..." on failure.
+        if !ok || out.contains("error") {
+            bail!("pc s:{ns}:{key}: {}", out.trim());
+        }
+        Ok(())
+    }
+
     fn free_bytes(&self, path: &Path) -> Option<u64> {
         let out = Command::new("df").arg("-k").arg(path).stderr(Stdio::null()).output().ok()?;
         let text = String::from_utf8_lossy(&out.stdout);
@@ -101,6 +151,8 @@ pub struct RecordingSys {
     pub fail_remount_rw: Cell<bool>,
     pub syntax_bad: Cell<bool>,
     pub free: Cell<Option<u64>>,
+    pub persisted: RefCell<Vec<(u32, u32, String)>>,
+    pub fail_persist: Cell<bool>,
 }
 
 const HOST: RealSys = RealSys { mounts: false };
@@ -127,5 +179,12 @@ impl Sys for RecordingSys {
     }
     fn free_bytes(&self, _path: &Path) -> Option<u64> {
         self.free.get()
+    }
+    fn persist_write(&self, ns: u32, key: u32, value: &str) -> Result<()> {
+        self.persisted.borrow_mut().push((ns, key, value.to_string()));
+        if self.fail_persist.get() {
+            bail!("pc s:{ns}:{key}: error: result == TIMEOUT");
+        }
+        Ok(())
     }
 }

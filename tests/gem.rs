@@ -38,6 +38,7 @@ fn labels(s: &Screen) -> Vec<String> {
         .map(|i| match i {
             Item::Text(t) => t.clone(),
             Item::Button { label, .. } => format!("[{label}]"),
+            Item::Live { label, .. } => format!("{label} <live>"),
         })
         .collect()
 }
@@ -63,7 +64,7 @@ fn screens_cover_install_update_and_warnings() {
     let ml = labels(main);
     assert!(ml.iter().any(|l| l == "[Update all (1)]"), "{ml:?}");
     assert!(ml.iter().any(|l| l == "[Rescan SD card]"));
-    assert!(ml.iter().any(|l| l.contains("supervisor: not running")));
+    assert!(ml.iter().any(|l| l == "supervisor <live>"), "{ml:?}");
     let alpha = screens.iter().find(|s| s.name == "mibpkg_alpha").unwrap();
     let al = labels(alpha);
     assert!(al.iter().any(|l| l == "installed: 1.0.0"), "{al:?}");
@@ -127,7 +128,7 @@ fn package_screen_shows_waiting() {
     let state = State::load(&f.layout).unwrap();
     let m = Model { layout: &f.layout, unit: &ctx.unit, state: &state, status: Some(&st), scan: &scan, disabled: false, supervisor_running: true };
     let screen = gem::screens(&m).into_iter().find(|s| s.name == "mibpkg_demo").unwrap();
-    assert!(labels(&screen).iter().any(|l| l == "demo.demo: waiting: tailnet (45s)"), "{:?}", labels(&screen));
+    assert!(labels(&screen).iter().any(|l| l == "demo.demo <live>"), "service rows are live: {:?}", labels(&screen));
 }
 
 #[test]
@@ -144,4 +145,31 @@ fn install_button_offers_the_newest_compatible_version() {
     let screen = gem::screens(&m).into_iter().find(|s| s.name == "mibpkg_demo").unwrap();
     let l = labels(&screen);
     assert!(l.iter().any(|x| x == "[Install 0.1.0 from complex256]"), "{l:?}");
+}
+
+#[test]
+fn live_rows_poll_persistence() {
+    let s = Screen {
+        name: "mibpkg".into(),
+        parent: "Main".into(),
+        items: vec![Item::Live { label: "supervisor".into(), key: 1 }],
+    };
+    assert_eq!(
+        gem::render(&s, "/g"),
+        format!("screen mibpkg Main\n\nkeyValue\n\tvalue String per {} 0x00000001\n\t\tlabel \"supervisor\"\n\t\tpoll 1000\n", mibpkg::persist::NS)
+    );
+}
+
+#[test]
+fn regenerate_publishes_results_for_live_rows() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let mut st = State::default();
+    st.results.insert("_".into(), "OK: rescanned".into());
+    st.save(&f.layout).unwrap();
+    gem::regenerate(&ctx).unwrap();
+    assert!(sys.persisted.borrow().iter().any(|(_, k, v)| *k == mibpkg::persist::KEY_RESULT_GLOBAL && v == "OK: rescanned"));
+    let main = std::fs::read_to_string(f.layout.engdefs().join("mibpkg.esd")).unwrap();
+    assert!(main.contains(&format!("per {} 0x00000001", mibpkg::persist::NS)), "live supervisor row: {main}");
 }
