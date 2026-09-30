@@ -103,7 +103,8 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
 - [v1] Offline: SD card / USB transport. Full bundle zip (everything) copied to SD; car picks.
 - [later] Slimmed-down zip: PC/phone web tool where the user ticks packages and downloads a
   smaller SD bundle (user wants this — people may not want everything on the card).
-- [later — v2, first after v1] Online: static index (GitHub Releases / R2) pulled when the car has network.
+- [designing 2026-09-30] Online updates v2: spec docs/superpowers/specs/2026-09-30-online-updates-design.md (plain HTTPS sources incl. github:owner/repo latest release; community list repo + SD sources.toml; notify + tap; ed25519 trust-on-first-use; frictionless keygen/release/verify + GitHub Action).
+- [was] Online: static index (GitHub Releases / R2) pulled when the car has network.
   Spike 2026-09-26 (spikes/README.md): pure-Rust TLS does not build for QNX 6.5 arm (ring/aws-lc via
   cc-rs: unknown arch; rustls-rustcrypto: `libc` crate fails for nto65). Unit ships libcurl 7.56.0 +
   OpenSSL 1.0.2j (TLS 1.2) — plan: dlopen libcurl.so.2 with a hand-written FFI (probe builds, 235 KB),
