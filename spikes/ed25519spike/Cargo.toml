@@ -1,0 +1,11 @@
+[package]
+name = "ed25519spike"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+ed25519-dalek = { version = "2", default-features = false }
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
