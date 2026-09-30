@@ -45,6 +45,7 @@ Facts the code depends on, with how and when they were verified.
 | Persistence namespaces | /etc/eso/production/persistence.json maps ns 0-37 and listed ids to RCC (unknown keys → TIMEOUT); any unlisted ns falls to the SQLite default backend (/mnt/persist/var/fw/persistence.sqlite) which accepts new keys. mibpkg probe ns 1835626603 (0x6d69706b "mipk") key 1 | 2026-09-28 |
 | GEM live values | `keyValue value String per <ns> <key> poll 1000` re-reads while the screen is open: probe stepped 1→2→3→4 live, no re-entry | 2026-09-28 |
 | Live GEM status (0.2.1) | supervisor/service/result values reach persistence (`pc` ~0.17 s, one 5 s stall seen); probe rows with big keys and either indentation update live; the real carmqtt sub-screen did not update after an action had rewritten its .esd while open, then worked after re-entering GEM. 0.2.2 stops rewriting unchanged files — confirm on the next visit | 2026-09-28 |
+| Live GEM status (0.2.2) | CONFIRMED: after updating to 0.2.2, tapping Restart on mibpkg_carmqtt updates the status and last-result rows live on that sub-screen. Root cause of the 0.2.1 miss: every action rewrote all .esd files, and GEM stops polling an open screen whose file changed | 2026-09-30 |
 
 ## Pending checks for Task 19 (added by the final review, 2026-09-26)
 
