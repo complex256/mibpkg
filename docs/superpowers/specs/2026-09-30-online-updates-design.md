@@ -99,8 +99,9 @@ collection is enabled by default. Enabled sources are stored in `state/installed
 ### Network time
 
 - A single SNTP query (UDP 123) to `time.cloudflare.com`, then `pool.ntp.org`, gives
-  `offset = network time - system time`, stored in `/tmp/mibpkg.clock_offset`. If Tailscale's
-  `/tmp/ts_clock_offset` exists, it is used instead of querying.
+  `offset = network time - system time`, stored in `/tmp/mibpkg.clock_offset`. mibpkg never relies
+  on other packages' files (Tailscale is optional and will be its own package), so it always gets
+  time through its own query.
 - The system clock is never changed. The offset is applied only to TLS certificate checks.
 
 ### Fetching
