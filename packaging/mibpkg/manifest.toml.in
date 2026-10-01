@@ -14,3 +14,7 @@ mode = "755"
 [[file]]
 src = "bin/gem.sh"
 mode = "755"
+
+# CA roots for online sources (read by the fetcher from /mnt/app/root/mibpkg/bin/ca.pem)
+[[file]]
+src = "bin/ca.pem"

@@ -19,8 +19,9 @@ mkdir -p "$COLL/packages"
 # mibpkg as a package (self-update path)
 sed "s/@VERSION@/$VERSION/" "$ROOT/packaging/mibpkg/manifest.toml.in" > "$OUT/stage/mibpkg/manifest.toml"
 cp "$QNX_BIN" "$OUT/stage/mibpkg/bin/mibpkg"
-cp "$ROOT/shell/launch.sh" "$ROOT/shell/gem.sh" "$OUT/stage/mibpkg/bin/"
+cp "$ROOT/shell/launch.sh" "$ROOT/shell/gem.sh" "$ROOT/packaging/ca.pem" "$OUT/stage/mibpkg/bin/"
 chmod 755 "$OUT/stage/mibpkg/bin/"*
+chmod 644 "$OUT/stage/mibpkg/bin/ca.pem"
 "$HOST" build "$OUT/stage/mibpkg" "$COLL/packages"
 
 for extra in "$@"; do
@@ -30,7 +31,7 @@ done
 
 # M.I.B. bootstrap
 cp "$ROOT/shell/custom.sh" "$ROOT/shell/command.sh" "$OUT/sd/mod/"
-cp "$QNX_BIN" "$ROOT/shell/launch.sh" "$ROOT/shell/gem.sh" "$OUT/sd/mod/mibpkg/"
+cp "$QNX_BIN" "$ROOT/shell/launch.sh" "$ROOT/shell/gem.sh" "$ROOT/packaging/ca.pem" "$OUT/sd/mod/mibpkg/"
 
 (cd "$OUT/sd" && rm -f "../mibpkg-sd-$VERSION.zip" && zip -qr "../mibpkg-sd-$VERSION.zip" .)
 echo "bundle: $OUT/sd  ($OUT/mibpkg-sd-$VERSION.zip)"

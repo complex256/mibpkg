@@ -31,6 +31,10 @@ ok=1
 for f in mibpkg launch.sh gem.sh; do
     cp "$SRC/$f" "$HOME_DIR/bin/$f.new" && chmod 755 "$HOME_DIR/bin/$f.new" && mv "$HOME_DIR/bin/$f.new" "$HOME_DIR/bin/$f" || ok=0
 done
+# CA roots for online sources; optional so older cards still bootstrap.
+if [ -f "$SRC/ca.pem" ]; then
+    cp "$SRC/ca.pem" "$HOME_DIR/bin/ca.pem.new" && mv "$HOME_DIR/bin/ca.pem.new" "$HOME_DIR/bin/ca.pem" || ok=0
+fi
 sync
 mount -ur /mnt/app
 if [ $ok != 1 ]; then

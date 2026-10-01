@@ -290,3 +290,19 @@ fn repair_is_not_blocked_by_the_free_space_check() {
     let msg = install::install(&ctx, &[f.sd()], &c2, "demo").unwrap();
     assert!(msg.contains("repaired"), "{msg}");
 }
+
+#[test]
+fn self_update_installs_the_ca_bundle() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let s = f.root().join("src-mibpkg");
+    fs::create_dir_all(s.join("bin")).unwrap();
+    fs::write(s.join("manifest.toml"), "[package]\nname = \"mibpkg\"\nversion = \"9.0.0\"\n\n[[file]]\nsrc = \"bin/mibpkg\"\nmode = \"755\"\n\n[[file]]\nsrc = \"bin/launch.sh\"\nmode = \"755\"\n\n[[file]]\nsrc = \"bin/gem.sh\"\nmode = \"755\"\n\n[[file]]\nsrc = \"bin/ca.pem\"\n").unwrap();
+    for n in ["mibpkg", "launch.sh", "gem.sh", "ca.pem"] {
+        fs::write(s.join("bin").join(n), n).unwrap();
+    }
+    let c = Collection::load(&common::collection(&f.sd(), "complex256", &[s])).unwrap();
+    install::install(&ctx, &[f.sd()], &c, "mibpkg").unwrap();
+    assert_eq!(fs::read_to_string(f.layout.bin_dir().join("ca.pem")).unwrap(), "ca.pem");
+}

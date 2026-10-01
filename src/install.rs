@@ -109,6 +109,10 @@ fn self_update(layout: &Layout, ver_dir: &Path) -> Result<()> {
         copy_atomic(&ver_dir.join("bin").join(f), &layout.bin_dir().join(f), 0o755)
             .with_context(|| format!("installing new {f}"))?;
     }
+    let ca = ver_dir.join("bin/ca.pem");
+    if ca.is_file() {
+        copy_atomic(&ca, &layout.bin_dir().join("ca.pem"), 0o644).context("installing new ca.pem")?;
+    }
     control::request_selfupdate(layout)
 }
 
