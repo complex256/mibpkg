@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 const USAGE: &str = "usage:
   mibpkg build <src-dir> <out-dir>
-  mibpkg index <collection-dir> --id ID --name NAME
+  mibpkg index <collection-dir> --id ID --name NAME [--flat]
   mibpkg [--root DIR] [--no-supervisor] <command>
     supervise | status | list | install <pkg> [collection] | remove <pkg> [--purge]
     rollback <pkg> | restart <pkg> | rescan | update-all | gem <action> [args..]
@@ -353,17 +353,19 @@ fn host_index(args: &[String]) -> Result<i32> {
     let dir = Path::new(arg(args, 0, "collection dir")?);
     let mut id = None;
     let mut name = None;
+    let mut flat = false;
     let mut it = args[1..].iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--id" => id = it.next().cloned(),
             "--name" => name = it.next().cloned(),
+            "--flat" => flat = true,
             other => bail!("unexpected argument {other:?}"),
         }
     }
     let id = id.context("--id is required")?;
     let name = name.unwrap_or_else(|| id.clone());
-    let idx = build_index(dir, &id, &name)?;
+    let idx = if flat { crate::index::build_index_flat(dir, &id, &name)? } else { build_index(dir, &id, &name)? };
     write_index(dir, &idx)?;
     println!("{} packages in {}", idx.packages.len(), dir.join("index.json").display());
     Ok(0)

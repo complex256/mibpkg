@@ -65,3 +65,14 @@ fn load_rejects_bad_entry_names_and_versions() {
         assert!(Collection::load(d).is_err(), "{name} {ver}");
     }
 }
+
+#[test]
+fn flat_index_lists_packages_next_to_it() {
+    let t = tempfile::tempdir().unwrap();
+    let a = common::pkg_src(t.path(), "alpha", "1.0.0", "sleep 1", "");
+    let out = t.path().join("rel");
+    fs::create_dir_all(&out).unwrap();
+    mibpkg::archive::pack(&a, &out.join("alpha-1.0.0.mpk")).unwrap();
+    let idx = mibpkg::index::build_index_flat(&out, "complex256", "complex256 packages").unwrap();
+    assert_eq!(idx.packages[0].file, "alpha-1.0.0.mpk");
+}

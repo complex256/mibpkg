@@ -146,11 +146,20 @@ pub fn cmp_versions(a: &str, b: &str) -> Ordering {
 
 /// Host tooling: index every packages/*.mpk in `dir`.
 pub fn build_index(dir: &Path, id: &str, name: &str) -> Result<Index> {
+    index_dir(&dir.join("packages"), id, name, "packages/")
+}
+
+/// Host tooling: index every *.mpk next to the index (online collections: release assets are flat).
+pub fn build_index_flat(dir: &Path, id: &str, name: &str) -> Result<Index> {
+    index_dir(dir, id, name, "")
+}
+
+fn index_dir(pkgs: &Path, id: &str, name: &str, prefix: &str) -> Result<Index> {
     if !valid_name(id) {
         bail!("collection id {id:?} must be 1-40 of [a-z0-9-]");
     }
-    let mut files: Vec<PathBuf> = fs::read_dir(dir.join("packages"))
-        .with_context(|| format!("reading {}/packages", dir.display()))?
+    let mut files: Vec<PathBuf> = fs::read_dir(pkgs)
+        .with_context(|| format!("reading {}", pkgs.display()))?
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.extension().map_or(false, |x| x == "mpk"))
         .collect();
@@ -168,7 +177,7 @@ pub fn build_index(dir: &Path, id: &str, name: &str) -> Result<Index> {
         packages.push(IndexEntry {
             name: m.package.name.clone(),
             version: m.package.version.clone(),
-            file: format!("packages/{fname}"),
+            file: format!("{prefix}{fname}"),
             sha256,
             size,
             description: m.package.description.clone(),
