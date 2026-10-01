@@ -173,3 +173,13 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
 - Tiny race: uninstall-self touching `stop` between a new supervisor's pid write and its stale-stop cleanup.
 - RESERVED: `lock` isn't a real collision; add a comment explaining the `<pkg>.<svc>` reasoning.
 - mibpkg self: power loss after state save but before self_update leaves old binaries; Equal branch never retries.
+
+## Online M1 review minors (deferred, 2026-09-30)
+- Redirects: restrict to https (CURLOPT_REDIR_PROTOCOLS/PROTOCOLS = https, MAXREDIRS 10) — matters once signatures land (M2).
+- Cap a package download at its index `size` instead of MAX_PACKAGE; stream to /tmp instead of holding it in RAM.
+- Card-specific wording in errors that now also apply to online collections.
+- FFI nits: CString built after curl_easy_init leaks the handle on error; VERIFY_TIME is a global; a failed libcurl load is cached for the process; missing optional OpenSSL symbols silently skip the verify-time hook.
+- Drop the clock offset once the system clock looks real; validate SNTP replies (mode, stratum, origin timestamp).
+- Online status row: stale text after a failed check; raw curl errors shown to the user.
+- Prune state/online/<id>.json for sources no longer configured.
+- USAGE lists neither `online-check` nor `sntp`.

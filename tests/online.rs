@@ -143,3 +143,60 @@ fn a_corrupted_download_installs_nothing() {
     assert!(install::current_version(&f.layout, "demo").is_none());
     assert!(!f.layout.run("dl.demo-1.1.0.mpk").exists(), "download removed on failure too");
 }
+
+#[test]
+fn equal_versions_prefer_the_card_copy() {
+    // Offline with the same version cached online and on the card: the card must win.
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let card = Collection::load(&common::collection(&f.sd(), "complex256", &[common::pkg_src(f.root(), "demo", "1.1.0", "sleep 30", "")])).unwrap();
+    let (m, _) = published(&f, &["1.1.0"]);
+    online::check(&ctx, &m);
+    let mut colls = vec![card];
+    colls.extend(online::collections(&f.layout));
+    let st = State::default();
+    assert!(install::pick_collection(&st, &colls, "demo", Some("complex256"), &ctx.unit).unwrap().base_url.is_none());
+}
+
+#[test]
+fn fetching_writes_nothing_until_stored() {
+    // The background check fetches without the action lock and only takes it to store.
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let (m, _) = published(&f, &["1.0.0"]);
+    let fetched = online::fetch_all(&ctx, &m);
+    assert!(sys.calls.borrow().is_empty(), "no remount while fetching");
+    assert!(online::collections(&f.layout).is_empty());
+    let r = online::store(&ctx, fetched);
+    assert_eq!(r.errors, Vec::<String>::new());
+    assert_eq!(online::collections(&f.layout).len(), 1);
+}
+
+#[test]
+fn unit_fetcher_finds_the_ca_bundle_in_the_installed_package() {
+    // A car upgraded from 0.2.x by its old binary only has ca.pem inside pkgs/mibpkg/<ver>/bin.
+    let f = common::fixture();
+    let ver = f.layout.pkg_dir("mibpkg").join("0.3.0/bin");
+    fs::create_dir_all(&ver).unwrap();
+    fs::write(ver.join("ca.pem"), "x").unwrap();
+    fs::write(f.layout.pkg_dir("mibpkg").join("current"), "0.3.0").unwrap();
+    let c = mibpkg::fetch::CurlFetcher::for_unit(&f.layout, None);
+    assert_eq!(c.ca_bundle.as_deref(), Some(ver.join("ca.pem").as_path()));
+    fs::create_dir_all(f.layout.bin_dir()).unwrap();
+    fs::remove_file(ver.join("ca.pem")).unwrap();
+    fs::write(f.layout.bin_dir().join("ca.pem"), "y").unwrap();
+    let c = mibpkg::fetch::CurlFetcher::for_unit(&f.layout, None);
+    assert_eq!(c.ca_bundle.as_deref(), Some(f.layout.bin_dir().join("ca.pem").as_path()));
+}
+
+#[test]
+fn unit_fetcher_measures_the_clock_itself_when_needed() {
+    let f = common::fixture();
+    let mut c = mibpkg::fetch::CurlFetcher::for_unit(&f.layout, None);
+    c.time_servers = vec!["127.0.0.1:9".into()];
+    assert!(c.verify_offset().is_err(), "no offset and no reachable server: no clock");
+    fs::write(f.layout.run("clock_offset"), "77").unwrap();
+    assert_eq!(c.verify_offset().unwrap(), Some(77), "uses the offset measured this boot");
+}

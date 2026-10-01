@@ -136,3 +136,18 @@ fn a_running_check_is_never_doubled() {
     s.tick(Instant::now(), true, &mut spawn);
     assert_eq!(s.spawns(), 1, "previous check still running");
 }
+
+#[test]
+fn a_failed_check_is_retried_soon_and_due_reports_when() {
+    use mibpkg::supervisor::OnlineSchedule;
+    let mut s = OnlineSchedule::new(Duration::from_secs(3600));
+    let t0 = Instant::now();
+    assert!(s.due(t0));
+    let mut fail = || std::process::Command::new("false").spawn();
+    s.tick(t0, true, &mut fail);
+    assert!(!s.due(t0), "a check is running");
+    std::thread::sleep(Duration::from_millis(200)); // let `false` exit
+    s.tick(t0 + Duration::from_secs(1), true, &mut fail); // reaps the failure
+    assert!(!s.due(t0 + Duration::from_secs(60)), "short backoff, not immediately");
+    assert!(s.due(t0 + Duration::from_secs(3 * 60)), "retried within minutes, not 6 h");
+}

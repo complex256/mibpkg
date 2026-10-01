@@ -461,30 +461,45 @@ impl<'a> Supervisor<'a> {
     }
 }
 
+/// Waits before retrying a failed (or busy) check: 2, 5, then every 15 minutes.
+const ONLINE_RETRY: [u64; 3] = [120, 300, 900];
+
 /// When to spawn `mibpkg online-check`: first once `internet` holds, then every `every`,
-/// never while the previous check is still running.
+/// never while the previous check is still running; a failed check is retried within minutes.
 pub struct OnlineSchedule {
     every: Duration,
     next: Option<Instant>,
     child: Option<Child>,
     spawns: u32,
+    failures: usize,
 }
 
 impl OnlineSchedule {
     pub fn new(every: Duration) -> OnlineSchedule {
-        OnlineSchedule { every, next: None, child: None, spawns: 0 }
+        OnlineSchedule { every, next: None, child: None, spawns: 0, failures: 0 }
     }
 
     pub fn spawns(&self) -> u32 {
         self.spawns
     }
 
+    /// A check would start now if `internet` holds (so callers probe the network only then).
+    pub fn due(&self, now: Instant) -> bool {
+        self.child.is_none() && self.next.map_or(true, |t| now >= t)
+    }
+
     pub fn tick(&mut self, now: Instant, internet: bool, spawn: &mut dyn FnMut() -> std::io::Result<Child>) {
         if let Some(c) = self.child.as_mut() {
             match c.try_wait() {
                 Ok(None) => return,
-                _ => self.child = None,
+                Ok(Some(st)) if st.success() => self.failures = 0,
+                _ => {
+                    let wait = ONLINE_RETRY[self.failures.min(ONLINE_RETRY.len() - 1)];
+                    self.failures += 1;
+                    self.next = Some(now + Duration::from_secs(wait));
+                }
             }
+            self.child = None;
         }
         if !internet || self.next.map_or(false, |t| now < t) {
             return;
@@ -593,6 +608,8 @@ pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
     let clock_is_uptime = || now_secs() < 1_577_836_800;
     let mut markers = MarkerWatch::new(layout, BOOT_MARKERS);
     let mut online = OnlineSchedule::new(timing.online_every);
+    // The internet condition spawns netstat: probe it only while a check is due, every 10 s.
+    let mut next_probe = Instant::now();
     if clock_is_uptime() {
         println!("mibpkg: supervisor started at {} s", now_secs());
         live.set(sys, crate::persist::KEY_SUPERVISOR, &format!("running since {} s after boot", now_secs()));
@@ -631,8 +648,12 @@ pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
         // Background online checks, only on the unit (host tests never spawn them). The log is
         // opened twice: File::try_clone fails with EINVAL on QNX 6.5.
         if layout.root == Path::new("/") {
-            let internet = sup.condition_met("internet");
-            online.tick(Instant::now(), internet, &mut || {
+            let now = Instant::now();
+            let internet = online.due(now) && now >= next_probe && {
+                next_probe = now + Duration::from_secs(10);
+                sup.condition_met("internet")
+            };
+            online.tick(now, internet, &mut || {
                 let open = || fs::OpenOptions::new().create(true).append(true).open(layout.run("log"));
                 Command::new(layout.tmp_bin()).arg("online-check").stdin(Stdio::null()).stdout(open()?).stderr(open()?).spawn()
             });

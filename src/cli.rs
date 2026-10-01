@@ -96,20 +96,23 @@ pub fn run(args: &[String]) -> Result<i32> {
             Ok(0)
         }
         "online-check" => {
+            // Network first, without the lock, so GEM actions stay usable meanwhile. A busy lock or
+            // a failed check exits 1: the supervisor then retries within minutes, not hours.
+            let fetched = online_fetch(&ctx);
             let _lock = match Lock::acquire(&ctx.layout, ctx.sys) {
                 Ok(l) => l,
                 Err(_) => {
                     println!("online: busy");
-                    return Ok(0);
+                    return Ok(1);
                 }
             };
-            let text = online_check(&ctx);
+            let (text, ok) = online_store(&ctx, fetched);
             if let Err(e) = ctx.sys.persist_write(crate::persist::NS, crate::persist::KEY_ONLINE, &text) {
                 eprintln!("warning: live online status: {e:#}");
             }
             after(&ctx);
             println!("{text}");
-            Ok(0)
+            Ok(if ok { 0 } else { 1 })
         }
         "list" => {
             print_list(&ctx)?;
@@ -261,12 +264,15 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
 }
 
 /// Fetch the online indexes (configured sources) and report; never fails the caller.
-fn online_check(ctx: &Ctx) -> String {
+type Fetched = Vec<(String, Result<crate::online::Cached>)>;
+
+/// Fetches every online source; needs no lock. Err is the finished status line.
+fn online_fetch(ctx: &Ctx) -> std::result::Result<Fetched, String> {
     let on_unit = ctx.layout.root == Path::new("/");
     let offset = if on_unit {
         match crate::clock::ensure_offset(&ctx.layout, crate::clock::SERVERS, Duration::from_secs(5)) {
             Ok(o) => Some(o),
-            Err(e) => return format!("online: no clock yet ({e:#})"),
+            Err(e) => return Err(format!("online: no clock yet ({e:#})")),
         }
     } else {
         None
@@ -276,8 +282,22 @@ fn online_check(ctx: &Ctx) -> String {
     } else {
         Box::new(crate::fetch::Unavailable)
     };
-    let report = crate::online::check(ctx, fetcher.as_ref());
-    format!("online: {}", report.summary(now_secs()))
+    Ok(crate::online::fetch_all(ctx, fetcher.as_ref()))
+}
+
+/// Stores what was fetched (under the lock): the status line and whether everything worked.
+fn online_store(ctx: &Ctx, fetched: std::result::Result<Fetched, String>) -> (String, bool) {
+    match fetched {
+        Err(text) => (text, false),
+        Ok(f) => {
+            let report = crate::online::store(ctx, f);
+            (format!("online: {}", report.summary(now_secs())), report.errors.is_empty())
+        }
+    }
+}
+
+fn online_check(ctx: &Ctx) -> String {
+    online_store(ctx, online_fetch(ctx)).0
 }
 
 fn record_result(ctx: &Ctx, key: &str, text: &str) -> Result<()> {

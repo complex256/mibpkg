@@ -39,14 +39,19 @@ pub fn read_offset(layout: &Layout) -> Option<i64> {
 
 /// The offset, querying `servers` in order (and caching the answer) when none is known yet.
 pub fn ensure_offset(layout: &Layout, servers: &[&str], timeout: Duration) -> Result<i64> {
-    if let Some(o) = read_offset(layout) {
+    ensure_offset_at(&layout.run("clock_offset"), servers, timeout)
+}
+
+/// `ensure_offset` with the cache file given directly.
+pub fn ensure_offset_at(file: &std::path::Path, servers: &[&str], timeout: Duration) -> Result<i64> {
+    if let Some(o) = std::fs::read_to_string(file).ok().and_then(|t| t.trim().parse().ok()) {
         return Ok(o);
     }
     let mut last = None;
     for s in servers {
         match sntp_offset(s, timeout) {
             Ok(o) => {
-                atomic_write(&layout.run("clock_offset"), o.to_string().as_bytes())?;
+                atomic_write(file, o.to_string().as_bytes())?;
                 return Ok(o);
             }
             Err(e) => last = Some(e),

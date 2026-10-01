@@ -66,7 +66,8 @@ pub fn pick_collection<'c>(
     unit: &crate::unit::UnitInfo,
 ) -> Result<&'c Collection> {
     // Several origins (card, online) may carry the same collection id: take the one offering the
-    // newest version of `name` that fits this unit.
+    // newest version of `name` that fits this unit; on a tie the card wins (no download, works
+    // offline).
     let best_of = |want: &str| -> Option<&'c Collection> {
         colls
             .iter()
@@ -74,7 +75,7 @@ pub fn pick_collection<'c>(
             .max_by(|a, b| {
                 let va = a.latest_compatible(name, unit).map(|e| e.version.clone()).unwrap_or_default();
                 let vb = b.latest_compatible(name, unit).map(|e| e.version.clone()).unwrap_or_default();
-                cmp_versions(&va, &vb)
+                cmp_versions(&va, &vb).then(a.base_url.is_none().cmp(&b.base_url.is_none()))
             })
     };
     let want = id.map(String::from).or_else(|| state.packages.get(name).map(|i| i.collection.clone()));

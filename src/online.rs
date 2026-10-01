@@ -81,16 +81,19 @@ impl Report {
     }
 }
 
-fn fetch_one(ctx: &Ctx, fetcher: &dyn Fetcher, source: &str) -> Result<()> {
+fn fetch_one(fetcher: &dyn Fetcher, source: &str) -> Result<Cached> {
     let url = index_url(source)?;
     let bytes = fetcher.get(&url, MAX_INDEX)?;
     let index: Index = serde_json::from_slice(&bytes).with_context(|| format!("{url}: not a valid index.json"))?;
     let base = base_of(&url);
     let coll = Collection::from_online(index, &base).with_context(|| url.clone())?;
-    let cached = Cached { source: source.to_string(), base_url: base, index: coll.index.clone() };
-    let mut text = serde_json::to_string_pretty(&cached)?;
+    Ok(Cached { source: source.to_string(), base_url: base, index: coll.index })
+}
+
+fn store_one(ctx: &Ctx, cached: &Cached) -> Result<()> {
+    let mut text = serde_json::to_string_pretty(cached)?;
     text.push('\n');
-    let path = cache_path(&ctx.layout, coll.id());
+    let path = cache_path(&ctx.layout, &cached.index.collection.id);
     if fs::read_to_string(&path).ok().as_deref() != Some(text.as_str()) {
         let _rw = ctx.mounts.rw("/mnt/app")?;
         atomic_write(&path, text.as_bytes())?;
@@ -98,11 +101,18 @@ fn fetch_one(ctx: &Ctx, fetcher: &dyn Fetcher, source: &str) -> Result<()> {
     Ok(())
 }
 
-/// Fetch every configured source; failures are reported and leave the previous cache in place.
-pub fn check(ctx: &Ctx, fetcher: &dyn Fetcher) -> Report {
+/// Every configured source's index, fetched and validated. Touches nothing on the unit, so it
+/// runs without the action lock (network I/O can take minutes).
+pub fn fetch_all(ctx: &Ctx, fetcher: &dyn Fetcher) -> Vec<(String, Result<Cached>)> {
+    ctx.layout.settings.online_sources.iter().map(|s| (s.clone(), fetch_one(fetcher, s))).collect()
+}
+
+/// Caches what `fetch_all` got (failed sources keep their previous cache) and reports updates.
+/// Run under the action lock.
+pub fn store(ctx: &Ctx, fetched: Vec<(String, Result<Cached>)>) -> Report {
     let mut r = Report::default();
-    for source in &ctx.layout.settings.online_sources {
-        match fetch_one(ctx, fetcher, source) {
+    for (source, got) in fetched {
+        match got.and_then(|c| store_one(ctx, &c)) {
             Ok(()) => r.checked += 1,
             Err(e) => r.errors.push(format!("{source}: {e:#}")),
         }
@@ -113,4 +123,9 @@ pub fn check(ctx: &Ctx, fetcher: &dyn Fetcher) -> Report {
         r.updates = updates_available(&state, &colls, &ctx.unit);
     }
     r
+}
+
+/// Fetch and store in one go (on-demand checks that already hold the lock).
+pub fn check(ctx: &Ctx, fetcher: &dyn Fetcher) -> Report {
+    store(ctx, fetch_all(ctx, fetcher))
 }

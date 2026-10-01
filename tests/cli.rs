@@ -116,9 +116,9 @@ fn result_stamp_is_omitted_while_the_clock_is_unset() {
 }
 
 #[test]
-fn online_check_off_the_unit_reports_and_does_not_fail() {
+fn online_check_off_the_unit_reports_and_exits_nonzero() {
     let f = common::fixture();
-    assert_eq!(run(&args(f.root(), &["online-check"])).unwrap(), 0);
+    assert_eq!(run(&args(f.root(), &["online-check"])).unwrap(), 1, "a failed check exits non-zero so the supervisor retries soon");
     assert_eq!(run(&args(f.root(), &["gem", "check"])).unwrap(), 0);
     let st = State::load(&f.layout).unwrap();
     assert!(st.results["_"].contains("online"), "{:?}", st.results);

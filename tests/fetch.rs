@@ -27,6 +27,8 @@ fn host_curl() -> CurlFetcher {
         clock_offset: None,
         timeout_secs: 5,
         allow_http: true,
+        clock_file: None,
+        time_servers: vec![],
     }
 }
 
@@ -60,4 +62,33 @@ fn memory_fetcher_serves_and_records() {
     assert!(format!("{:#}", m.get("https://h/b", 10).unwrap_err()).contains("404"));
     assert!(m.get("https://h/a", 0).is_err(), "size cap applies");
     assert_eq!(*m.calls.borrow(), vec!["https://h/a", "https://h/b", "https://h/a"]);
+}
+
+/// Serves the body in `chunks` pieces, `gap_ms` apart.
+fn slow_server(body: Vec<u8>, chunks: usize, gap_ms: u64) -> String {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/", l.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for s in l.incoming() {
+            let mut s = s.unwrap();
+            let mut buf = [0u8; 2048];
+            let _ = s.read(&mut buf);
+            let _ = s.write_all(format!("HTTP/1.0 200 OK\r\nContent-Length: {}\r\n\r\n", body.len()).as_bytes());
+            for part in body.chunks(body.len().div_ceil(chunks)) {
+                std::thread::sleep(std::time::Duration::from_millis(gap_ms));
+                let _ = s.write_all(part);
+            }
+        }
+    });
+    url
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn a_slow_but_steady_download_is_not_cut_off() {
+    // timeout_secs bounds connecting and stalls, not the whole transfer (big packages over LTE).
+    let url = slow_server(vec![b'x'; 40_000], 4, 600);
+    let mut c = host_curl();
+    c.timeout_secs = 1;
+    assert_eq!(c.get(&url, 100_000).unwrap().len(), 40_000);
 }

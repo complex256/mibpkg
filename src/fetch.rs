@@ -2,7 +2,7 @@
 //! no Rust TLS stack builds for QNX 6.5 (spikes/README.md). Certificates are checked against our
 //! CA bundle at network time (the unit clock is 1970) via CURLOPT_SSL_CTX_FUNCTION.
 use crate::paths::Layout;
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::{c_char, c_int, c_long, c_void, CStr, CString};
@@ -65,7 +65,9 @@ const CURLOPT_WRITEFUNCTION: c_int = 20011;
 const CURLOPT_WRITEDATA: c_int = 10001;
 const CURLOPT_ERRORBUFFER: c_int = 10010;
 const CURLOPT_USERAGENT: c_int = 10018;
-const CURLOPT_TIMEOUT: c_int = 13;
+const CURLOPT_CONNECTTIMEOUT: c_int = 78;
+const CURLOPT_LOW_SPEED_LIMIT: c_int = 19;
+const CURLOPT_LOW_SPEED_TIME: c_int = 20;
 const CURLOPT_NOSIGNAL: c_int = 99;
 const CURLOPT_SSL_CTX_FUNCTION: c_int = 20108;
 const CURLINFO_RESPONSE_CODE: c_int = 0x200002;
@@ -167,9 +169,14 @@ pub struct CurlFetcher {
     pub ca_bundle: Option<PathBuf>,
     /// Network minus local seconds; when set, certificates are checked at local time + offset.
     pub clock_offset: Option<i64>,
+    /// Connect timeout, and the longest a transfer may stall before it is given up.
     pub timeout_secs: i64,
     /// Tests only: accept http:// URLs.
     pub allow_http: bool,
+    /// Without `clock_offset`: where an offset measured this boot is kept, and the SNTP servers
+    /// to measure it with when there is none (empty = trust the system clock).
+    pub clock_file: Option<PathBuf>,
+    pub time_servers: Vec<String>,
 }
 
 const UNIT_LIB: &str = "/mnt/app/armle/usr/lib";
@@ -180,11 +187,34 @@ impl CurlFetcher {
         CurlFetcher {
             lib: l("libcurl.so.2"),
             preload: vec![l("libz.so.2"), l("libcrypto.so.2"), l("libssl.so.2"), l("libcares.so.1")],
-            ca_bundle: Some(layout.bin_dir().join("ca.pem")),
+            ca_bundle: Some(unit_ca(layout)),
             clock_offset,
             timeout_secs: 30,
             allow_http: false,
+            clock_file: Some(layout.run("clock_offset")),
+            time_servers: crate::clock::SERVERS.iter().map(|s| s.to_string()).collect(),
         }
+    }
+
+    /// The offset for certificate checks: the given one, else this boot's measurement, else a
+    /// fresh SNTP query (an error when no server answers: without it every certificate looks
+    /// "not yet valid" on a unit whose clock reads 1970).
+    pub fn verify_offset(&self) -> Result<Option<i64>> {
+        if self.clock_offset.is_some() || self.time_servers.is_empty() {
+            return Ok(self.clock_offset);
+        }
+        let Some(file) = &self.clock_file else { return Ok(None) };
+        let servers: Vec<&str> = self.time_servers.iter().map(String::as_str).collect();
+        crate::clock::ensure_offset_at(file, &servers, std::time::Duration::from_secs(5)).map(Some).context("no network time")
+    }
+}
+
+/// The CA bundle of the installed mibpkg package, falling back to bin/: a unit upgraded by an
+/// older mibpkg (whose self-update copies only the binary and scripts) has it only there.
+fn unit_ca(layout: &Layout) -> PathBuf {
+    match crate::install::current_dir(layout, "mibpkg").map(|d| d.join("bin/ca.pem")) {
+        Some(p) if p.exists() => p,
+        _ => layout.bin_dir().join("ca.pem"),
     }
 }
 
@@ -198,6 +228,7 @@ impl Fetcher for CurlFetcher {
             Ok(a) => a,
             Err(e) => bail!("libcurl unavailable: {e}"),
         };
+        let offset = if https { self.verify_offset()? } else { None };
         unsafe {
             let c = (api.init)();
             if c.is_null() {
@@ -211,7 +242,11 @@ impl Fetcher for CurlFetcher {
             (api.setopt)(c, CURLOPT_URL, curl_url.as_ptr());
             (api.setopt)(c, CURLOPT_FOLLOWLOCATION, 1 as c_long);
             (api.setopt)(c, CURLOPT_USERAGENT, ua.as_ptr());
-            (api.setopt)(c, CURLOPT_TIMEOUT, self.timeout_secs as c_long);
+            // Bound connecting and stalls, not the whole transfer: a 10 MB package over weak LTE
+            // can take minutes and is fine as long as bytes keep arriving.
+            (api.setopt)(c, CURLOPT_CONNECTTIMEOUT, self.timeout_secs as c_long);
+            (api.setopt)(c, CURLOPT_LOW_SPEED_LIMIT, 1 as c_long);
+            (api.setopt)(c, CURLOPT_LOW_SPEED_TIME, self.timeout_secs as c_long);
             (api.setopt)(c, CURLOPT_NOSIGNAL, 1 as c_long);
             (api.setopt)(c, CURLOPT_ERRORBUFFER, err.as_mut_ptr());
             (api.setopt)(c, CURLOPT_WRITEFUNCTION, write_cb as extern "C" fn(*const u8, usize, usize, *mut c_void) -> usize);
@@ -219,7 +254,7 @@ impl Fetcher for CurlFetcher {
             if let Some(ca) = &ca {
                 (api.setopt)(c, CURLOPT_CAINFO, ca.as_ptr());
             }
-            if let (true, Some(off)) = (https, self.clock_offset) {
+            if let Some(off) = offset {
                 VERIFY_TIME.store(time(std::ptr::null_mut()) as i64 + off, Ordering::Relaxed);
                 (api.setopt)(c, CURLOPT_SSL_CTX_FUNCTION, ssl_ctx_cb as extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> c_int);
             }
