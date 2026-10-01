@@ -17,6 +17,8 @@ pub struct Timing {
     pub config_recheck: Duration,
     /// A service running this long gets its backoff reset.
     pub stable_after: Duration,
+    /// How often to check online sources for updates while running.
+    pub online_every: Duration,
 }
 
 impl Default for Timing {
@@ -30,6 +32,7 @@ impl Default for Timing {
             stop_grace: Duration::from_secs(5),
             config_recheck: Duration::from_secs(10),
             stable_after: Duration::from_secs(60),
+            online_every: Duration::from_secs(6 * 3600),
         }
     }
 }
@@ -233,6 +236,12 @@ impl<'a> Supervisor<'a> {
                 let _ = fs::remove_file(self.layout.run(&f));
             }
         }
+    }
+
+    /// Whether a start condition (e.g. "internet") holds right now.
+    pub fn condition_met(&self, entry: &str) -> bool {
+        let cache = TickCache::new(self.view.as_ref());
+        conditions::unmet(&[entry.to_string()], &self.layout.settings, &cache).is_empty()
     }
 
     pub fn restart(&mut self, id: &str) {
@@ -452,6 +461,48 @@ impl<'a> Supervisor<'a> {
     }
 }
 
+/// When to spawn `mibpkg online-check`: first once `internet` holds, then every `every`,
+/// never while the previous check is still running.
+pub struct OnlineSchedule {
+    every: Duration,
+    next: Option<Instant>,
+    child: Option<Child>,
+    spawns: u32,
+}
+
+impl OnlineSchedule {
+    pub fn new(every: Duration) -> OnlineSchedule {
+        OnlineSchedule { every, next: None, child: None, spawns: 0 }
+    }
+
+    pub fn spawns(&self) -> u32 {
+        self.spawns
+    }
+
+    pub fn tick(&mut self, now: Instant, internet: bool, spawn: &mut dyn FnMut() -> std::io::Result<Child>) {
+        if let Some(c) = self.child.as_mut() {
+            match c.try_wait() {
+                Ok(None) => return,
+                _ => self.child = None,
+            }
+        }
+        if !internet || self.next.map_or(false, |t| now < t) {
+            return;
+        }
+        match spawn() {
+            Ok(c) => {
+                self.child = Some(c);
+                self.spawns += 1;
+                self.next = Some(now + self.every);
+            }
+            Err(e) => {
+                eprintln!("mibpkg: starting online-check: {e}");
+                self.next = Some(now + Duration::from_secs(300));
+            }
+        }
+    }
+}
+
 /// Files the unit creates during boot, logged with their appearance time to learn the boot
 /// sequence (startup markers, SIM data, network, Tailscale).
 pub const BOOT_MARKERS: &[&str] = &[
@@ -541,6 +592,7 @@ pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
     // boot timeline; once the clock is real they would be meaningless, so stop.
     let clock_is_uptime = || now_secs() < 1_577_836_800;
     let mut markers = MarkerWatch::new(layout, BOOT_MARKERS);
+    let mut online = OnlineSchedule::new(timing.online_every);
     if clock_is_uptime() {
         println!("mibpkg: supervisor started at {} s", now_secs());
         live.set(sys, crate::persist::KEY_SUPERVISOR, &format!("running since {} s after boot", now_secs()));
@@ -576,6 +628,15 @@ pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
             sup.restart(&id);
         }
         sup.tick(Instant::now());
+        // Background online checks, only on the unit (host tests never spawn them). The log is
+        // opened twice: File::try_clone fails with EINVAL on QNX 6.5.
+        if layout.root == Path::new("/") {
+            let internet = sup.condition_met("internet");
+            online.tick(Instant::now(), internet, &mut || {
+                let open = || fs::OpenOptions::new().create(true).append(true).open(layout.run("log"));
+                Command::new(layout.tmp_bin()).arg("online-check").stdin(Stdio::null()).stdout(open()?).stderr(open()?).spawn()
+            });
+        }
         let _ = crate::fsutil::cap_file(&layout.run("log"), LOG_CAP);
         let st = sup.status();
         for (id, s) in &st.services {

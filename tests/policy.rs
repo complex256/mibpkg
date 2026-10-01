@@ -107,3 +107,32 @@ fn boot_markers_are_logged_once_with_their_time() {
     assert!(w.check(&f.layout, 58).is_empty(), "each marker logged once");
     assert!(w.done());
 }
+
+#[test]
+fn online_checks_wait_for_internet_run_once_and_repeat() {
+    use mibpkg::supervisor::OnlineSchedule;
+    let mut s = OnlineSchedule::new(Duration::from_millis(200));
+    let mut spawn = || std::process::Command::new("true").spawn();
+    let t0 = Instant::now();
+    s.tick(t0, false, &mut spawn);
+    assert_eq!(s.spawns(), 0, "no internet, no check");
+    s.tick(t0, true, &mut spawn);
+    assert_eq!(s.spawns(), 1);
+    std::thread::sleep(Duration::from_millis(50));
+    s.tick(Instant::now(), true, &mut spawn);
+    assert_eq!(s.spawns(), 1, "not again before the interval");
+    std::thread::sleep(Duration::from_millis(250));
+    s.tick(Instant::now(), true, &mut spawn);
+    assert_eq!(s.spawns(), 2, "again after the interval");
+}
+
+#[test]
+fn a_running_check_is_never_doubled() {
+    use mibpkg::supervisor::OnlineSchedule;
+    let mut s = OnlineSchedule::new(Duration::from_millis(1));
+    let mut spawn = || std::process::Command::new("sleep").arg("2").spawn();
+    s.tick(Instant::now(), true, &mut spawn);
+    std::thread::sleep(Duration::from_millis(20));
+    s.tick(Instant::now(), true, &mut spawn);
+    assert_eq!(s.spawns(), 1, "previous check still running");
+}
