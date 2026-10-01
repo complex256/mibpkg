@@ -112,3 +112,34 @@ fn newest_compatible_across_card_and_online_wins() {
     let only_card = vec![card];
     assert!(install::pick_collection(&st, &only_card, "demo", None, &ctx.unit).unwrap().base_url.is_none());
 }
+
+#[test]
+fn installing_from_online_downloads_then_cleans_up() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let mut ctx = Ctx::new(f.layout.clone(), &sys);
+    let (m, _) = published(&f, &["1.1.0"]);
+    online::check(&ctx, &m);
+    ctx.fetcher = Box::new(m);
+    let colls = online::collections(&f.layout);
+    let msg = install::install(&ctx, &[], &colls[0], "demo").unwrap();
+    assert_eq!(msg, "installed demo 1.1.0");
+    assert!(f.layout.pkg_dir("demo").join("1.1.0/bin/demo").is_file());
+    assert!(!f.layout.run("dl.demo-1.1.0.mpk").exists(), "download removed");
+}
+
+#[test]
+fn a_corrupted_download_installs_nothing() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let mut ctx = Ctx::new(f.layout.clone(), &sys);
+    let (m, _) = published(&f, &["1.1.0"]);
+    online::check(&ctx, &m);
+    m.files.borrow_mut().insert(format!("{BASE}demo-1.1.0.mpk"), b"truncated".to_vec());
+    ctx.fetcher = Box::new(m);
+    let colls = online::collections(&f.layout);
+    let e = install::install(&ctx, &[], &colls[0], "demo").unwrap_err();
+    assert!(format!("{e:#}").contains("corrupt"), "{e:#}");
+    assert!(install::current_version(&f.layout, "demo").is_none());
+    assert!(!f.layout.run("dl.demo-1.1.0.mpk").exists(), "download removed on failure too");
+}

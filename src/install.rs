@@ -160,7 +160,26 @@ pub fn install(ctx: &Ctx, media: &[PathBuf], coll: &Collection, name: &str) -> R
         }
     }
     (ctx.progress)(&format!("checking {name} {}", entry.version));
-    let archive = coll.archive_path(&entry);
+    let archive = match coll.location(&entry) {
+        crate::index::Location::Local(p) => p,
+        crate::index::Location::Remote(url) => {
+            (ctx.progress)(&format!("downloading {name} {}", entry.version));
+            let bytes = ctx.fetcher.get(&url, crate::fetch::MAX_PACKAGE)?;
+            let p = layout.run(&format!("dl.{name}-{}.mpk", entry.version));
+            atomic_write(&p, &bytes)?;
+            p
+        }
+    };
+    // Downloads live in /tmp (RAM) only for this install, success or not.
+    struct RemoveDownload(Option<PathBuf>);
+    impl Drop for RemoveDownload {
+        fn drop(&mut self) {
+            if let Some(p) = &self.0 {
+                let _ = fs::remove_file(p);
+            }
+        }
+    }
+    let _download = RemoveDownload(if coll.base_url.is_some() { Some(archive.clone()) } else { None });
     let (sha, size) = sha256_file(&archive).with_context(|| format!("reading {}", archive.display()))?;
     if size != entry.size || sha != entry.sha256 {
         bail!("{} is corrupt (size or sha256 does not match the index); copy it to the card again", archive.display());
