@@ -107,8 +107,10 @@ collection is enabled by default. Enabled sources are stored in `state/installed
 - SD collections: unsigned is allowed as today, unless the collection id is pinned by an enabled
   online source, in which case the SD copy must verify against that key.
 - Collection ids are unique per car: an enabled source that publishes an id already owned by
-  another enabled source is refused. A publisher with several repos uses one id per repo (e.g.
-  `complex256-mibpkg`, `complex256-carmqtt`). (Possible relaxation, not planned: sources signed
+  another enabled source is refused. A publisher with several repos uses one id per repo. The
+  official source keeps the id `complex256` (installed packages record their collection id, so
+  renaming it would orphan updates on existing cars); other owner repos get new ids such as
+  `complex256-carmqtt`. (Possible relaxation, not planned: sources signed
   by the same pinned key may share an id.)
 
 ## Car side
