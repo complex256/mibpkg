@@ -198,7 +198,7 @@ fn register_self(ctx: &Ctx) -> Result<()> {
         .into_iter()
         .find(|c| c.latest(install::SELF).is_some())
         .map(|c| c.id().to_string())
-        .unwrap_or_else(|| "complex256".into());
+        .unwrap_or_else(|| "complex256-mibpkg".into());
     st.packages.insert(
         install::SELF.to_string(),
         Installed {

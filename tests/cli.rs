@@ -92,7 +92,7 @@ fn bootstrap_registers_mibpkg_itself() {
     let st = State::load(&f.layout).unwrap();
     let me = st.packages.get("mibpkg").expect("mibpkg registered");
     assert_eq!(me.version, env!("CARGO_PKG_VERSION"));
-    assert_eq!(me.collection, "complex256");
+    assert_eq!(me.collection, "complex256-mibpkg");
     assert!(me.previous.is_none());
     let esd = fs::read_to_string(f.layout.engdefs().join("mibpkg_mibpkg.esd")).unwrap();
     assert!(!esd.contains("Install "), "no Install button for the running mibpkg: {esd}");

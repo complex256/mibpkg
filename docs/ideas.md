@@ -150,13 +150,14 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
 - [next, after the online M1 car test] Publish the source repo as complex256/mibpkg (no remote yet,
   2026-09-30; only the release-asset repo complex256/mibpkg-packages exists). Before the first push:
   scrub history for excluded names, pick a license, README with install (M.I.B. card) + publishing docs.
-  With it: releases of complex256/mibpkg carry index.json + mibpkg-<v>.mpk + the SD zip (keep id
-  `complex256`: installed packages record their collection id); change DEFAULT_SOURCE to `github:complex256/mibpkg` in that release and publish it
+  With it: releases of complex256/mibpkg carry index.json + mibpkg-<v>.mpk + the SD zip (id
+  `complex256-mibpkg`, already used from release v1 on); change DEFAULT_SOURCE to `github:complex256/mibpkg` in that release and publish it
   once more via mibpkg-packages so 0.3.0 cars move over; then retire mibpkg-packages (or rename it to the
   community source list). carmqtt becomes its own source only when the owner decides to publish it.
   Gap to solve first: carmqtt on the car records collection `complex256`; once it lives in its own source
-  (`complex256-carmqtt`), updates would look in the wrong collection. Needs a "package moved" rule (e.g. the
-  old collection's index names the new one, or fall back to the single enabled source offering that name).
+  (`complex256-carmqtt`), GEM offers updates only from the recorded collection. Needs a "package moved" rule:
+  when the recorded collection is not on any card or online, offer updates from the one collection that has
+  the package (and record the new id on install). Until then: `mibpkg install <pkg> <new-id>` over ssh.
 - [later] Contribution/signing model for third-party authors (spec: online-updates M2/M4).
 
 ## Review minors (deferred from the v1 final review, 2026-09-26)

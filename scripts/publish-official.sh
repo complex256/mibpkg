@@ -8,5 +8,5 @@ TAG=$1; shift
 OUT=$ROOT/out/online
 rm -rf "$OUT" && mkdir -p "$OUT"
 cp "$@" "$OUT/"
-"$ROOT/target/release/mibpkg" index "$OUT" --id complex256 --name "complex256 packages" --flat
+"$ROOT/target/release/mibpkg" index "$OUT" --id complex256-mibpkg --name "mibpkg" --flat
 gh release create "$TAG" --repo complex256/mibpkg-packages --title "$TAG" --notes "mibpkg official collection $TAG" "$OUT"/*
