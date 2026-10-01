@@ -23,3 +23,4 @@ pub mod cli;
 pub mod conditions;
 pub mod persist;
 pub mod clock;
+pub mod fetch;
