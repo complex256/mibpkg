@@ -154,6 +154,9 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
   `complex256`: installed packages record their collection id); change DEFAULT_SOURCE to `github:complex256/mibpkg` in that release and publish it
   once more via mibpkg-packages so 0.3.0 cars move over; then retire mibpkg-packages (or rename it to the
   community source list). carmqtt becomes its own source only when the owner decides to publish it.
+  Gap to solve first: carmqtt on the car records collection `complex256`; once it lives in its own source
+  (`complex256-carmqtt`), updates would look in the wrong collection. Needs a "package moved" rule (e.g. the
+  old collection's index names the new one, or fall back to the single enabled source offering that name).
 - [later] Contribution/signing model for third-party authors (spec: online-updates M2/M4).
 
 ## Review minors (deferred from the v1 final review, 2026-09-26)
