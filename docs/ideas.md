@@ -147,7 +147,10 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
   carplay-rgi is the stress test for stock-file patches.
 
 ## Before going public
-- [later] Scrub history for excluded names; licensing; contribution/signing model for third-party authors.
+- [next, after the online M1 car test] Publish the source repo as complex256/mibpkg (no remote yet,
+  2026-09-30; only the release-asset repo complex256/mibpkg-packages exists). Before the first push:
+  scrub history for excluded names, pick a license, README with install (M.I.B. card) + publishing docs.
+- [later] Contribution/signing model for third-party authors (spec: online-updates M2/M4).
 
 ## Review minors (deferred from the v1 final review, 2026-09-26)
 - [done 2026-09-27, robustness pass] all v1 review minors: fsync staged startup.sh; boot.d write-then-prune;
