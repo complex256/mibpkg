@@ -61,7 +61,13 @@ pub fn run(args: &[String]) -> Result<i32> {
 
     let layout = Layout::load(&root)?;
     let sys = RealSys { mounts: root == Path::new("/") };
-    let ctx = Ctx::new(layout, &sys);
+    let mut ctx = Ctx::new(layout, &sys);
+    if root == Path::new("/") {
+        // Online installs download through the unit's libcurl; online-check refreshes the
+        // clock offset file this reads.
+        ctx.fetcher = Box::new(crate::fetch::CurlFetcher::for_unit(&ctx.layout, crate::clock::read_offset(&ctx.layout)));
+    }
+    let ctx = ctx;
     // The shims append every action's output to /tmp/mibpkg.log (RAM): keep it bounded.
     let _ = fsutil::cap_file(&ctx.layout.run("log"), supervisor::LOG_CAP);
     let after = |ctx: &Ctx| {
@@ -81,6 +87,28 @@ pub fn run(args: &[String]) -> Result<i32> {
         }
         "status" => {
             print_status(&ctx);
+            Ok(0)
+        }
+        "sntp" => {
+            // Diagnostic: always queries, ignoring the cached offset.
+            let server = args.first().map(|s| s.as_str()).unwrap_or(crate::clock::SERVERS[0]);
+            println!("{}", crate::clock::sntp_offset(server, Duration::from_secs(5))?);
+            Ok(0)
+        }
+        "online-check" => {
+            let _lock = match Lock::acquire(&ctx.layout, ctx.sys) {
+                Ok(l) => l,
+                Err(_) => {
+                    println!("online: busy");
+                    return Ok(0);
+                }
+            };
+            let text = online_check(&ctx);
+            if let Err(e) = ctx.sys.persist_write(crate::persist::NS, crate::persist::KEY_ONLINE, &text) {
+                eprintln!("warning: live online status: {e:#}");
+            }
+            after(&ctx);
+            println!("{text}");
             Ok(0)
         }
         "list" => {
@@ -223,8 +251,33 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
             Ok(if msgs.is_empty() { "rescanned; no new config files".into() } else { msgs.join("; ") })
         }
         "update-all" => Ok(install::update_all(ctx, &media_roots, &colls)?.join("; ")),
+        "check" => {
+            let t = online_check(ctx);
+            let _ = ctx.sys.persist_write(crate::persist::NS, crate::persist::KEY_ONLINE, &t);
+            Ok(t)
+        }
         other => bail!("unknown action {other:?}"),
     }
+}
+
+/// Fetch the online indexes (configured sources) and report; never fails the caller.
+fn online_check(ctx: &Ctx) -> String {
+    let on_unit = ctx.layout.root == Path::new("/");
+    let offset = if on_unit {
+        match crate::clock::ensure_offset(&ctx.layout, crate::clock::SERVERS, Duration::from_secs(5)) {
+            Ok(o) => Some(o),
+            Err(e) => return format!("online: no clock yet ({e:#})"),
+        }
+    } else {
+        None
+    };
+    let fetcher: Box<dyn crate::fetch::Fetcher> = if on_unit {
+        Box::new(crate::fetch::CurlFetcher::for_unit(&ctx.layout, offset))
+    } else {
+        Box::new(crate::fetch::Unavailable)
+    };
+    let report = crate::online::check(ctx, fetcher.as_ref());
+    format!("online: {}", report.summary(now_secs()))
 }
 
 fn record_result(ctx: &Ctx, key: &str, text: &str) -> Result<()> {

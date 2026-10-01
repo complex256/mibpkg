@@ -114,3 +114,12 @@ fn result_stamp_is_omitted_while_the_clock_is_unset() {
     assert_eq!(result_stamp(960), "", "unit clock at boot: 1970");
     assert_eq!(result_stamp(1_700_000_000), " (2023-11-14 22:13 UTC)");
 }
+
+#[test]
+fn online_check_off_the_unit_reports_and_does_not_fail() {
+    let f = common::fixture();
+    assert_eq!(run(&args(f.root(), &["online-check"])).unwrap(), 0);
+    assert_eq!(run(&args(f.root(), &["gem", "check"])).unwrap(), 0);
+    let st = State::load(&f.layout).unwrap();
+    assert!(st.results["_"].contains("online"), "{:?}", st.results);
+}

@@ -57,7 +57,7 @@ fn screens_cover_install_update_and_warnings() {
     common::collection(&f.sd(), "complex256", &[a1, a2, b, q]);
     let scan = media::scan(&f.layout);
     let state = State::load(&f.layout).unwrap();
-    let m = Model { layout: &f.layout, unit: &ctx.unit, state: &state, status: None, scan: &scan, disabled: false, supervisor_running: false };
+    let m = Model { layout: &f.layout, unit: &ctx.unit, state: &state, status: None, scan: &scan, online: &[], disabled: false, supervisor_running: false };
     let screens = gem::screens(&m);
     let main = &screens[0];
     assert_eq!((main.name.as_str(), main.parent.as_str()), ("mibpkg", "Main"));
@@ -126,7 +126,7 @@ fn package_screen_shows_waiting() {
     );
     let scan = media::scan(&f.layout);
     let state = State::load(&f.layout).unwrap();
-    let m = Model { layout: &f.layout, unit: &ctx.unit, state: &state, status: Some(&st), scan: &scan, disabled: false, supervisor_running: true };
+    let m = Model { layout: &f.layout, unit: &ctx.unit, state: &state, status: Some(&st), scan: &scan, online: &[], disabled: false, supervisor_running: true };
     let screen = gem::screens(&m).into_iter().find(|s| s.name == "mibpkg_demo").unwrap();
     assert!(labels(&screen).iter().any(|l| l == "demo.demo <live>"), "service rows are live: {:?}", labels(&screen));
 }
@@ -141,7 +141,7 @@ fn install_button_offers_the_newest_compatible_version() {
     common::collection(&f.sd(), "complex256", &[old, new]);
     let scan = media::scan(&f.layout);
     let state = State::load(&f.layout).unwrap();
-    let m = Model { layout: &f.layout, unit: &ctx.unit, state: &state, status: None, scan: &scan, disabled: false, supervisor_running: false };
+    let m = Model { layout: &f.layout, unit: &ctx.unit, state: &state, status: None, scan: &scan, online: &[], disabled: false, supervisor_running: false };
     let screen = gem::screens(&m).into_iter().find(|s| s.name == "mibpkg_demo").unwrap();
     let l = labels(&screen);
     assert!(l.iter().any(|x| x == "[Install 0.1.0 from complex256]"), "{l:?}");
@@ -194,4 +194,25 @@ fn regenerate_still_removes_screens_that_went_away() {
     assert!(!f.layout.engdefs().join("mibpkg_probe.esd").exists());
     assert!(!f.layout.gem_dir().join("install-old-format.sh").exists());
     assert!(f.layout.engdefs().join("mibpkg.esd").exists());
+}
+
+#[test]
+fn online_versions_and_check_button_on_screens() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let idx: mibpkg::index::Index = serde_json::from_str(
+        r#"{"format":1,"collection":{"id":"complex256","name":"complex256 packages"},"packages":[{"name":"demo","version":"2.0.0","file":"demo-2.0.0.mpk","sha256":"0","size":1}]}"#,
+    ).unwrap();
+    let online = vec![Collection::from_online(idx, "https://h/").unwrap()];
+    let scan = media::scan(&f.layout);
+    let state = State::load(&f.layout).unwrap();
+    let m = Model { layout: &f.layout, unit: &ctx.unit, state: &state, status: None, scan: &scan, online: &online, disabled: false, supervisor_running: false };
+    let screens = gem::screens(&m);
+    let main = labels(&screens[0]);
+    assert!(main.iter().any(|l| l == "[Check for updates]"), "{main:?}");
+    assert!(main.iter().any(|l| l == "online <live>"), "{main:?}");
+    let demo = labels(screens.iter().find(|s| s.name == "mibpkg_demo").unwrap());
+    assert!(demo.iter().any(|l| l == "online [complex256]: 2.0.0"), "{demo:?}");
+    assert!(demo.iter().any(|l| l == "[Install 2.0.0 from complex256]"), "{demo:?}");
 }

@@ -36,6 +36,8 @@ pub struct Model<'a> {
     pub state: &'a State,
     pub status: Option<&'a Status>,
     pub scan: &'a [(PathBuf, Result<Collection>)],
+    /// Cached online collections.
+    pub online: &'a [Collection],
     pub disabled: bool,
     pub supervisor_running: bool,
 }
@@ -94,13 +96,16 @@ fn button(label: impl Into<String>, action: &[&str]) -> Item {
 }
 
 pub fn screens(m: &Model) -> Vec<Screen> {
-    let colls: Vec<&Collection> = m.scan.iter().filter_map(|(_, c)| c.as_ref().ok()).collect();
-    let owned: Vec<Collection> = colls.iter().map(|c| (*c).clone()).collect();
+    // Card and online collections, tagged with where they came from.
+    let mut sources: Vec<(&Collection, &str)> = m.scan.iter().filter_map(|(_, c)| c.as_ref().ok()).map(|c| (c, "card")).collect();
+    sources.extend(m.online.iter().map(|c| (c, "online")));
+    let owned: Vec<Collection> = sources.iter().map(|(c, _)| (*c).clone()).collect();
     let updates = updates_available(m.state, &owned, m.unit);
 
     let mut main = vec![
         text(format!("mibpkg {} - unit {}", env!("CARGO_PKG_VERSION"), m.unit.describe())),
         Item::Live { label: "supervisor".into(), key: crate::persist::KEY_SUPERVISOR },
+        Item::Live { label: "online".into(), key: crate::persist::KEY_ONLINE },
     ];
     if m.disabled {
         main.push(text("DISABLE marker on the card: no services are started"));
@@ -116,6 +121,7 @@ pub fn screens(m: &Model) -> Vec<Screen> {
     }
     main.push(text(format!("installed: {}", m.state.packages.len())));
     main.push(button("Rescan SD card", &["rescan"]));
+    main.push(button("Check for updates", &["check"]));
     if !updates.is_empty() {
         main.push(button(format!("Update all ({})", updates.len()), &["update-all"]));
     }
@@ -124,14 +130,14 @@ pub fn screens(m: &Model) -> Vec<Screen> {
     }
     let mut out = vec![Screen { name: "mibpkg".into(), parent: m.layout.settings.gem_parent.clone(), items: main }];
 
-    // name -> [(collection, newest entry)]
-    let mut available: BTreeMap<String, Vec<(&Collection, &IndexEntry)>> = BTreeMap::new();
-    for &c in &colls {
+    // name -> [(collection, newest entry, origin)]
+    let mut available: BTreeMap<String, Vec<(&Collection, &IndexEntry, &str)>> = BTreeMap::new();
+    for &(c, origin) in &sources {
         let mut names: Vec<&str> = c.index.packages.iter().map(|e| e.name.as_str()).collect();
         names.sort();
         names.dedup();
         for n in names {
-            available.entry(n.to_string()).or_default().push((c, c.latest(n).unwrap()));
+            available.entry(n.to_string()).or_default().push((c, c.latest(n).unwrap(), origin));
         }
     }
     let mut names: Vec<String> = available.keys().cloned().collect();
@@ -142,14 +148,25 @@ pub fn screens(m: &Model) -> Vec<Screen> {
     for name in names {
         let inst = m.state.packages.get(&name);
         let avail = available.get(&name).cloned().unwrap_or_default();
-        let desc = avail.first().map(|(_, e)| e.description.clone()).unwrap_or_default();
+        let desc = avail.first().map(|(_, e, _)| e.description.clone()).unwrap_or_default();
+        // Newest version that fits this unit, per collection id, across card and online.
+        let best_in = |id: &str| -> Option<&IndexEntry> {
+            avail
+                .iter()
+                .filter(|(c, _, _)| c.id() == id)
+                .filter_map(|(c, _, _)| c.latest_compatible(&name, m.unit))
+                .max_by(|a, b| cmp_versions(&a.version, &b.version))
+        };
+        let mut ids: Vec<&str> = avail.iter().map(|(c, _, _)| c.id()).collect();
+        ids.sort();
+        ids.dedup();
         let mut items = vec![text(if desc.is_empty() { name.clone() } else { format!("{name}: {desc}") })];
         items.push(text(match inst {
             Some(i) => format!("installed: {}", i.version),
             None => "not installed".to_string(),
         }));
-        for (c, e) in &avail {
-            let mut l = format!("card [{}]: {}", c.id(), e.version);
+        for (c, e, origin) in &avail {
+            let mut l = format!("{origin} [{}]: {}", c.id(), e.version);
             if !e.compat.matches(m.unit) {
                 l.push_str(" (not for this unit)");
             }
@@ -160,20 +177,16 @@ pub fn screens(m: &Model) -> Vec<Screen> {
         }
         match inst {
             None => {
-                for (c, _) in &avail {
-                    if let Some(e) = c.latest_compatible(&name, m.unit) {
-                        items.push(button(format!("Install {} from {}", e.version, c.id()), &["install", name.as_str(), c.id()]));
+                for id in &ids {
+                    if let Some(e) = best_in(id) {
+                        items.push(button(format!("Install {} from {id}", e.version), &["install", name.as_str(), id]));
                     }
                 }
             }
             Some(i) => {
-                if let Some((c, e)) = avail
-                    .iter()
-                    .find(|(c, _)| c.id() == i.collection)
-                    .and_then(|(c, _)| c.latest_compatible(&name, m.unit).map(|e| (c, e)))
-                {
+                if let Some(e) = best_in(&i.collection) {
                     if cmp_versions(&e.version, &i.version) == Ordering::Greater {
-                        items.push(button(format!("Update to {}", e.version), &["install", name.as_str(), c.id()]));
+                        items.push(button(format!("Update to {}", e.version), &["install", name.as_str(), i.collection.as_str()]));
                     }
                 }
                 if !i.services.is_empty() {
@@ -225,6 +238,7 @@ pub fn regenerate(ctx: &Ctx) -> Result<()> {
     let layout = &ctx.layout;
     let state = State::load(layout)?;
     let scan = media::scan(layout);
+    let online = crate::online::collections(layout);
     let st = status::read(layout);
     let model = Model {
         layout,
@@ -232,6 +246,7 @@ pub fn regenerate(ctx: &Ctx) -> Result<()> {
         state: &state,
         status: st.as_ref(),
         scan: &scan,
+        online: &online,
         disabled: media::disabled(layout),
         supervisor_running: supervisor_pid(layout, ctx.sys).is_some(),
     };
