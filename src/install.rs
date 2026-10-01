@@ -63,24 +63,34 @@ pub fn pick_collection<'c>(
     colls: &'c [Collection],
     name: &str,
     id: Option<&str>,
+    unit: &crate::unit::UnitInfo,
 ) -> Result<&'c Collection> {
+    // Several origins (card, online) may carry the same collection id: take the one offering the
+    // newest version of `name` that fits this unit.
+    let best_of = |want: &str| -> Option<&'c Collection> {
+        colls
+            .iter()
+            .filter(|c| c.id() == want)
+            .max_by(|a, b| {
+                let va = a.latest_compatible(name, unit).map(|e| e.version.clone()).unwrap_or_default();
+                let vb = b.latest_compatible(name, unit).map(|e| e.version.clone()).unwrap_or_default();
+                cmp_versions(&va, &vb)
+            })
+    };
     let want = id.map(String::from).or_else(|| state.packages.get(name).map(|i| i.collection.clone()));
     if let Some(want) = want {
-        return colls
-            .iter()
-            .find(|c| c.id() == want)
-            .with_context(|| format!("collection {want} is not on any card"));
+        return best_of(&want).with_context(|| format!("collection {want} is not on any card or online"));
     }
-    let having: Vec<&Collection> = colls.iter().filter(|c| c.latest(name).is_some()).collect();
-    match having.len() {
-        0 => bail!("{name} is not in any collection on the card"),
-        1 => Ok(having[0]),
-        _ => bail!(
-            "{name} is in several collections ({}); choose one",
-            having.iter().map(|c| c.id()).collect::<Vec<_>>().join(", ")
-        ),
+    let mut ids: Vec<&str> = colls.iter().filter(|c| c.latest(name).is_some()).map(|c| c.id()).collect();
+    ids.sort();
+    ids.dedup();
+    match ids.len() {
+        0 => bail!("{name} is not in any collection on the card or online"),
+        1 => Ok(best_of(ids[0]).unwrap()),
+        _ => bail!("{name} is in several collections ({}); choose one", ids.join(", ")),
     }
 }
+
 
 fn script_env(layout: &Layout, name: &str, dir: &Path, version: &str) -> Vec<(String, String)> {
     vec![
@@ -269,11 +279,15 @@ pub fn install(ctx: &Ctx, media: &[PathBuf], coll: &Collection, name: &str) -> R
 pub fn updates_available(state: &State, colls: &[Collection], unit: &crate::unit::UnitInfo) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for (name, inst) in &state.packages {
-        if let Some(c) = colls.iter().find(|c| c.id() == inst.collection) {
-            if let Some(e) = c.latest_compatible(name, unit) {
-                if cmp_versions(&e.version, &inst.version) == Ordering::Greater {
-                    out.push((name.clone(), e.version.clone()));
-                }
+        // Card and online copies of the same collection: the newest compatible version counts.
+        let best = colls
+            .iter()
+            .filter(|c| c.id() == inst.collection)
+            .filter_map(|c| c.latest_compatible(name, unit))
+            .max_by(|a, b| cmp_versions(&a.version, &b.version));
+        if let Some(e) = best {
+            if cmp_versions(&e.version, &inst.version) == Ordering::Greater {
+                out.push((name.clone(), e.version.clone()));
             }
         }
     }
@@ -288,7 +302,7 @@ pub fn update_all(ctx: &Ctx, media: &[PathBuf], colls: &[Collection]) -> Result<
     }
     let mut out = Vec::new();
     for (name, _) in todo {
-        let coll = pick_collection(&state, colls, &name, None)?;
+        let coll = pick_collection(&state, colls, &name, None, &ctx.unit)?;
         out.push(match install(ctx, media, coll, &name) {
             Ok(m) => m,
             Err(e) => format!("{name}: FAILED {e:#}"),

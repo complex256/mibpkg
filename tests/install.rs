@@ -124,11 +124,11 @@ fn same_name_in_two_collections() {
     let b = Collection::load(&common::collection(&f.sd(), "extras", &[common::pkg_src(f.root(), "demo", "2.0.0", "sleep 30", "")])).unwrap();
     let both = vec![a.clone(), b.clone()];
     let st = State::default();
-    assert!(format!("{:#}", install::pick_collection(&st, &both, "demo", None).unwrap_err()).contains("several collections"));
-    assert_eq!(install::pick_collection(&st, &both, "demo", Some("extras")).unwrap().id(), "extras");
+    assert!(format!("{:#}", install::pick_collection(&st, &both, "demo", None, &ctx.unit).unwrap_err()).contains("several collections"));
+    assert_eq!(install::pick_collection(&st, &both, "demo", Some("extras"), &ctx.unit).unwrap().id(), "extras");
     install::install(&ctx, &[f.sd()], &a, "demo").unwrap();
     let st = State::load(&f.layout).unwrap();
-    assert_eq!(install::pick_collection(&st, &both, "demo", None).unwrap().id(), "complex256");
+    assert_eq!(install::pick_collection(&st, &both, "demo", None, &ctx.unit).unwrap().id(), "complex256");
     let e = install::install(&ctx, &[f.sd()], &b, "demo").unwrap_err();
     assert!(format!("{e:#}").contains("remove it before"), "{e:#}");
 }

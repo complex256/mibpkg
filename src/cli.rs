@@ -188,12 +188,13 @@ fn arg<'a>(args: &'a [String], i: usize, what: &str) -> Result<&'a str> {
 /// Caller holds the action lock.
 fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
     let media_roots = media::roots(&ctx.layout);
-    let colls: Vec<Collection> = media::loaded(&media::scan(&ctx.layout));
+    let mut colls: Vec<Collection> = media::loaded(&media::scan(&ctx.layout));
+    colls.extend(crate::online::collections(&ctx.layout));
     let state = State::load(&ctx.layout)?;
     match verb {
         "install" => {
             let name = arg(args, 0, "package name")?;
-            let coll = install::pick_collection(&state, &colls, name, args.get(1).map(|s| s.as_str()))?;
+            let coll = install::pick_collection(&state, &colls, name, args.get(1).map(|s| s.as_str()), &ctx.unit)?;
             install::install(ctx, &media_roots, coll, name)
         }
         "remove" => install::remove(ctx, arg(args, 0, "package name")?, args.iter().any(|a| a == "--purge")),
