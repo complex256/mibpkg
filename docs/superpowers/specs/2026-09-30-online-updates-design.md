@@ -29,6 +29,21 @@ Success:
 
 ## Sources
 
+Every publisher, including the mibpkg owner, publishes the same way: a repo's own releases are its
+source (an `index.json` plus its `.mpk` files as release assets). There is no central package
+repository or central index of packages; the only central piece is the community *list of
+sources* below, which changes only when a new publisher joins. Each release updates only the
+publisher's own repo, so no one else has to merge anything.
+
+- The official source is mibpkg's own source repo, `github:complex256/mibpkg` (its releases also
+  carry the SD bundle zip). carmqtt and other owner packages are separate sources from their own
+  repos, published when the owner chooses to.
+- Transition (Milestone 1): until the source repo is public, the built-in default is the
+  release-only repo `github:complex256/mibpkg-packages` (release v1 = mibpkg 0.3.0). The first
+  mibpkg release after the source repo goes public changes the default to `github:complex256/mibpkg`
+  and is also published to `mibpkg-packages`, so 0.3.0 cars move over; `mibpkg-packages` is then
+  retired (deleted, or renamed to be the community list).
+
 Source strings:
 
 | Form | Index URL |
@@ -42,14 +57,14 @@ releases). `http://` and other schemes are refused.
 
 ### Community list
 
-A public GitHub repo (`github:complex256/mibpkg-sources`, built in as the default list, overridable
+A public GitHub repo (`github:complex256/mibpkg-sources`, possibly the renamed `mibpkg-packages`, built in as the default list, overridable
 in settings.toml `online.list`) whose latest release carries `sources.json`:
 
 ```json
 { "format": 1,
   "sources": [
     { "name": "complex256 packages", "description": "carmqtt, mibpkg",
-      "source": "github:complex256/mibpkg-packages",
+      "source": "github:complex256/mibpkg",
       "key": "ed25519:<base64 public key>" } ] }
 ```
 
@@ -92,7 +107,9 @@ collection is enabled by default. Enabled sources are stored in `state/installed
 - SD collections: unsigned is allowed as today, unless the collection id is pinned by an enabled
   online source, in which case the SD copy must verify against that key.
 - Collection ids are unique per car: an enabled source that publishes an id already owned by
-  another enabled source is refused.
+  another enabled source is refused. A publisher with several repos uses one id per repo (e.g.
+  `complex256-mibpkg`, `complex256-carmqtt`). (Possible relaxation, not planned: sources signed
+  by the same pinned key may share an id.)
 
 ## Car side
 
