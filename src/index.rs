@@ -41,10 +41,18 @@ pub struct IndexEntry {
     pub uses_scripts: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Location {
+    Local(PathBuf),
+    Remote(String),
+}
+
 #[derive(Debug, Clone)]
 pub struct Collection {
     pub dir: PathBuf,
     pub index: Index,
+    /// Set for collections fetched online: the index URL's directory.
+    pub base_url: Option<String>,
 }
 
 impl Collection {
@@ -67,7 +75,39 @@ impl Collection {
                 .with_context(|| format!("{}: {} version {:?} is not semver", p.display(), e.name, e.version))?;
             safe_rel(&e.file).with_context(|| format!("{}: package {}", p.display(), e.name))?;
         }
-        Ok(Collection { dir: dir.to_path_buf(), index })
+        Ok(Collection { dir: dir.to_path_buf(), index, base_url: None })
+    }
+
+    /// A collection fetched from `base_url` (the index URL's directory). Package files are safe
+    /// relative paths (resolved against base_url) or absolute https:// URLs.
+    pub fn from_online(index: Index, base_url: &str) -> Result<Collection> {
+        if index.format != FORMAT {
+            bail!("online index format {} is not supported by this mibpkg", index.format);
+        }
+        if !valid_name(&index.collection.id) {
+            bail!("collection id {:?} must be 1-40 of [a-z0-9-]", index.collection.id);
+        }
+        for e in &index.packages {
+            if !valid_name(&e.name) {
+                bail!("package name {:?} must be 1-40 of [a-z0-9-]", e.name);
+            }
+            semver::Version::parse(&e.version).with_context(|| format!("{} version {:?}", e.name, e.version))?;
+            if !e.file.starts_with("https://") {
+                if e.file.contains("://") {
+                    bail!("{}: package URL must be https://", e.name);
+                }
+                safe_rel(&e.file).with_context(|| format!("package {}", e.name))?;
+            }
+        }
+        Ok(Collection { dir: PathBuf::new(), index, base_url: Some(base_url.to_string()) })
+    }
+
+    pub fn location(&self, e: &IndexEntry) -> Location {
+        match &self.base_url {
+            None => Location::Local(self.dir.join(&e.file)),
+            Some(_) if e.file.starts_with("https://") => Location::Remote(e.file.clone()),
+            Some(base) => Location::Remote(format!("{base}{}", e.file)),
+        }
     }
 
     pub fn id(&self) -> &str {
@@ -106,11 +146,20 @@ pub fn cmp_versions(a: &str, b: &str) -> Ordering {
 
 /// Host tooling: index every packages/*.mpk in `dir`.
 pub fn build_index(dir: &Path, id: &str, name: &str) -> Result<Index> {
+    index_dir(&dir.join("packages"), id, name, "packages/")
+}
+
+/// Host tooling: index every *.mpk next to the index (online collections: release assets are flat).
+pub fn build_index_flat(dir: &Path, id: &str, name: &str) -> Result<Index> {
+    index_dir(dir, id, name, "")
+}
+
+fn index_dir(pkgs: &Path, id: &str, name: &str, prefix: &str) -> Result<Index> {
     if !valid_name(id) {
         bail!("collection id {id:?} must be 1-40 of [a-z0-9-]");
     }
-    let mut files: Vec<PathBuf> = fs::read_dir(dir.join("packages"))
-        .with_context(|| format!("reading {}/packages", dir.display()))?
+    let mut files: Vec<PathBuf> = fs::read_dir(pkgs)
+        .with_context(|| format!("reading {}", pkgs.display()))?
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.extension().map_or(false, |x| x == "mpk"))
         .collect();
@@ -128,7 +177,7 @@ pub fn build_index(dir: &Path, id: &str, name: &str) -> Result<Index> {
         packages.push(IndexEntry {
             name: m.package.name.clone(),
             version: m.package.version.clone(),
-            file: format!("packages/{fname}"),
+            file: format!("{prefix}{fname}"),
             sha256,
             size,
             description: m.package.description.clone(),

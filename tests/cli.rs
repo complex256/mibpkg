@@ -92,7 +92,7 @@ fn bootstrap_registers_mibpkg_itself() {
     let st = State::load(&f.layout).unwrap();
     let me = st.packages.get("mibpkg").expect("mibpkg registered");
     assert_eq!(me.version, env!("CARGO_PKG_VERSION"));
-    assert_eq!(me.collection, "complex256");
+    assert_eq!(me.collection, "complex256-mibpkg");
     assert!(me.previous.is_none());
     let esd = fs::read_to_string(f.layout.engdefs().join("mibpkg_mibpkg.esd")).unwrap();
     assert!(!esd.contains("Install "), "no Install button for the running mibpkg: {esd}");
@@ -113,4 +113,13 @@ fn result_stamp_is_omitted_while_the_clock_is_unset() {
     use mibpkg::cli::result_stamp;
     assert_eq!(result_stamp(960), "", "unit clock at boot: 1970");
     assert_eq!(result_stamp(1_700_000_000), " (2023-11-14 22:13 UTC)");
+}
+
+#[test]
+fn online_check_off_the_unit_reports_and_exits_nonzero() {
+    let f = common::fixture();
+    assert_eq!(run(&args(f.root(), &["online-check"])).unwrap(), 1, "a failed check exits non-zero so the supervisor retries soon");
+    assert_eq!(run(&args(f.root(), &["gem", "check"])).unwrap(), 0);
+    let st = State::load(&f.layout).unwrap();
+    assert!(st.results["_"].contains("online"), "{:?}", st.results);
 }

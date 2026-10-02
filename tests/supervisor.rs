@@ -18,6 +18,7 @@ fn fast() -> Timing {
         stop_grace: Duration::from_secs(2),
         config_recheck: Duration::from_millis(30),
         stable_after: Duration::from_secs(60),
+        online_every: Duration::from_secs(3600),
     }
 }
 

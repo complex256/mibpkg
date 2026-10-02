@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 pub const NS: u32 = 1835626603;
 pub const KEY_SUPERVISOR: u32 = 1;
 pub const KEY_RESULT_GLOBAL: u32 = 2;
+pub const KEY_ONLINE: u32 = 3;
 
 fn fnv1a(s: &str) -> u32 {
     s.bytes().fold(0x811c_9dc5u32, |h, b| (h ^ b as u32).wrapping_mul(0x0100_0193))

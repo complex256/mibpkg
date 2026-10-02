@@ -124,11 +124,11 @@ fn same_name_in_two_collections() {
     let b = Collection::load(&common::collection(&f.sd(), "extras", &[common::pkg_src(f.root(), "demo", "2.0.0", "sleep 30", "")])).unwrap();
     let both = vec![a.clone(), b.clone()];
     let st = State::default();
-    assert!(format!("{:#}", install::pick_collection(&st, &both, "demo", None).unwrap_err()).contains("several collections"));
-    assert_eq!(install::pick_collection(&st, &both, "demo", Some("extras")).unwrap().id(), "extras");
+    assert!(format!("{:#}", install::pick_collection(&st, &both, "demo", None, &ctx.unit).unwrap_err()).contains("several collections"));
+    assert_eq!(install::pick_collection(&st, &both, "demo", Some("extras"), &ctx.unit).unwrap().id(), "extras");
     install::install(&ctx, &[f.sd()], &a, "demo").unwrap();
     let st = State::load(&f.layout).unwrap();
-    assert_eq!(install::pick_collection(&st, &both, "demo", None).unwrap().id(), "complex256");
+    assert_eq!(install::pick_collection(&st, &both, "demo", None, &ctx.unit).unwrap().id(), "complex256");
     let e = install::install(&ctx, &[f.sd()], &b, "demo").unwrap_err();
     assert!(format!("{e:#}").contains("remove it before"), "{e:#}");
 }
@@ -289,4 +289,20 @@ fn repair_is_not_blocked_by_the_free_space_check() {
     sys.free.set(Some(10)); // disk nearly full: old and new versions are both still there
     let msg = install::install(&ctx, &[f.sd()], &c2, "demo").unwrap();
     assert!(msg.contains("repaired"), "{msg}");
+}
+
+#[test]
+fn self_update_installs_the_ca_bundle() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let s = f.root().join("src-mibpkg");
+    fs::create_dir_all(s.join("bin")).unwrap();
+    fs::write(s.join("manifest.toml"), "[package]\nname = \"mibpkg\"\nversion = \"9.0.0\"\n\n[[file]]\nsrc = \"bin/mibpkg\"\nmode = \"755\"\n\n[[file]]\nsrc = \"bin/launch.sh\"\nmode = \"755\"\n\n[[file]]\nsrc = \"bin/gem.sh\"\nmode = \"755\"\n\n[[file]]\nsrc = \"bin/ca.pem\"\n").unwrap();
+    for n in ["mibpkg", "launch.sh", "gem.sh", "ca.pem"] {
+        fs::write(s.join("bin").join(n), n).unwrap();
+    }
+    let c = Collection::load(&common::collection(&f.sd(), "complex256", &[s])).unwrap();
+    install::install(&ctx, &[f.sd()], &c, "mibpkg").unwrap();
+    assert_eq!(fs::read_to_string(f.layout.bin_dir().join("ca.pem")).unwrap(), "ca.pem");
 }

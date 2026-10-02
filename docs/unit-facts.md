@@ -58,3 +58,15 @@ Facts the code depends on, with how and when they were verified.
 - `mount -ur /mnt/app` while another process has files open for writing.
 - GEM parent name `Main`, and whether label-only `keyValue` rows render.
 - carmqtt LWT / `Value::Lost` behaviour across supervisor restarts.
+
+## Online updates on the unit (2026-10-02, mibpkg 0.3.0/0.3.1, MHI2Q over SIM data)
+- SNTP (UDP 123) to time.cloudflare.com and pool.ntp.org answers; offset ~1.79e9 s (clock reads uptime).
+- ed25519-dalek verification runs (ed25519spike: valid=true tampered=false).
+- libcurl.so.2 via dlopen with RTLD_GLOBAL preloads (libz/libcrypto/libssl/libcares) works without
+  LD_LIBRARY_PATH; github.com releases/latest/download/index.json fetched through the redirect to
+  release-assets.githubusercontent.com with our CA bundle and the SNTP-based verify time.
+- A unit upgraded from 0.2.2 has no bin/ca.pem; the fetcher used pkgs/mibpkg/0.3.0/bin/ca.pem.
+- The supervisor's background check ran 2 s after it started (internet = default route via ecm0).
+- End to end: GEM "Check for updates" -> "Update to 0.3.1" downloaded from GitHub and self-updated.
+- GitHub's releases/latest redirect lagged ~20 s after publishing a new release.
+- The car's SD card is mounted read-only (write collections on the Mac).

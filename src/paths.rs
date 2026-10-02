@@ -19,6 +19,8 @@ pub struct Settings {
     pub unit: Option<String>,
     /// Alias overrides for start conditions, e.g. `hmi-ready = "file:/tmp/startupFinishedFlag"`.
     pub conditions: std::collections::BTreeMap<String, String>,
+    /// Online sources checked for updates (M1: the official collection).
+    pub online_sources: Vec<String>,
 }
 
 impl Default for Settings {
@@ -32,6 +34,7 @@ impl Default for Settings {
             gem_parent: "Main".into(),
             unit: None,
             conditions: Default::default(),
+            online_sources: vec![crate::online::DEFAULT_SOURCE.to_string()],
         }
     }
 }

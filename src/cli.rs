@@ -23,10 +23,11 @@ use std::time::{Duration, Instant};
 
 const USAGE: &str = "usage:
   mibpkg build <src-dir> <out-dir>
-  mibpkg index <collection-dir> --id ID --name NAME
+  mibpkg index <collection-dir> --id ID --name NAME [--flat]
   mibpkg [--root DIR] [--no-supervisor] <command>
     supervise | status | list | install <pkg> [collection] | remove <pkg> [--purge]
     rollback <pkg> | restart <pkg> | rescan | update-all | gem <action> [args..]
+    online-check | sntp [host:port]
     bootstrap | uninstall-self";
 
 pub fn run(args: &[String]) -> Result<i32> {
@@ -61,7 +62,13 @@ pub fn run(args: &[String]) -> Result<i32> {
 
     let layout = Layout::load(&root)?;
     let sys = RealSys { mounts: root == Path::new("/") };
-    let ctx = Ctx::new(layout, &sys);
+    let mut ctx = Ctx::new(layout, &sys);
+    if root == Path::new("/") {
+        // Online installs download through the unit's libcurl; online-check refreshes the
+        // clock offset file this reads.
+        ctx.fetcher = Box::new(crate::fetch::CurlFetcher::for_unit(&ctx.layout, crate::clock::read_offset(&ctx.layout)));
+    }
+    let ctx = ctx;
     // The shims append every action's output to /tmp/mibpkg.log (RAM): keep it bounded.
     let _ = fsutil::cap_file(&ctx.layout.run("log"), supervisor::LOG_CAP);
     let after = |ctx: &Ctx| {
@@ -82,6 +89,31 @@ pub fn run(args: &[String]) -> Result<i32> {
         "status" => {
             print_status(&ctx);
             Ok(0)
+        }
+        "sntp" => {
+            // Diagnostic: always queries, ignoring the cached offset.
+            let server = args.first().map(|s| s.as_str()).unwrap_or(crate::clock::SERVERS[0]);
+            println!("{}", crate::clock::sntp_offset(server, Duration::from_secs(5))?);
+            Ok(0)
+        }
+        "online-check" => {
+            // Network first, without the lock, so GEM actions stay usable meanwhile. A busy lock or
+            // a failed check exits 1: the supervisor then retries within minutes, not hours.
+            let fetched = online_fetch(&ctx);
+            let _lock = match Lock::acquire(&ctx.layout, ctx.sys) {
+                Ok(l) => l,
+                Err(_) => {
+                    println!("online: busy");
+                    return Ok(1);
+                }
+            };
+            let (text, ok) = online_store(&ctx, fetched);
+            if let Err(e) = ctx.sys.persist_write(crate::persist::NS, crate::persist::KEY_ONLINE, &text) {
+                eprintln!("warning: live online status: {e:#}");
+            }
+            after(&ctx);
+            println!("{text}");
+            Ok(if ok { 0 } else { 1 })
         }
         "list" => {
             print_list(&ctx)?;
@@ -167,7 +199,7 @@ fn register_self(ctx: &Ctx) -> Result<()> {
         .into_iter()
         .find(|c| c.latest(install::SELF).is_some())
         .map(|c| c.id().to_string())
-        .unwrap_or_else(|| "complex256".into());
+        .unwrap_or_else(|| "complex256-mibpkg".into());
     st.packages.insert(
         install::SELF.to_string(),
         Installed {
@@ -188,12 +220,13 @@ fn arg<'a>(args: &'a [String], i: usize, what: &str) -> Result<&'a str> {
 /// Caller holds the action lock.
 fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
     let media_roots = media::roots(&ctx.layout);
-    let colls: Vec<Collection> = media::loaded(&media::scan(&ctx.layout));
+    let mut colls: Vec<Collection> = media::loaded(&media::scan(&ctx.layout));
+    colls.extend(crate::online::collections(&ctx.layout));
     let state = State::load(&ctx.layout)?;
     match verb {
         "install" => {
             let name = arg(args, 0, "package name")?;
-            let coll = install::pick_collection(&state, &colls, name, args.get(1).map(|s| s.as_str()))?;
+            let coll = install::pick_collection(&state, &colls, name, args.get(1).map(|s| s.as_str()), &ctx.unit)?;
             install::install(ctx, &media_roots, coll, name)
         }
         "remove" => install::remove(ctx, arg(args, 0, "package name")?, args.iter().any(|a| a == "--purge")),
@@ -222,8 +255,50 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
             Ok(if msgs.is_empty() { "rescanned; no new config files".into() } else { msgs.join("; ") })
         }
         "update-all" => Ok(install::update_all(ctx, &media_roots, &colls)?.join("; ")),
+        "check" => {
+            let t = online_check(ctx);
+            let _ = ctx.sys.persist_write(crate::persist::NS, crate::persist::KEY_ONLINE, &t);
+            Ok(t)
+        }
         other => bail!("unknown action {other:?}"),
     }
+}
+
+/// Fetch the online indexes (configured sources) and report; never fails the caller.
+type Fetched = Vec<(String, Result<crate::online::Cached>)>;
+
+/// Fetches every online source; needs no lock. Err is the finished status line.
+fn online_fetch(ctx: &Ctx) -> std::result::Result<Fetched, String> {
+    let on_unit = ctx.layout.root == Path::new("/");
+    let offset = if on_unit {
+        match crate::clock::ensure_offset(&ctx.layout, crate::clock::SERVERS, Duration::from_secs(5)) {
+            Ok(o) => Some(o),
+            Err(e) => return Err(format!("online: no clock yet ({e:#})")),
+        }
+    } else {
+        None
+    };
+    let fetcher: Box<dyn crate::fetch::Fetcher> = if on_unit {
+        Box::new(crate::fetch::CurlFetcher::for_unit(&ctx.layout, offset))
+    } else {
+        Box::new(crate::fetch::Unavailable)
+    };
+    Ok(crate::online::fetch_all(ctx, fetcher.as_ref()))
+}
+
+/// Stores what was fetched (under the lock): the status line and whether everything worked.
+fn online_store(ctx: &Ctx, fetched: std::result::Result<Fetched, String>) -> (String, bool) {
+    match fetched {
+        Err(text) => (text, false),
+        Ok(f) => {
+            let report = crate::online::store(ctx, f);
+            (format!("online: {}", report.summary(now_secs())), report.errors.is_empty())
+        }
+    }
+}
+
+fn online_check(ctx: &Ctx) -> String {
+    online_store(ctx, online_fetch(ctx)).0
 }
 
 fn record_result(ctx: &Ctx, key: &str, text: &str) -> Result<()> {
@@ -299,17 +374,19 @@ fn host_index(args: &[String]) -> Result<i32> {
     let dir = Path::new(arg(args, 0, "collection dir")?);
     let mut id = None;
     let mut name = None;
+    let mut flat = false;
     let mut it = args[1..].iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--id" => id = it.next().cloned(),
             "--name" => name = it.next().cloned(),
+            "--flat" => flat = true,
             other => bail!("unexpected argument {other:?}"),
         }
     }
     let id = id.context("--id is required")?;
     let name = name.unwrap_or_else(|| id.clone());
-    let idx = build_index(dir, &id, &name)?;
+    let idx = if flat { crate::index::build_index_flat(dir, &id, &name)? } else { build_index(dir, &id, &name)? };
     write_index(dir, &idx)?;
     println!("{} packages in {}", idx.packages.len(), dir.join("index.json").display());
     Ok(0)

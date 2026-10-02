@@ -147,7 +147,18 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
   carplay-rgi is the stress test for stock-file patches.
 
 ## Before going public
-- [later] Scrub history for excluded names; licensing; contribution/signing model for third-party authors.
+- [next, after the online M1 car test] Publish the source repo as complex256/mibpkg (no remote yet,
+  2026-09-30; only the release-asset repo complex256/mibpkg-packages exists). Before the first push:
+  scrub history for excluded names, pick a license, README with install (M.I.B. card) + publishing docs.
+  With it: releases of complex256/mibpkg carry index.json + mibpkg-<v>.mpk + the SD zip (id
+  `complex256-mibpkg`, already used from release v1 on); change DEFAULT_SOURCE to `github:complex256/mibpkg` in that release and publish it
+  once more via mibpkg-packages so 0.3.0 cars move over; then retire mibpkg-packages (or rename it to the
+  community source list). carmqtt becomes its own source only when the owner decides to publish it.
+  Gap to solve first: carmqtt on the car records collection `complex256`; once it lives in its own source
+  (`complex256-carmqtt`), GEM offers updates only from the recorded collection. Needs a "package moved" rule:
+  when the recorded collection is not on any card or online, offer updates from the one collection that has
+  the package (and record the new id on install). Until then: `mibpkg install <pkg> <new-id>` over ssh.
+- [later] Contribution/signing model for third-party authors (spec: online-updates M2/M4).
 
 ## Review minors (deferred from the v1 final review, 2026-09-26)
 - [done 2026-09-27, robustness pass] all v1 review minors: fsync staged startup.sh; boot.d write-then-prune;
@@ -173,3 +184,13 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
 - Tiny race: uninstall-self touching `stop` between a new supervisor's pid write and its stale-stop cleanup.
 - RESERVED: `lock` isn't a real collision; add a comment explaining the `<pkg>.<svc>` reasoning.
 - mibpkg self: power loss after state save but before self_update leaves old binaries; Equal branch never retries.
+
+## Online M1 review minors (deferred, 2026-09-30)
+- Redirects: restrict to https (CURLOPT_REDIR_PROTOCOLS/PROTOCOLS = https, MAXREDIRS 10) — matters once signatures land (M2).
+- Cap a package download at its index `size` instead of MAX_PACKAGE; stream to /tmp instead of holding it in RAM.
+- Card-specific wording in errors that now also apply to online collections.
+- FFI nits: CString built after curl_easy_init leaks the handle on error; VERIFY_TIME is a global; a failed libcurl load is cached for the process; missing optional OpenSSL symbols silently skip the verify-time hook.
+- Drop the clock offset once the system clock looks real; validate SNTP replies (mode, stratum, origin timestamp).
+- Online status row: stale text after a failed check; raw curl errors shown to the user.
+- Prune state/online/<id>.json for sources no longer configured.
+- [done 0.3.1] USAGE lists neither `online-check` nor `sntp`.
