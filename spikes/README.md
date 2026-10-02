@@ -43,4 +43,4 @@ Watch for: dlopen failure (library path), cert errors while the unit clock is st
 Result: `ed25519-dalek = { version = "2", default-features = false }` builds for
 armv7-unknown-nto-qnx650 (288 KB, RFC 8032 test 1: `valid=true tampered=false` on the host).
 Verification needs no randomness, so the `libc` crate problem that sank rustls-rustcrypto does not
-arise. Run on the unit in Task 10 of the M1 plan.
+arise. On the unit (2026-10-02, MHI2Q): `valid=true tampered=false` — gate passed.
