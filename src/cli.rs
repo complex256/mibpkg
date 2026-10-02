@@ -27,6 +27,7 @@ const USAGE: &str = "usage:
   mibpkg [--root DIR] [--no-supervisor] <command>
     supervise | status | list | install <pkg> [collection] | remove <pkg> [--purge]
     rollback <pkg> | restart <pkg> | rescan | update-all | gem <action> [args..]
+    online-check | sntp [host:port]
     bootstrap | uninstall-self";
 
 pub fn run(args: &[String]) -> Result<i32> {

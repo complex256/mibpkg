@@ -193,4 +193,4 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
 - Drop the clock offset once the system clock looks real; validate SNTP replies (mode, stratum, origin timestamp).
 - Online status row: stale text after a failed check; raw curl errors shown to the user.
 - Prune state/online/<id>.json for sources no longer configured.
-- USAGE lists neither `online-check` nor `sntp`.
+- [done 0.3.1] USAGE lists neither `online-check` nor `sntp`.
