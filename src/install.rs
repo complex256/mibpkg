@@ -79,6 +79,9 @@ pub fn pick_collection<'c>(
             })
     };
     let want = id.map(String::from).or_else(|| state.packages.get(name).map(|i| i.collection.clone()));
+    if want.as_deref() == Some(crate::index::RESERVED_COLLECTION) {
+        bail!("{name} was installed from an uploaded file; remove it first to install it from a collection");
+    }
     if let Some(want) = want {
         return best_of(&want).with_context(|| format!("collection {want} is not on any card or online"));
     }
@@ -135,7 +138,7 @@ pub fn install(ctx: &Ctx, media: &[PathBuf], coll: &Collection, name: &str) -> R
         .latest_compatible(name, &ctx.unit)
         .with_context(|| format!("{name} {} is not compatible with this unit: {}", newest.version, ctx.unit.describe()))?
         .clone();
-    let mut state = State::load(layout)?;
+    let state = State::load(layout)?;
     let previous = state.packages.get(name).cloned();
     if let Some(p) = &previous {
         if p.collection != coll_id {
@@ -195,11 +198,22 @@ pub fn install(ctx: &Ctx, media: &[PathBuf], coll: &Collection, name: &str) -> R
             entry.version
         );
     }
+    install_package(ctx, media, &pkg, &coll_id, &coll.index.collection.name)
+}
+
+/// Install or update to an already verified package: everything after "which file" is known.
+/// Records `coll_id` as where future updates come from.
+pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &str, coll_name: &str) -> Result<String> {
+    let layout = &ctx.layout;
+    let name = pkg.manifest.package.name.as_str();
+    let version = pkg.manifest.package.version.clone();
+    let mut state = State::load(layout)?;
+    let previous = state.packages.get(name).cloned();
     // `current` already names this version but the state file doesn't: power was lost after
     // the commit point. Keep the active files and finish the bookkeeping (nothing to extract,
     // so no space check: the disk is at its fullest exactly now).
-    let repair = current_version(layout, name).as_deref() == Some(entry.version.as_str())
-        && layout.pkg_dir(name).join(&entry.version).join("manifest.toml").is_file();
+    let repair = current_version(layout, name).as_deref() == Some(version.as_str())
+        && layout.pkg_dir(name).join(&version).join("manifest.toml").is_file();
     match ctx.sys.free_bytes(&layout.p("/mnt/app")) {
         _ if repair => {}
         Some(free) => {
@@ -214,8 +228,8 @@ pub fn install(ctx: &Ctx, media: &[PathBuf], coll: &Collection, name: &str) -> R
     let _rw = ctx.mounts.rw("/mnt/app")?;
     cleanup_stale(layout)?;
     let pkg_dir = layout.pkg_dir(name);
-    let ver_dir = pkg_dir.join(&entry.version);
-    let new_dir = pkg_dir.join(format!("{}.new", entry.version));
+    let ver_dir = pkg_dir.join(&version);
+    let new_dir = pkg_dir.join(format!("{}.new", version));
     if !repair && ver_dir.exists() {
         // Newer than current, so never the active version: a leftover or the version a
         // rollback moved away from. Re-extract it fresh.
@@ -232,7 +246,7 @@ pub fn install(ctx: &Ctx, media: &[PathBuf], coll: &Collection, name: &str) -> R
         if let Some(s) = &pkg.manifest.scripts.post_install {
             (ctx.progress)("running post_install");
             ctx.sys
-                .run_script(&ver_dir.join(s), &[], &script_env(layout, name, &ver_dir, &entry.version), SCRIPT_TIMEOUT)
+                .run_script(&ver_dir.join(s), &[], &script_env(layout, name, &ver_dir, &version), SCRIPT_TIMEOUT)
                 .context("post_install script failed")?;
         }
         Ok(())
@@ -244,31 +258,31 @@ pub fn install(ctx: &Ctx, media: &[PathBuf], coll: &Collection, name: &str) -> R
         return Err(e);
     }
 
-    (ctx.progress)(&format!("switching {name} to {}", entry.version));
-    atomic_write(&pkg_dir.join("current"), entry.version.as_bytes())?; // commit point
+    (ctx.progress)(&format!("switching {name} to {}", version));
+    atomic_write(&pkg_dir.join("current"), version.as_bytes())?; // commit point
     bootd::write_for_package(layout, name, &bootd::entries(&pkg.manifest))?;
     let old_version = previous.as_ref().map(|p| p.version.clone());
     // Only a version whose files are still here can be rolled back to (mibpkg itself,
     // registered by bootstrap, has none for its first version).
     let kept = old_version.clone().filter(|v| pkg_dir.join(v).is_dir());
-    prune_versions(&pkg_dir, &entry.version, kept.as_deref())?;
+    prune_versions(&pkg_dir, &version, kept.as_deref())?;
     state.packages.insert(
         name.to_string(),
         Installed {
-            collection: coll_id.clone(),
-            version: entry.version.clone(),
+            collection: coll_id.to_string(),
+            version: version.clone(),
             previous: kept,
             services: pkg.manifest.services.iter().map(|s| format!("{name}.{}", s.name)).collect(),
             uses_scripts: pkg.manifest.uses_scripts(),
         },
     );
-    state.collections.insert(coll_id, coll.index.collection.name.clone());
+    state.collections.insert(coll_id.to_string(), coll_name.to_string());
     state.save(layout)?;
 
     let mut msg = match &old_version {
-        _ if repair => format!("repaired {name} {} (an earlier install was interrupted)", entry.version),
-        Some(v) => format!("updated {name} {v} -> {}", entry.version),
-        None => format!("installed {name} {}", entry.version),
+        _ if repair => format!("repaired {name} {} (an earlier install was interrupted)", version),
+        Some(v) => format!("updated {name} {v} -> {}", version),
+        None => format!("installed {name} {}", version),
     };
     let migrated = legacy::migrate(ctx, name);
     if migrated.is_err() {
@@ -293,6 +307,51 @@ pub fn install(ctx: &Ctx, media: &[PathBuf], coll: &Collection, name: &str) -> R
     (ctx.progress)("starting services");
     control::request_reload(layout)?;
     Ok(msg)
+}
+
+/// Install or upgrade from a .mpk file the user supplied (a web upload), not from a collection.
+/// An upgrade keeps the package's recorded collection; a fresh install records `chosen`: a loaded
+/// collection id, or "-" for none (recorded as `uploaded`, which never offers updates).
+pub fn install_file(
+    ctx: &Ctx,
+    media: &[PathBuf],
+    colls: &[Collection],
+    path: &Path,
+    name: &str,
+    chosen: Option<&str>,
+) -> Result<String> {
+    let pkg = Package::read(path).with_context(|| format!("{} is not a valid package", path.display()))?;
+    let m = &pkg.manifest.package;
+    if m.name != name {
+        bail!("the file holds {} {}, not {name}", m.name, m.version);
+    }
+    if !pkg.manifest.compat.matches(&ctx.unit) {
+        bail!("{name} {} is not compatible with this unit: {}", m.version, ctx.unit.describe());
+    }
+    let state = State::load(&ctx.layout)?;
+    let (coll_id, coll_name) = match state.packages.get(name) {
+        Some(p) => {
+            match cmp_versions(&m.version, &p.version) {
+                Ordering::Equal => return Ok(format!("{name} {} is already installed", p.version)),
+                Ordering::Less => {
+                    bail!("the file has {name} {}, older than the installed {} (use Roll back instead)", m.version, p.version)
+                }
+                Ordering::Greater => {}
+            }
+            let coll_name = state.collections.get(&p.collection).cloned().unwrap_or_else(|| p.collection.clone());
+            (p.collection.clone(), coll_name)
+        }
+        None => match chosen {
+            None => bail!("choose a collection for {name} (or \"-\" for none)"),
+            Some("-") => (crate::index::RESERVED_COLLECTION.to_string(), "Uploaded file".to_string()),
+            Some(id) => {
+                let c = colls.iter().find(|c| c.id() == id).with_context(|| format!("collection {id} is not on any card or online"))?;
+                (id.to_string(), c.index.collection.name.clone())
+            }
+        },
+    };
+    (ctx.progress)(&format!("checking {name} {} (uploaded file)", m.version));
+    install_package(ctx, media, &pkg, &coll_id, &coll_name)
 }
 
 /// (name, newer version) for installed packages whose collection offers something newer.
