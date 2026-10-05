@@ -58,3 +58,18 @@ fn random_ids_are_32_hex_and_unique() {
     assert!(is_id(&a) && is_id(&b), "{a} {b}");
     assert_ne!(a, b);
 }
+
+#[test]
+fn a_broken_file_keeps_a_well_formed_pin() {
+    let f = common::fixture();
+    fs::create_dir_all(f.layout.home()).unwrap();
+    let pin = hash_pin("2468");
+    // A typo elsewhere (or a field from a newer mibpkg) must not quietly remove the PIN.
+    for broken in [format!("listen = [\"everywhere\"]\npin = \"{pin}\"\n"), format!("pin = \"{pin}\"\nfuture_field = 1\n")] {
+        fs::write(settings::path(&f.layout), &broken).unwrap();
+        let (s, warning) = settings::load(&f.layout);
+        assert_eq!(s.pin.as_deref(), Some(pin.as_str()), "{broken}");
+        assert_eq!(s.listen, WebSettings::default().listen);
+        assert!(warning.unwrap().contains("kept the PIN"));
+    }
+}

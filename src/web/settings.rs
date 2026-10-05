@@ -98,7 +98,18 @@ pub fn load(layout: &Layout) -> (WebSettings, Option<String>) {
     };
     match toml::from_str::<WebSettings>(&text).map_err(anyhow::Error::from).and_then(|s| s.validate().map(|_| s)) {
         Ok(s) => (s, None),
-        Err(e) => (WebSettings::default(), Some(format!("{}: {e:#}; using the defaults", p.display()))),
+        Err(e) => {
+            // Someone who set a PIN expects it to survive a typo elsewhere in the file (or a field
+            // a newer mibpkg wrote): keep a well-formed PIN even when everything else falls back.
+            let mut defaults = WebSettings::default();
+            let pin = toml::from_str::<toml::Value>(&text)
+                .ok()
+                .and_then(|v| v.get("pin").and_then(|p| p.as_str()).map(String::from))
+                .filter(|p| WebSettings { pin: Some(p.clone()), ..WebSettings::default() }.validate().is_ok());
+            let kept = if pin.is_some() { " (kept the PIN)" } else { "" };
+            defaults.pin = pin;
+            (defaults, Some(format!("{}: {e:#}; using the defaults{kept}", p.display())))
+        }
     }
 }
 
