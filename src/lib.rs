@@ -25,4 +25,5 @@ pub mod persist;
 pub mod clock;
 pub mod fetch;
 pub mod online;
+pub mod catalog;
 pub mod web;

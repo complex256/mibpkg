@@ -112,9 +112,7 @@ pub fn run(args: &[String]) -> Result<i32> {
                 }
             };
             let (text, ok) = online_store(&ctx, fetched);
-            if let Err(e) = ctx.sys.persist_write(crate::persist::NS, crate::persist::KEY_ONLINE, &text) {
-                eprintln!("warning: live online status: {e:#}");
-            }
+            publish_online(&ctx, &text);
             after(&ctx);
             println!("{text}");
             Ok(if ok { 0 } else { 1 })
@@ -320,7 +318,9 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
                 let _rw = ctx.mounts.rw("/mnt/app")?;
                 crate::online::add_source(&ctx.layout, source)?
             };
-            Ok(format!("{msg}; {}", online_check(ctx)))
+            let t = online_check(ctx);
+            publish_online(ctx, &t);
+            Ok(format!("{msg}; {t}"))
         }
         "source-remove" => {
             let _rw = ctx.mounts.rw("/mnt/app")?;
@@ -356,7 +356,7 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
         }
         "check" => {
             let t = online_check(ctx);
-            let _ = ctx.sys.persist_write(crate::persist::NS, crate::persist::KEY_ONLINE, &t);
+            publish_online(ctx, &t);
             Ok(t)
         }
         other => bail!("unknown action {other:?}"),
@@ -394,6 +394,14 @@ fn online_store(ctx: &Ctx, fetched: std::result::Result<Fetched, String>) -> (St
             (format!("online: {}", report.summary(now_secs())), report.errors.is_empty())
         }
     }
+}
+
+/// The online status line: GEM's live row (persistence) and /tmp/mibpkg.online (the web UI).
+fn publish_online(ctx: &Ctx, text: &str) {
+    if let Err(e) = ctx.sys.persist_write(crate::persist::NS, crate::persist::KEY_ONLINE, text) {
+        eprintln!("warning: live online status: {e:#}");
+    }
+    let _ = crate::fsutil::atomic_write(&ctx.layout.run("online"), text.as_bytes());
 }
 
 fn online_check(ctx: &Ctx) -> String {
