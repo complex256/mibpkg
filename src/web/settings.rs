@@ -108,3 +108,67 @@ pub fn save(layout: &Layout, s: &WebSettings) -> Result<()> {
     atomic_write(&path(layout), toml::to_string(s)?.as_bytes())?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------------------------
+// Randomness, PIN hashing
+// ---------------------------------------------------------------------------------------------
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// 16 random bytes as 32 hex characters: upload ids, session tokens, PIN salts.
+/// Reads /dev/urandom; if the unit has none, falls back to hashing the clock, the pid, a counter
+/// and a stack address (unpredictable enough for a LAN-only PIN session, logged once).
+pub fn random_id() -> String {
+    use std::io::Read;
+    let mut buf = [0u8; 16];
+    let from_device = std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut buf)).is_ok();
+    if from_device {
+        return hex(&buf);
+    }
+    use sha2::{Digest, Sha256};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    WARNED.call_once(|| eprintln!("mibpkg web: /dev/urandom unavailable; using weaker randomness"));
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let local = 0u8;
+    let mut h = Sha256::new();
+    h.update(nanos.to_le_bytes());
+    h.update(std::process::id().to_le_bytes());
+    h.update(COUNTER.fetch_add(1, Ordering::Relaxed).to_le_bytes());
+    h.update((&local as *const u8 as usize).to_le_bytes());
+    h.update(format!("{:?}", std::time::Instant::now()).as_bytes());
+    hex(&h.finalize()[..16])
+}
+
+fn pin_digest(salt: &str, pin: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(salt.as_bytes());
+    h.update(pin.as_bytes());
+    hex(&h.finalize())
+}
+
+/// 4 to 12 digits.
+pub fn valid_pin(pin: &str) -> bool {
+    (4..=12).contains(&pin.len()) && pin.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// "<salt>:<sha-256(salt + pin)>" with a fresh random salt.
+pub fn hash_pin(pin: &str) -> String {
+    let salt = random_id();
+    let digest = pin_digest(&salt, pin);
+    format!("{salt}:{digest}")
+}
+
+/// Whether `pin` matches a stored `hash_pin` value. Compares every byte (no early exit).
+pub fn check_pin(stored: &str, pin: &str) -> bool {
+    let Some((salt, want)) = stored.split_once(':') else { return false };
+    let got = pin_digest(salt, pin);
+    if got.len() != want.len() {
+        return false;
+    }
+    got.bytes().zip(want.bytes()).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0
+}
