@@ -90,6 +90,10 @@ pub fn run(args: &[String]) -> Result<i32> {
             supervisor::run(&ctx.layout, &sys, Timing::default())?;
             Ok(0)
         }
+        "web" => {
+            crate::web::run(ctx.layout.clone())?;
+            Ok(0)
+        }
         "status" => {
             print_status(&ctx);
             Ok(0)

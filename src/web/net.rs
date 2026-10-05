@@ -135,6 +135,17 @@ impl Allowed {
         })
     }
 
+    /// Whether `local` would still be allowed under other settings (the lock-out guard).
+    pub fn would_permit(&self, local: IpAddr, other: &WebSettings) -> bool {
+        if local.is_loopback() || other.any() {
+            return true;
+        }
+        let IpAddr::V4(v4) = local else { return false };
+        self.ifaces_at(Instant::now()).iter().any(|i| {
+            i.v4.contains(&v4) && class_of(i, &other.interfaces).map_or(false, |c| other.listen.iter().any(|l| l == c))
+        })
+    }
+
     /// (class, URL) for every address the server is reachable at, for the UI and GEM.
     pub fn urls(&self, port: u16) -> Vec<(String, String)> {
         let suffix = if port == 80 { String::new() } else { format!(":{port}") };

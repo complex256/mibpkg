@@ -99,6 +99,12 @@ pub trait Runner: Send + Sync {
     fn start(&self, argv: Vec<String>, job: Arc<Job>) -> io::Result<()>;
 }
 
+impl<T: Runner + ?Sized> Runner for Arc<T> {
+    fn start(&self, argv: Vec<String>, job: Arc<Job>) -> io::Result<()> {
+        (**self).start(argv, job)
+    }
+}
+
 /// The real runner: `<exe> --root <root> gem <argv…>`, started directly (execve with an argv
 /// array, never through a shell), output also appended to the mibpkg log like gem.sh does.
 pub struct ProcessRunner {
