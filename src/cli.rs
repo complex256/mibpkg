@@ -138,8 +138,10 @@ pub fn run(args: &[String]) -> Result<i32> {
             let _lock = match Lock::acquire(&ctx.layout, ctx.sys) {
                 Ok(l) => l,
                 Err(e) => {
-                    // Double tap: the running action refreshes the screens when it finishes.
-                    println!("FAILED: {e:#}");
+                    // Double tap, or GEM and the web racing: nothing was done. The running action
+                    // refreshes the screens when it finishes. BUSY (not FAILED) so the web UI can
+                    // say "try again" instead of reporting a failure.
+                    println!("BUSY: {e:#}");
                     return Ok(0);
                 }
             };

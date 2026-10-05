@@ -206,6 +206,7 @@ pub fn run(layout: Layout) -> Result<()> {
     };
     app.port.store(listener.local_addr()?.port(), Ordering::SeqCst);
     app.uploads.sweep(&app.layout);
+    jobs::sweep_leftovers(&app.layout);
     println!("mibpkg web: listening on port {}", app.port.load(Ordering::SeqCst));
     let app = Arc::new(app);
     write_url_file(&app);

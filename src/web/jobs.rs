@@ -32,9 +32,9 @@ pub struct Job {
     state: Mutex<JobState>,
 }
 
-/// The last `OK: …` or `FAILED: …` line: how `mibpkg gem` reports its outcome.
+/// The last `OK: …`, `FAILED: …` or `BUSY: …` line: how `mibpkg gem` reports its outcome.
 fn result_line(lines: &VecDeque<String>) -> Option<String> {
-    lines.iter().rev().find(|l| l.starts_with("OK:") || l.starts_with("FAILED:")).cloned()
+    lines.iter().rev().find(|l| l.starts_with("OK:") || l.starts_with("FAILED:") || l.starts_with("BUSY:")).cloned()
 }
 
 impl Job {
@@ -80,6 +80,8 @@ impl Job {
         let lines: Vec<&String> = s.lines.iter().skip(from).collect();
         let result = if s.done { result_line(&s.lines) } else { None };
         let ok = result.as_deref().map_or(false, |r| r.starts_with("OK:"));
+        // Another action (GEM) took the lock first: nothing happened, try again later.
+        let busy = result.as_deref().map_or(false, |r| r.starts_with("BUSY:"));
         json!({
             "id": self.id,
             "label": self.label,
@@ -89,6 +91,7 @@ impl Job {
             "truncated": s.dropped > 0,
             "done": s.done,
             "ok": ok,
+            "busy": busy,
             "result": result,
         })
     }
@@ -159,6 +162,7 @@ impl Runner for ProcessRunner {
             .stderr(open()?)
             .spawn()?;
         let log = self.log.clone();
+        let root = self.root.clone();
         std::thread::spawn(move || {
             let mut file = match std::fs::File::open(&out_path) {
                 Ok(f) => f,
@@ -180,6 +184,11 @@ impl Runner for ProcessRunner {
                 std::thread::sleep(FOLLOW_EVERY);
             }
             let _ = std::fs::remove_file(&out_path);
+            // Text handed to the verb (config contents, settings) is normally deleted by the verb;
+            // if it never ran (busy, bad arguments), delete it here: /tmp is RAM.
+            for id in argv.iter().filter(|a| super::settings::is_id(a)) {
+                let _ = std::fs::remove_file(root.join("tmp").join(format!("mibpkg.text.{id}")));
+            }
             job.finish();
         });
         Ok(())
@@ -277,5 +286,18 @@ impl Jobs {
     /// Forget jobs finished more than `KEEP_DONE` before `now`.
     pub fn sweep_at(&self, now: Instant) {
         self.lock().done.retain(|j| !j.finished_before(now));
+    }
+}
+
+/// Delete /tmp/mibpkg.text.* and /tmp/mibpkg.job.* left by an earlier web process (it may have
+/// been restarted mid-action). Run once at start, before any job of this process exists.
+pub fn sweep_leftovers(layout: &crate::paths::Layout) {
+    if let Ok(rd) = std::fs::read_dir(layout.p("/tmp")) {
+        for e in rd.filter_map(|e| e.ok()) {
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with("mibpkg.text.") || name.starts_with("mibpkg.job.") {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
     }
 }

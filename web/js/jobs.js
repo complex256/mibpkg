@@ -81,6 +81,9 @@ export function jobView(jobId, { onDone = null, tall = false } = {}) {
     if (job.ok) {
       status.className = 'job-status ok';
       replace(status, '✓ ', job.result.replace(/^OK:\s*/, ''));
+    } else if (job.busy) {
+      // GEM (or another action) got there first; nothing was changed.
+      replace(status, 'Another mibpkg action was running (from GEM?). Nothing was changed; try again when it has finished.');
     } else if (job.result) {
       status.className = 'job-status failed';
       replace(status, '✕ ', job.result.replace(/^FAILED:\s*/, ''));

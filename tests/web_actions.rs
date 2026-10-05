@@ -196,3 +196,64 @@ fn a_background_process_holding_the_output_does_not_keep_the_job_running() {
     assert_eq!(v["done"], true, "{v}");
     assert_eq!(v["result"], "OK: started");
 }
+
+#[test]
+fn a_busy_result_is_reported_as_busy_not_failed() {
+    let job = Job::new("Restart x".into(), Some("x".into()));
+    job.push("BUSY: another mibpkg action is running (pid 123)");
+    job.finish();
+    let v = job.json(0);
+    assert_eq!(v["busy"], true);
+    assert_eq!(v["ok"], false);
+    assert_eq!(v["result"], "BUSY: another mibpkg action is running (pid 123)");
+}
+
+#[test]
+fn gem_prints_busy_when_another_action_holds_the_lock() {
+    let t = tempfile::tempdir().unwrap();
+    for d in ["mnt/app/root", "tmp"] {
+        std::fs::create_dir_all(t.path().join(d)).unwrap();
+    }
+    // This test process is alive, so the lock counts as held.
+    std::fs::write(t.path().join("tmp/mibpkg.lock"), std::process::id().to_string()).unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_mibpkg"))
+        .args(["--root", t.path().to_str().unwrap(), "--no-supervisor", "gem", "rescan"])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.starts_with("BUSY: "), "{text}");
+}
+
+#[test]
+fn leftover_text_and_job_files_are_removed_at_start() {
+    let t = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(t.path().join("tmp")).unwrap();
+    let layout = mibpkg::paths::Layout::load(t.path()).unwrap();
+    for f in ["text.0123456789abcdef0123456789abcdef", "job.0123456789abcdef0123456789abcdef", "log"] {
+        std::fs::write(layout.run(f), "x").unwrap();
+    }
+    mibpkg::web::jobs::sweep_leftovers(&layout);
+    assert!(!layout.run("text.0123456789abcdef0123456789abcdef").exists());
+    assert!(!layout.run("job.0123456789abcdef0123456789abcdef").exists());
+    assert!(layout.run("log").exists(), "other mibpkg files are left alone");
+}
+
+#[test]
+fn a_text_file_the_verb_never_read_is_deleted_when_the_job_ends() {
+    let id = "0123456789abcdef0123456789abcdef";
+    let t = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(t.path().join("tmp")).unwrap();
+    let text = t.path().join(format!("tmp/mibpkg.text.{id}"));
+    std::fs::write(&text, "broker").unwrap();
+    let exe = t.path().join("fake-mibpkg");
+    std::fs::write(&exe, "#!/bin/sh\necho 'BUSY: another mibpkg action is running'\n").unwrap();
+    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let runner = ProcessRunner { exe, root: t.path().to_path_buf(), log: None };
+    let job = Arc::new(Job::new("Save".into(), None));
+    runner.start(vec!["config-set".into(), "demo".into(), "0".into(), id.into()], job.clone()).unwrap();
+    let end = Instant::now() + Duration::from_secs(5);
+    while !job.done() && Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(!text.exists());
+}
