@@ -142,6 +142,7 @@ fn finished_jobs_expire_after_ten_minutes() {
 #[test]
 fn the_process_runner_passes_argv_without_a_shell() {
     let t = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(t.path().join("tmp")).unwrap();
     let exe = t.path().join("fake-mibpkg");
     // Prints each argument on its own line, then a result line.
     std::fs::write(&exe, "#!/bin/sh\nfor a in \"$@\"; do echo \"arg:$a\"; done\necho 'OK: done'\n").unwrap();
@@ -158,4 +159,40 @@ fn the_process_runner_passes_argv_without_a_shell() {
     assert_eq!(lines, ["arg:--root", &format!("arg:{}", t.path().display()), "arg:gem", "arg:restart", "arg:$(echo pwned)", "OK: done"]);
     assert_eq!(v["ok"], true);
     assert!(std::fs::read_to_string(t.path().join("log")).unwrap().contains("OK: done"));
+}
+
+/// Run `script` as the fake mibpkg through the real runner; return the finished job (or the
+/// unfinished one after `wait`).
+fn run_script(script: &str, wait: Duration) -> (serde_json::Value, tempfile::TempDir) {
+    let t = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(t.path().join("tmp")).unwrap();
+    let exe = t.path().join("fake-mibpkg");
+    std::fs::write(&exe, script).unwrap();
+    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let runner = ProcessRunner { exe, root: t.path().to_path_buf(), log: None };
+    let job = Arc::new(Job::new("Test".into(), None));
+    runner.start(vec!["x".into()], job.clone()).unwrap();
+    let end = Instant::now() + wait;
+    while !job.done() && Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    (job.json(0), t)
+}
+
+#[test]
+fn output_that_is_not_utf8_is_kept_and_does_not_stop_the_job() {
+    let (v, _t) = run_script("#!/bin/sh\nprintf 'bad \\377\\376 bytes\\n'\necho 'after'\necho 'OK: done'\n", Duration::from_secs(5));
+    assert_eq!(v["done"], true);
+    let lines: Vec<&str> = v["lines"].as_array().unwrap().iter().map(|l| l.as_str().unwrap()).collect();
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    assert!(lines[0].starts_with("bad "));
+    assert_eq!(v["result"], "OK: done");
+}
+
+#[test]
+fn a_background_process_holding_the_output_does_not_keep_the_job_running() {
+    // A package script that starts a daemon which inherits stdout.
+    let (v, _t) = run_script("#!/bin/sh\nsleep 30 &\necho 'OK: started'\n", Duration::from_secs(3));
+    assert_eq!(v["done"], true, "{v}");
+    assert_eq!(v["result"], "OK: started");
 }

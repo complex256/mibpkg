@@ -2,7 +2,7 @@
 //! can follow it live (GET /api/jobs/<id>?since=N).
 use serde_json::{json, Value};
 use std::collections::VecDeque;
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -106,44 +106,80 @@ impl<T: Runner + ?Sized> Runner for Arc<T> {
 }
 
 /// The real runner: `<exe> --root <root> gem <argv…>`, started directly (execve with an argv
-/// array, never through a shell), output also appended to the mibpkg log like gem.sh does.
+/// array, never through a shell).
+///
+/// The child writes to a file in /tmp, not a pipe: a package script that leaves a daemon holding
+/// the output, bytes that are not UTF-8, or this web process restarting mid-action (a mibpkg
+/// self-update) can then never stall or kill the child. A thread follows the file into the job
+/// and finishes it when the child exits. Lines also go to the mibpkg log, like gem.sh does.
 pub struct ProcessRunner {
     pub exe: PathBuf,
     pub root: PathBuf,
     pub log: Option<PathBuf>,
 }
 
+/// How often the output file is read while the child runs.
+const FOLLOW_EVERY: Duration = Duration::from_millis(100);
+
+/// Push the complete lines in `buf` to the job (and the log), keeping a partial last line.
+fn push_lines(buf: &mut Vec<u8>, job: &Job, log: Option<&PathBuf>, flush_partial: bool) {
+    while let Some(i) = buf.iter().position(|b| *b == b'\n') {
+        let line: Vec<u8> = buf.drain(..=i).collect();
+        emit(&line[..line.len() - 1], job, log);
+    }
+    if flush_partial && !buf.is_empty() {
+        let rest = std::mem::take(buf);
+        emit(&rest, job, log);
+    }
+}
+
+fn emit(bytes: &[u8], job: &Job, log: Option<&PathBuf>) {
+    let line = String::from_utf8_lossy(bytes);
+    let line = line.trim_end_matches('\r');
+    job.push(line);
+    if let Some(p) = log {
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
+            let _ = writeln!(f, "{line}");
+        }
+    }
+}
+
 impl Runner for ProcessRunner {
     fn start(&self, argv: Vec<String>, job: Arc<Job>) -> io::Result<()> {
+        let out_path = self.root.join("tmp").join(format!("mibpkg.job.{}", job.id));
+        // Opened twice, not try_clone: that needs F_DUPFD_CLOEXEC, which QNX 6.5 rejects.
+        let open = || std::fs::OpenOptions::new().create(true).write(true).append(true).open(&out_path);
         let mut child = Command::new(&self.exe)
             .arg("--root")
             .arg(&self.root)
             .arg("gem")
             .args(&argv)
             .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stdout(open()?)
+            .stderr(open()?)
             .spawn()?;
-        let log = Arc::new(Mutex::new(self.log.clone()));
-        let pump = |r: Box<dyn io::Read + Send>, job: Arc<Job>, log: Arc<Mutex<Option<PathBuf>>>| {
-            std::thread::spawn(move || {
-                for line in BufReader::new(r).lines() {
-                    let Ok(line) = line else { break };
-                    job.push(&line);
-                    if let Some(p) = log.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
-                        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
-                            let _ = writeln!(f, "{line}");
-                        }
-                    }
-                }
-            })
-        };
-        let out = pump(Box::new(child.stdout.take().unwrap()), job.clone(), log.clone());
-        let err = pump(Box::new(child.stderr.take().unwrap()), job.clone(), log);
+        let log = self.log.clone();
         std::thread::spawn(move || {
-            let _ = out.join();
-            let _ = err.join();
-            let _ = child.wait();
+            let mut file = match std::fs::File::open(&out_path) {
+                Ok(f) => f,
+                Err(_) => {
+                    let _ = child.wait();
+                    job.finish();
+                    return;
+                }
+            };
+            let mut buf = Vec::new();
+            loop {
+                let exited = matches!(child.try_wait(), Ok(Some(_)) | Err(_));
+                // Read whatever was written since last time (after the exit, that is everything).
+                let _ = io::Read::read_to_end(&mut file, &mut buf);
+                push_lines(&mut buf, &job, log.as_ref(), exited);
+                if exited {
+                    break;
+                }
+                std::thread::sleep(FOLLOW_EVERY);
+            }
+            let _ = std::fs::remove_file(&out_path);
             job.finish();
         });
         Ok(())
