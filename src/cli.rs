@@ -27,7 +27,9 @@ const USAGE: &str = "usage:
   mibpkg [--root DIR] [--no-supervisor] <command>
     supervise | status | list | install <pkg> [collection] | remove <pkg> [--purge]
     rollback <pkg> | restart <pkg> | rescan | update-all | gem <action> [args..]
-    online-check | sntp [host:port]
+    online-check | sntp [host:port] | web
+    gem install-file <pkg> <id> <collection|-> | gem config-set <pkg> <n> <id>
+    gem source-add <source> | gem source-remove <source> | gem web-settings <id> | gem web-reset | gem web-restart
     bootstrap | uninstall-self";
 
 pub fn run(args: &[String]) -> Result<i32> {
@@ -140,7 +142,7 @@ pub fn run(args: &[String]) -> Result<i32> {
                 }
             };
             let key = match verb.as_str() {
-                "install" | "remove" | "rollback" | "restart" => {
+                "install" | "remove" | "rollback" | "restart" | "install-file" | "config-set" => {
                     args.get(1).filter(|n| crate::manifest::valid_name(n)).cloned().unwrap_or_else(|| "_".into())
                 }
                 _ => "_".into(),
@@ -221,6 +223,17 @@ fn arg<'a>(args: &'a [String], i: usize, what: &str) -> Result<&'a str> {
     args.get(i).map(|s| s.as_str()).with_context(|| format!("missing {what}"))
 }
 
+/// The supervisor's id for the built-in web server service.
+pub const WEB_SERVICE: &str = "mibpkg.web";
+
+fn id_arg<'a>(args: &'a [String], i: usize) -> Result<&'a str> {
+    let id = arg(args, i, "id")?;
+    if !crate::web::settings::is_id(id) {
+        bail!("invalid id {id:?}");
+    }
+    Ok(id)
+}
+
 fn pkg_arg<'a>(args: &'a [String], i: usize) -> Result<&'a str> {
     let name = arg(args, i, "package name")?;
     if !crate::manifest::valid_name(name) {
@@ -267,6 +280,80 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
             Ok(if msgs.is_empty() { "rescanned; no new config files".into() } else { msgs.join("; ") })
         }
         "update-all" => Ok(install::update_all(ctx, &media_roots, &colls)?.join("; ")),
+        "install-file" => {
+            let name = pkg_arg(args, 0)?;
+            let id = id_arg(args, 1)?;
+            let coll = arg(args, 2, "collection")?;
+            if coll != "-" && !crate::manifest::valid_name(coll) {
+                bail!("invalid collection {coll:?}");
+            }
+            let path = ctx.layout.run(&format!("upload.{id}.mpk"));
+            // The upload is in RAM (/tmp): gone after one attempt, whatever the outcome.
+            let r = install::install_file(ctx, &media_roots, &colls, &path, name, Some(coll));
+            let _ = fs::remove_file(&path);
+            r
+        }
+        "config-set" => {
+            let name = pkg_arg(args, 0)?;
+            let n: usize = arg(args, 1, "config number")?.parse().context("invalid config number")?;
+            let id = id_arg(args, 2)?;
+            let text = ctx.layout.run(&format!("text.{id}"));
+            let r = (|| -> Result<String> {
+                let m = install::current_manifest(&ctx.layout, name)?;
+                let c = m.configs.get(n).with_context(|| format!("{name} has no config number {n}"))?;
+                {
+                    let _rw = ctx.mounts.rw("/mnt/app")?;
+                    config::import_file(&ctx.layout, name, &c.path, &text)?;
+                }
+                let inst = state.packages.get(name).with_context(|| format!("{name} is not installed"))?;
+                for svc in &inst.services {
+                    control::request_restart(&ctx.layout, svc)?;
+                }
+                Ok(format!("saved {} for {name}; restarting its services", c.path))
+            })();
+            let _ = fs::remove_file(&text);
+            r
+        }
+        "source-add" => {
+            let source = arg(args, 0, "source")?;
+            let msg = {
+                let _rw = ctx.mounts.rw("/mnt/app")?;
+                crate::online::add_source(&ctx.layout, source)?
+            };
+            Ok(format!("{msg}; {}", online_check(ctx)))
+        }
+        "source-remove" => {
+            let _rw = ctx.mounts.rw("/mnt/app")?;
+            crate::online::remove_source(&ctx.layout, arg(args, 0, "source")?)
+        }
+        "web-settings" => {
+            let id = id_arg(args, 0)?;
+            let text = ctx.layout.run(&format!("text.{id}"));
+            let r = (|| -> Result<String> {
+                let s: crate::web::settings::WebSettings = serde_json::from_str(&fs::read_to_string(&text)?).context("reading the new web settings")?;
+                s.validate()?;
+                let _rw = ctx.mounts.rw("/mnt/app")?;
+                crate::web::settings::save(&ctx.layout, &s)?;
+                Ok("web settings saved".into())
+            })();
+            let _ = fs::remove_file(&text);
+            r
+        }
+        "web-reset" => {
+            {
+                let _rw = ctx.mounts.rw("/mnt/app")?;
+                match fs::remove_file(crate::web::settings::path(&ctx.layout)) {
+                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+                    _ => {}
+                }
+            }
+            control::request_restart(&ctx.layout, WEB_SERVICE)?;
+            Ok("web settings reset to the defaults; the web server restarts".into())
+        }
+        "web-restart" => {
+            control::request_restart(&ctx.layout, WEB_SERVICE)?;
+            Ok("web server restart requested".into())
+        }
         "check" => {
             let t = online_check(ctx);
             let _ = ctx.sys.persist_write(crate::persist::NS, crate::persist::KEY_ONLINE, &t);
