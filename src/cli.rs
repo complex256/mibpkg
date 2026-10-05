@@ -435,7 +435,7 @@ fn print_status(ctx: &Ctx) {
     // "port N" then "<class> <url>" lines, written by the running web server.
     match fs::read_to_string(ctx.layout.run("web.url")) {
         Ok(t) => {
-            let urls: Vec<&str> = t.lines().skip(1).collect();
+            let urls: Vec<&str> = t.lines().skip(1).filter(|l| !l.starts_with("iface ")).collect();
             println!("web: {}", if urls.is_empty() { t.lines().next().unwrap_or("running").to_string() } else { urls.join(", ") });
         }
         Err(_) => println!("web: not running"),

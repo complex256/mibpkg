@@ -234,3 +234,16 @@ fn web_interface_screen_has_status_urls_and_recovery_buttons() {
     assert!(f.layout.gem_dir().join("web-restart.sh").is_file());
     assert!(f.layout.gem_dir().join("web-reset.sh").is_file());
 }
+
+#[test]
+fn web_screen_lists_interfaces_when_the_hotspot_is_not_recognised() {
+    let f = common::fixture();
+    // The server found no hotspot/Tailscale address, but these interfaces are up.
+    fs::write(f.layout.run("web.url"), "port 80\niface uap0 10.255.1.1\niface ecm0 10.0.0.2\n").unwrap();
+    let sys = RecordingSys::default();
+    gem::regenerate(&Ctx::new(f.layout.clone(), &sys)).unwrap();
+    let esd = fs::read_to_string(f.layout.engdefs().join("mibpkg__web.esd")).unwrap();
+    assert!(esd.contains("interfaces up: uap0 10.255.1.1, ecm0 10.0.0.2"), "{esd}");
+    assert!(esd.contains("no hotspot or Tailscale address recognised"), "{esd}");
+    assert!(!esd.contains("iface: uap0"), "iface lines are not shown as URLs");
+}

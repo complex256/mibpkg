@@ -272,21 +272,32 @@ fn mibpkg_web_runs_against_a_root() {
     let f = fixture_with_card();
     std::fs::create_dir_all(f.layout.home()).unwrap();
     std::fs::write(mibpkg::web::settings::path(&f.layout), "port = 0\n").unwrap();
-    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_mibpkg"))
-        .args(["--root", f.root().to_str().unwrap(), "web"])
-        .stdout(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
+    // Killed on drop, even when an assertion below fails (a live child holding the test's
+    // stderr would hang `cargo test`).
+    struct KillOnDrop(std::process::Child);
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let _child = KillOnDrop(
+        std::process::Command::new(env!("CARGO_BIN_EXE_mibpkg"))
+            .args(["--root", f.root().to_str().unwrap(), "web"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
     let url_file = f.layout.run("web.url");
     let end = Instant::now() + Duration::from_secs(10);
     while !url_file.exists() && Instant::now() < end {
         std::thread::sleep(Duration::from_millis(50));
     }
     let text = std::fs::read_to_string(&url_file).unwrap();
+    assert!(text.lines().any(|l| l.starts_with("iface lo")), "interfaces that are up are listed: {text}");
     let port: u16 = text.lines().next().unwrap().trim_start_matches("port ").parse().unwrap();
     let r = send(format!("127.0.0.1:{port}").parse().unwrap(), b"GET /api/status HTTP/1.1\r\nHost: localhost\r\n\r\n");
-    let _ = child.kill();
-    let _ = child.wait();
     assert_eq!(r.status, 200);
 }
 
@@ -347,4 +358,17 @@ fn one_upload_at_a_time() {
     let r = send(srv.addr, b"POST /api/uploads HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Mibpkg: 1\r\nContent-Length: 3\r\n\r\nabc");
     assert_eq!(r.status, 409, "{}", String::from_utf8_lossy(&r.body));
     drop(slow);
+}
+
+#[test]
+fn the_hotspot_interface_can_be_named_from_settings() {
+    let srv = start();
+    let r = write(&srv, "PUT", "/api/settings", br#"{"listen":["hotspot"],"port":80,"hotspot_interface":"../x"}"#, None);
+    assert_eq!(r.status, 400);
+    let r = write(&srv, "PUT", "/api/settings", br#"{"listen":["hotspot"],"port":80,"hotspot_interface":"uap0"}"#, None);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    let argv = srv.runner.seen();
+    let id = &argv.last().unwrap()[1];
+    let saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(srv.app.layout.run(&format!("text.{id}"))).unwrap()).unwrap();
+    assert_eq!(saved["interfaces"]["hotspot"][0], "uap0");
 }

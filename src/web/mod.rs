@@ -174,12 +174,17 @@ pub fn serve(app: Arc<App>, listener: TcpListener) {
     }
 }
 
-/// Write /tmp/mibpkg.web.url: "port N", then "<class> <url>" lines (for GEM and `status`).
+/// Write /tmp/mibpkg.web.url for GEM and `status`: "port N", then "<class> <url>" lines, then
+/// "iface <name> <address>" for every interface that is up (so a hotspot that was not recognised
+/// can be identified from GEM).
 fn write_url_file(app: &App) {
     let port = app.port.load(Ordering::Relaxed);
     let mut text = format!("port {port}\n");
     for (class, url) in app.allowed.urls(port) {
         text.push_str(&format!("{class} {url}\n"));
+    }
+    for (name, addr) in app.allowed.interfaces_up() {
+        text.push_str(&format!("iface {name} {addr}\n"));
     }
     if std::fs::read_to_string(app.layout.run("web.url")).ok().as_deref() != Some(text.as_str()) {
         let _ = crate::fsutil::atomic_write(&app.layout.run("web.url"), text.as_bytes());

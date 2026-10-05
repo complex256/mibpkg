@@ -257,6 +257,9 @@ fn settings_save(app: &App, req: &Request, local: IpAddr) -> Response {
         clear_pin: bool,
         #[serde(default)]
         confirm: bool,
+        /// The hotspot's interface name when it is not recognised; "" = recognise it automatically.
+        #[serde(default)]
+        hotspot_interface: Option<String>,
     }
     let b: Body = match json_body(req) {
         Ok(b) => b,
@@ -276,6 +279,15 @@ fn settings_save(app: &App, req: &Request, local: IpAddr) -> Response {
             return Response::error(400, "a PIN is 4 to 12 digits");
         }
         s.pin = Some(hash_pin(pin));
+    }
+    match b.hotspot_interface.as_deref().map(str::trim) {
+        None => {}
+        Some("") => {
+            s.interfaces.remove("hotspot");
+        }
+        Some(name) => {
+            s.interfaces.insert("hotspot".into(), vec![name.to_string()]);
+        }
     }
     if let Err(e) = s.validate() {
         return Response::error(400, format!("{e:#}"));

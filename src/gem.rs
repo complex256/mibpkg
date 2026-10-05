@@ -232,18 +232,21 @@ fn web_screen(layout: &Layout) -> Screen {
     if !web.enabled {
         items.push(text("disabled in web.toml (Reset web settings turns it back on)"));
     }
-    // "port N" then "<class> <url>" lines, written by the running server.
-    let urls: Vec<String> = fs::read_to_string(layout.run("web.url"))
-        .unwrap_or_default()
-        .lines()
-        .skip(1)
-        .map(|l| l.replace(' ', ": "))
-        .collect();
-    if urls.is_empty() {
+    // Written by the running server: "port N", "<class> <url>" lines, "iface <name> <addr>" lines.
+    let file = fs::read_to_string(layout.run("web.url")).unwrap_or_default();
+    let lines: Vec<&str> = file.lines().skip(1).collect();
+    let ifaces: Vec<&str> = lines.iter().filter_map(|l| l.strip_prefix("iface ")).collect();
+    let urls: Vec<String> = lines.iter().filter(|l| !l.starts_with("iface ")).map(|l| l.replacen(' ', ": ", 1)).collect();
+    if urls.is_empty() && ifaces.is_empty() {
         items.push(text("address: not known yet (join the car's Wi-Fi, then open this screen again)"));
+    } else if urls.is_empty() {
+        items.push(text("address: no hotspot or Tailscale address recognised (see interfaces below)"));
     }
     for u in urls {
         items.push(text(u));
+    }
+    if !ifaces.is_empty() {
+        items.push(text(format!("interfaces up: {}", ifaces.join(", "))));
     }
     items.push(text(format!("listen: {}", web.listen.join(", "))));
     items.push(text(format!("PIN: {}", if web.pin.is_some() { "set" } else { "not set" })));

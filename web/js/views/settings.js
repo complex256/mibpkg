@@ -14,13 +14,22 @@ export async function render() {
   // Where it is reachable right now.
   const urls = s.urls.length
     ? h('ul', { class: 'info' }, s.urls.map((u) => h('li', {}, h('span', {}, u.class), h('a', { href: u.url }, u.url))))
-    : h(
-        'div',
-        { class: 'notice' },
-        'Not reachable on the hotspot or Tailscale right now. Interfaces that are up: ',
-        s.interfaces_up.map((i) => `${i.name} ${i.address}`).join(', ') || 'none',
-        '. If the hotspot is not recognised, its interface name can be set in web.toml.',
-      );
+    : h('div', { class: 'notice' }, 'No hotspot or Tailscale address is recognised right now. If the hotspot is up, name its interface below.');
+
+  // Every interface that is up, so an unrecognised hotspot can be identified.
+  const interfaces = h(
+    'ul',
+    { class: 'info' },
+    s.interfaces_up.map((i) => h('li', {}, h('span', {}, i.name), h('span', {}, i.address))),
+  );
+  const hotspotName = h('input', {
+    type: 'text',
+    value: (s.interfaces.hotspot || [])[0] || '',
+    placeholder: 'detected automatically',
+    autocapitalize: 'off',
+    autocomplete: 'off',
+    spellcheck: 'false',
+  });
 
   // Listen choices. "Any interface" covers everything, so it disables the other two.
   const box = (value, title, detail) => {
@@ -57,7 +66,7 @@ export async function render() {
 
   async function submit(confirm) {
     const listen = any.input.checked ? ['any'] : [hotspot, tailscale].filter((b) => b.input.checked).map((b) => b.input.value);
-    const body = { listen, port: Number(port.value), clear_pin: removePin.checked, confirm };
+    const body = { listen, port: Number(port.value), clear_pin: removePin.checked, confirm, hotspot_interface: hotspotName.value.trim() };
     if (pinInput.value) {
       body.pin = pinInput.value;
     }
@@ -100,6 +109,9 @@ export async function render() {
     any.node,
     anyWarning,
     h('label', { class: 'field' }, h('span', {}, 'Port'), port),
+    h('div', { class: 'section-head' }, h('h2', {}, 'Interfaces')),
+    interfaces,
+    h('label', { class: 'field' }, h('span', {}, 'Hotspot interface (only if the hotspot is not recognised, e.g. uap0)'), hotspotName),
     h('div', { class: 'section-head' }, h('h2', {}, 'PIN')),
     pinArea,
     save,
