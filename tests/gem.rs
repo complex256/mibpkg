@@ -216,3 +216,21 @@ fn online_versions_and_check_button_on_screens() {
     assert!(demo.iter().any(|l| l == "online [complex256]: 2.0.0"), "{demo:?}");
     assert!(demo.iter().any(|l| l == "[Install 2.0.0 from complex256]"), "{demo:?}");
 }
+
+#[test]
+fn web_interface_screen_has_status_urls_and_recovery_buttons() {
+    let f = common::fixture();
+    fs::write(f.layout.run("web.url"), "port 80\nhotspot http://10.255.1.1\n").unwrap();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    gem::regenerate(&ctx).unwrap();
+    let esd = fs::read_to_string(f.layout.engdefs().join("mibpkg__web.esd")).unwrap();
+    assert!(esd.starts_with("screen mibpkg__web mibpkg\n"), "{esd}");
+    assert!(esd.contains("http://10.255.1.1"));
+    assert!(esd.contains("listen: hotspot, tailscale"));
+    assert!(esd.contains("PIN: not set"));
+    assert!(esd.contains("Restart web server") && esd.contains("Reset web settings"));
+    assert!(esd.contains(&format!("0x{:08x}", mibpkg::persist::service_key("mibpkg.web"))), "live status row");
+    assert!(f.layout.gem_dir().join("web-restart.sh").is_file());
+    assert!(f.layout.gem_dir().join("web-reset.sh").is_file());
+}

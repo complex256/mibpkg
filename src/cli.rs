@@ -426,6 +426,14 @@ fn record_result(ctx: &Ctx, key: &str, text: &str) -> Result<()> {
 }
 
 fn print_status(ctx: &Ctx) {
+    // "port N" then "<class> <url>" lines, written by the running web server.
+    match fs::read_to_string(ctx.layout.run("web.url")) {
+        Ok(t) => {
+            let urls: Vec<&str> = t.lines().skip(1).collect();
+            println!("web: {}", if urls.is_empty() { t.lines().next().unwrap_or("running").to_string() } else { urls.join(", ") });
+        }
+        Err(_) => println!("web: not running"),
+    }
     match status::read(&ctx.layout) {
         None => println!("supervisor: no status (not running since boot?)"),
         Some(s) => {
