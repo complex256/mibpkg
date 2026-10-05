@@ -63,6 +63,106 @@ pub fn collections(layout: &Layout) -> Vec<Collection> {
     out
 }
 
+/// Where a source in the effective list comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SourceOrigin {
+    /// mibpkg's built-in default (settings.toml did not change the list).
+    Default,
+    /// Listed by hand in settings.toml `online_sources`.
+    Settings,
+    /// Added on the unit (web interface), kept in state/sources.json.
+    Added,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EffectiveSource {
+    pub source: String,
+    pub origin: SourceOrigin,
+    pub enabled: bool,
+}
+
+/// Sources changed on the unit. settings.toml is hand-owned and never rewritten, so additions and
+/// removals of its sources are recorded here instead.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct SourceEdits {
+    #[serde(default)]
+    added: Vec<String>,
+    #[serde(default)]
+    disabled: Vec<String>,
+}
+
+pub fn state_path(layout: &Layout) -> PathBuf {
+    layout.state_dir().join("sources.json")
+}
+
+fn load_edits(layout: &Layout) -> SourceEdits {
+    fs::read_to_string(state_path(layout)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+}
+
+fn save_edits(layout: &Layout, e: &SourceEdits) -> Result<()> {
+    let mut text = serde_json::to_string_pretty(e)?;
+    text.push('\n');
+    atomic_write(&state_path(layout), text.as_bytes())?;
+    Ok(())
+}
+
+/// settings.toml sources, then the ones added on the unit; removed ones stay listed as disabled.
+pub fn effective_sources(layout: &Layout) -> Vec<EffectiveSource> {
+    let edits = load_edits(layout);
+    let mut out: Vec<EffectiveSource> = Vec::new();
+    for s in &layout.settings.online_sources {
+        let origin = if s == DEFAULT_SOURCE { SourceOrigin::Default } else { SourceOrigin::Settings };
+        out.push(EffectiveSource { source: s.clone(), origin, enabled: !edits.disabled.contains(s) });
+    }
+    for s in &edits.added {
+        if !out.iter().any(|e| &e.source == s) {
+            out.push(EffectiveSource { source: s.clone(), origin: SourceOrigin::Added, enabled: true });
+        }
+    }
+    out
+}
+
+/// Add a source (or re-enable a removed settings.toml one). Caller holds /mnt/app rw.
+pub fn add_source(layout: &Layout, source: &str) -> Result<String> {
+    index_url(source)?;
+    let mut edits = load_edits(layout);
+    if edits.disabled.iter().any(|s| s == source) {
+        edits.disabled.retain(|s| s != source);
+        save_edits(layout, &edits)?;
+        return Ok(format!("re-enabled {source}"));
+    }
+    if effective_sources(layout).iter().any(|e| e.source == source) {
+        bail!("{source} is already a source");
+    }
+    edits.added.push(source.to_string());
+    save_edits(layout, &edits)?;
+    Ok(format!("added {source}"))
+}
+
+/// Remove an added source, or disable one from settings.toml, and drop its cached index.
+/// Caller holds /mnt/app rw.
+pub fn remove_source(layout: &Layout, source: &str) -> Result<String> {
+    let known = effective_sources(layout).into_iter().find(|e| e.source == source).with_context(|| format!("{source} is not a source"))?;
+    let mut edits = load_edits(layout);
+    if known.origin == SourceOrigin::Added {
+        edits.added.retain(|s| s != source);
+    } else if !edits.disabled.iter().any(|s| s == source) {
+        edits.disabled.push(source.to_string());
+    }
+    save_edits(layout, &edits)?;
+    // Cached indexes are named by collection id; the cache records which source it came from.
+    if let Ok(rd) = fs::read_dir(layout.state_dir().join("online")) {
+        for p in rd.filter_map(|e| e.ok().map(|e| e.path())) {
+            let from_source = fs::read_to_string(&p).ok().and_then(|t| serde_json::from_str::<Cached>(&t).ok()).map_or(false, |c| c.source == source);
+            if from_source {
+                fs::remove_file(&p)?;
+            }
+        }
+    }
+    Ok(format!("removed {source}"))
+}
+
 #[derive(Debug, Default)]
 pub struct Report {
     pub checked: usize,
@@ -104,7 +204,14 @@ fn store_one(ctx: &Ctx, cached: &Cached) -> Result<()> {
 /// Every configured source's index, fetched and validated. Touches nothing on the unit, so it
 /// runs without the action lock (network I/O can take minutes).
 pub fn fetch_all(ctx: &Ctx, fetcher: &dyn Fetcher) -> Vec<(String, Result<Cached>)> {
-    ctx.layout.settings.online_sources.iter().map(|s| (s.clone(), fetch_one(fetcher, s))).collect()
+    effective_sources(&ctx.layout)
+        .into_iter()
+        .filter(|e| e.enabled)
+        .map(|e| {
+            let got = fetch_one(fetcher, &e.source);
+            (e.source, got)
+        })
+        .collect()
 }
 
 /// Caches what `fetch_all` got (failed sources keep their previous cache) and reports updates.
