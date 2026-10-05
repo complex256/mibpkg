@@ -51,7 +51,7 @@ phone/laptop ──HTTP──> mibpkg web  (child of the supervisor, restarted w
 
 - `mibpkg web` binds `0.0.0.0:<port>` once. The supervisor starts it as built-in service
   `mibpkg.web` (not a boot.d entry) when `web.enabled` is true, with the usual restart backoff and a
-  capped log at `/tmp/mibpkg.web.log`. No start condition.
+  capped log at `/tmp/mibpkg.mibpkg.web.log`. No start condition.
 - The DISABLE card stops it like everything else mibpkg starts.
 - Port: `80` by default; if bind fails with "address in use", fall back to `8080` and log it. The URL
   actually in use is written to `/tmp/mibpkg.web.url` for GEM and `mibpkg status`.
@@ -94,6 +94,11 @@ Added to `cli::action` so every write takes one path under the action lock:
 | `config-set` | `<pkg> <n> <upload-id>` | Replace config file *n* of `<pkg>` with the uploaded text, then request a restart of its services |
 | `source-add` | `<source>` | Add an online source, then run an online check |
 | `source-remove` | `<source>` | Remove or disable an online source, drop its cache |
+| `web-settings` | `<id>` | Save `web.toml` from a server-written JSON file |
+| `web-reset` / `web-restart` | — | Delete `web.toml` and restart the web service / just restart it |
+
+`/mnt/app` is read-only and its rw remount is refcounted per process, so every flash write —
+including web settings — runs as one of these verbs under the action lock.
 
 Text and file contents never travel as arguments: they go to a server-written file in `/tmp`
 named by a server-generated id.
