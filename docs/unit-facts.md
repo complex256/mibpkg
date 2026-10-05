@@ -70,3 +70,16 @@ Facts the code depends on, with how and when they were verified.
 - End to end: GEM "Check for updates" -> "Update to 0.3.1" downloaded from GitHub and self-updated.
 - GitHub's releases/latest redirect lagged ~20 s after publishing a new release.
 - The car's SD card is mounted read-only (write collections on the Mac).
+
+## Pending on-car checks (web interface, mibpkg 0.4.0)
+- Hotspot interface name and address; does the auto rule (up, RFC 1918, not lo/tun/ecm/ppp) pick it?
+  If not, set `interfaces = { hotspot = ["<name>"] }` in web.toml and record the name here.
+- A phone on the hotspot reaches `http://<hotspot ip>/`; is port 80 free (else 8080 is used)?
+- `/dev/urandom` exists (PIN salts, sessions, upload ids; a weaker fallback is logged otherwise).
+- `ifconfig` with no arguments lists every interface with `inet` lines (the filter parses it).
+- `mibpkg web` idle and busy memory/CPU.
+- Phone flow: upload -> install -> logs -> config edit -> restart -> roll back -> remove.
+- mibpkg self-update from the web UI: the page shows "restarting" and reloads on the new version.
+- A web action while GEM runs one (and the reverse): both show busy, nothing breaks.
+- DISABLE card: the web server does not start either.
+- Tailscale: the page loads from a laptop on the tailnet.

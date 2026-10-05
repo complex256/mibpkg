@@ -133,7 +133,7 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
 ## UI
 - [v1] In-car picker: GEM (engineering menu) screen — installed / update / install / remove, then Apply.
   (Decided 2026-09-26: offline users choose IN THE CAR from what's on the SD card.)
-- [designing 2026-10-05] Web UI on the hotspot + Tailscale: spec
+- [built 2026-10-05, mibpkg 0.4.0; verify on the car] Web UI on the hotspot + Tailscale: spec
   docs/superpowers/specs/2026-10-05-web-interface-design.md (M1 web UI beside GEM; M2 GEM shrinks to
   one recovery page).
 - [later] Web UI extras needing index/manifest fields: package icons, release notes / "what's new",
