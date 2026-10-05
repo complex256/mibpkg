@@ -35,10 +35,12 @@ pub fn run(args: &[String]) -> Result<i32> {
     let mut no_supervisor = false;
     let mut rest: Vec<String> = Vec::new();
     let mut it = args.iter();
+    // Global flags only before the command word: after it, "--root" is just an argument (a
+    // package name from GEM or the web must never be able to redirect mibpkg to another root).
     while let Some(a) = it.next() {
         match a.as_str() {
-            "--root" => root = PathBuf::from(it.next().context("--root needs a directory")?),
-            "--no-supervisor" => no_supervisor = true,
+            "--root" if rest.is_empty() => root = PathBuf::from(it.next().context("--root needs a directory")?),
+            "--no-supervisor" if rest.is_empty() => no_supervisor = true,
             _ => rest.push(a.clone()),
         }
     }
@@ -138,7 +140,9 @@ pub fn run(args: &[String]) -> Result<i32> {
                 }
             };
             let key = match verb.as_str() {
-                "install" | "remove" | "rollback" | "restart" => args.get(1).cloned().unwrap_or_else(|| "_".into()),
+                "install" | "remove" | "rollback" | "restart" => {
+                    args.get(1).filter(|n| crate::manifest::valid_name(n)).cloned().unwrap_or_else(|| "_".into())
+                }
                 _ => "_".into(),
             };
             let text = match action(&ctx, &verb, &args[1..]) {
@@ -217,6 +221,14 @@ fn arg<'a>(args: &'a [String], i: usize, what: &str) -> Result<&'a str> {
     args.get(i).map(|s| s.as_str()).with_context(|| format!("missing {what}"))
 }
 
+fn pkg_arg<'a>(args: &'a [String], i: usize) -> Result<&'a str> {
+    let name = arg(args, i, "package name")?;
+    if !crate::manifest::valid_name(name) {
+        bail!("invalid package name {name:?}");
+    }
+    Ok(name)
+}
+
 /// Caller holds the action lock.
 fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
     let media_roots = media::roots(&ctx.layout);
@@ -225,14 +237,14 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
     let state = State::load(&ctx.layout)?;
     match verb {
         "install" => {
-            let name = arg(args, 0, "package name")?;
+            let name = pkg_arg(args, 0)?;
             let coll = install::pick_collection(&state, &colls, name, args.get(1).map(|s| s.as_str()), &ctx.unit)?;
             install::install(ctx, &media_roots, coll, name)
         }
-        "remove" => install::remove(ctx, arg(args, 0, "package name")?, args.iter().any(|a| a == "--purge")),
-        "rollback" => install::rollback(ctx, arg(args, 0, "package name")?),
+        "remove" => install::remove(ctx, pkg_arg(args, 0)?, args.iter().any(|a| a == "--purge")),
+        "rollback" => install::rollback(ctx, pkg_arg(args, 0)?),
         "restart" => {
-            let name = arg(args, 0, "package name")?;
+            let name = pkg_arg(args, 0)?;
             let inst = state.packages.get(name).with_context(|| format!("{name} is not installed"))?;
             for id in &inst.services {
                 control::request_restart(&ctx.layout, id)?;

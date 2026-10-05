@@ -181,8 +181,11 @@ impl Manifest {
     }
 }
 
+/// 1-40 of [a-z0-9-], starting with a letter or digit: names become file names and command
+/// arguments, so one must never look like an option such as `--root`.
 pub fn valid_name(s: &str) -> bool {
-    !s.is_empty() && s.len() <= 40 && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    let first_ok = s.bytes().next().map_or(false, |b| b.is_ascii_lowercase() || b.is_ascii_digit());
+    first_ok && s.len() <= 40 && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
 pub fn parse_mode(s: &str) -> Result<u32> {
