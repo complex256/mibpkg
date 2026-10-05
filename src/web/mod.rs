@@ -48,10 +48,8 @@ pub struct App {
     pub uploads: upload::Uploads,
     pub auth: auth::Auth,
     pub runner: Box<dyn Runner>,
-    /// Set by a settings save: exit after this response so the supervisor restarts us.
-    pub exit_after_response: AtomicBool,
-    /// How to exit (tests replace it).
-    pub on_exit: Box<dyn Fn() + Send + Sync>,
+    /// Set by a settings save: after this response, ask the supervisor to restart us with them.
+    pub restart_after_response: AtomicBool,
 }
 
 impl App {
@@ -75,19 +73,13 @@ impl App {
             uploads: upload::Uploads::default(),
             auth: auth::Auth::default(),
             runner,
-            exit_after_response: AtomicBool::new(false),
-            on_exit: Box::new(|| std::process::exit(0)),
+            restart_after_response: AtomicBool::new(false),
             layout,
         }
     }
 
     pub fn with_runner(mut self, runner: Box<dyn Runner>) -> App {
         self.runner = runner;
-        self
-    }
-
-    pub fn with_exit(mut self, on_exit: Box<dyn Fn() + Send + Sync>) -> App {
-        self.on_exit = on_exit;
         self
     }
 
@@ -149,11 +141,14 @@ fn connection(app: &App, stream: TcpStream) {
     if let Some((r, gzip)) = response {
         let _ = http::write_response(&mut writer, r, gzip);
     }
-    if app.exit_after_response.load(Ordering::SeqCst) {
-        // Give the browser a moment to read the reply, then let the supervisor restart us with
-        // the new settings.
+    if app.restart_after_response.swap(false, Ordering::SeqCst) {
+        // Give the browser a moment to read the reply, then have the supervisor restart us with
+        // the new settings. A requested restart starts a fresh service, so saving settings often
+        // never looks like a crash loop (exiting would count toward "failed").
         std::thread::sleep(Duration::from_millis(200));
-        (app.on_exit)();
+        if let Err(e) = crate::control::request_restart(&app.layout, crate::cli::WEB_SERVICE) {
+            eprintln!("mibpkg web: requesting a restart: {e:#}");
+        }
     }
 }
 

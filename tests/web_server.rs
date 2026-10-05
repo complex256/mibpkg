@@ -9,7 +9,7 @@ use mibpkg::web::{serve, App};
 use serde_json::Value;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -17,27 +17,21 @@ struct Server {
     addr: SocketAddr,
     app: Arc<App>,
     runner: Arc<RecordingRunner>,
-    exits: Arc<AtomicUsize>,
     _f: common::Fixture,
 }
 
 fn start_with(f: common::Fixture, runner: RecordingRunner) -> Server {
     let runner = Arc::new(runner);
-    let exits = Arc::new(AtomicUsize::new(0));
-    let e = exits.clone();
     let app = Arc::new(
         App::new(f.layout.clone(), Box::new(|| None))
-            .with_runner(Box::new(runner.clone()))
-            .with_exit(Box::new(move || {
-                e.fetch_add(1, Ordering::SeqCst);
-            })),
+            .with_runner(Box::new(runner.clone())),
     );
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     app.port.store(addr.port(), Ordering::SeqCst);
     let a = app.clone();
     std::thread::spawn(move || serve(a, listener));
-    Server { addr, app, runner, exits, _f: f }
+    Server { addr, app, runner, _f: f }
 }
 
 /// A fixture with demo 1.0.0 on the card (installable).
@@ -254,7 +248,9 @@ fn settings_refuse_to_lock_you_out_unless_confirmed() {
     let argv = srv.runner.seen();
     assert_eq!(argv[0][0], "web-settings");
     std::thread::sleep(Duration::from_millis(300));
-    assert_eq!(srv.exits.load(Ordering::SeqCst), 1, "the server restarts to apply them");
+    // Restarted by the supervisor on request (a fresh service, so repeated saves never count as
+    // crashes), not by exiting.
+    assert!(srv.app.layout.run("restart.mibpkg.web").exists(), "restart requested");
     let r = write(&srv, "PUT", "/api/settings", br#"{"listen":["any","hotspot"],"port":80}"#, None);
     assert_eq!(r.status, 400);
     let r = write(&srv, "PUT", "/api/settings", br#"{"listen":["hotspot"],"port":80,"pin":"12"}"#, None);

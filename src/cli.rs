@@ -338,6 +338,8 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
                 s.validate()?;
                 let _rw = ctx.mounts.rw("/mnt/app")?;
                 crate::web::settings::save(&ctx.layout, &s)?;
+                // "enabled" may have changed: the supervisor re-reads its built-in services.
+                control::request_reload(&ctx.layout)?;
                 Ok("web settings saved".into())
             })();
             let _ = fs::remove_file(&text);
@@ -351,6 +353,8 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
                     _ => {}
                 }
             }
+            // Reload starts it if web.toml had disabled it; restart applies the defaults if running.
+            control::request_reload(&ctx.layout)?;
             control::request_restart(&ctx.layout, WEB_SERVICE)?;
             Ok("web settings reset to the defaults; the web server restarts".into())
         }

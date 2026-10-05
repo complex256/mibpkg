@@ -76,6 +76,12 @@ fn web_settings_are_validated_saved_and_reset() {
     assert!(gem(&f, &["web-reset"]).starts_with("OK"));
     assert!(!web_toml.exists());
     assert!(f.layout.run("restart.mibpkg.web").exists());
+    // A reload makes the supervisor start the web server again if web.toml had disabled it.
+    assert!(f.layout.run("reload").exists());
+    std::fs::remove_file(f.layout.run("reload")).unwrap();
+    fs::write(f.layout.run(&format!("text.{ID}")), r#"{"listen":["hotspot"]}"#).unwrap();
+    assert!(gem(&f, &["web-settings", ID]).starts_with("OK"));
+    assert!(f.layout.run("reload").exists(), "web-settings reloads too (enabled may change)");
 }
 
 #[test]

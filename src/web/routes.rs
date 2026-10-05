@@ -310,7 +310,7 @@ fn settings_save(app: &App, req: &Request, local: IpAddr) -> Response {
     if v["ok"] != true {
         return Response::json(500, &json!({ "error": v["result"].as_str().unwrap_or("saving the settings did not finish"), "job": v }));
     }
-    app.exit_after_response.store(true, Ordering::SeqCst);
+    app.restart_after_response.store(true, Ordering::SeqCst);
     let port = s.port;
     let urls: Vec<_> = app.allowed.urls(port).into_iter().map(|(class, url)| json!({ "class": class, "url": url })).collect();
     Response::json(200, &json!({ "ok": true, "restarting": true, "urls": urls, "port": port }))
