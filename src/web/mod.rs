@@ -6,6 +6,7 @@ pub mod http;
 pub mod jobs;
 pub mod net;
 pub mod settings;
+pub mod upload;
 
 use crate::paths::Layout;
 use crate::sys::{RealSys, Sys};
