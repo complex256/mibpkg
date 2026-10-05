@@ -19,14 +19,44 @@ pub const MAX_BODY: u64 = 64 * 1024;
 const SETTINGS_WAIT: Duration = Duration::from_secs(30);
 
 pub fn handle(app: &App, req: &Request, local: IpAddr) -> Response {
-    if !host_ok(req.header("host")) {
-        return Response::error(403, "the address must be the car's IP address");
+    if let Some(refused) = precheck(app, req) {
+        return refused;
     }
     if !req.path.starts_with("/api/") {
         return static_file(req);
     }
     let r = api_route(app, req, local);
     r.with_header("Cache-Control", "no-store")
+}
+
+/// The checks every request passes, using only its head (so they run before any body is read):
+/// Host, the X-Mibpkg header on API writes, and the PIN session. Some(reply) = refused.
+pub fn precheck(app: &App, req: &Request) -> Option<Response> {
+    if !host_ok(req.header("host")) {
+        return Some(Response::error(403, "the address must be the car's IP address"));
+    }
+    if !req.path.starts_with("/api/") {
+        return None;
+    }
+    if req.method != "GET" && req.header("x-mibpkg") != Some("1") {
+        return Some(Response::error(403, "missing X-Mibpkg header").with_header("Cache-Control", "no-store"));
+    }
+    let open = req.path == "/api/session" || req.path == "/api/login";
+    if app.settings.pin.is_some() && !open && !app.auth.check(req.header("cookie"), Instant::now()) {
+        return Some(Response::error(401, "PIN required").with_header("Cache-Control", "no-store"));
+    }
+    None
+}
+
+/// POST /api/uploads with the body still unread: stream it into the upload file, then inspect.
+pub fn upload_streaming(app: &App, req: &Request, length: u64, r: &mut dyn std::io::Read) -> Response {
+    let reply = match app.uploads.store_from(&app.layout, r, length) {
+        Ok(id) => inspect_upload(app, &id),
+        Err(super::upload::StoreError::Busy) => Response::json(409, &json!({ "busy": true, "error": "another upload is in progress" })),
+        Err(super::upload::StoreError::Io(e)) => Response::error(400, format!("the upload did not arrive whole: {e}")),
+    };
+    let _ = req;
+    reply.with_header("Cache-Control", "no-store")
 }
 
 /// GET of an embedded front-end file. The ETag is the mibpkg version: files change only with it.
@@ -44,17 +74,10 @@ fn static_file(req: &Request) -> Response {
     Response::new(200, ctype, bytes.into_owned()).with_header("ETag", etag).with_header("Cache-Control", "no-cache")
 }
 
+/// An API request that passed `precheck`.
 fn api_route(app: &App, req: &Request, local: IpAddr) -> Response {
-    let writes = req.method != "GET";
-    if writes && req.header("x-mibpkg") != Some("1") {
-        return Response::error(403, "missing X-Mibpkg header");
-    }
     let seg: Vec<&str> = req.path.trim_start_matches("/api/").split('/').collect();
     let cookie = req.header("cookie");
-    let open = matches!(seg.as_slice(), ["session"] | ["login"]);
-    if app.settings.pin.is_some() && !open && !app.auth.check(cookie, Instant::now()) {
-        return Response::error(401, "PIN required");
-    }
 
     match (req.method.as_str(), seg.as_slice()) {
         ("GET", ["session"]) => Response::json(
@@ -294,10 +317,12 @@ fn settings_save(app: &App, req: &Request, local: IpAddr) -> Response {
 }
 
 fn upload(app: &App, req: &Request) -> Response {
-    let id = match app.uploads.store(&app.layout, &req.body) {
-        Ok(id) => id,
-        Err(e) => return Response::error(500, format!("saving the upload: {e}")),
-    };
+    let mut body = &req.body[..];
+    upload_streaming(app, req, req.body.len() as u64, &mut body)
+}
+
+fn inspect_upload(app: &App, id: &str) -> Response {
+    let id = id.to_string();
     let Some(path) = app.uploads.path(&id) else {
         return Response::error(500, "the upload disappeared");
     };

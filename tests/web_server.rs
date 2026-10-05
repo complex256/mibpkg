@@ -311,3 +311,44 @@ fn every_front_end_file_is_served_with_its_type() {
     let r = send(srv.addr, format!("GET /style.css HTTP/1.1\r\nHost: localhost\r\nIf-None-Match: {etag}\r\n\r\n").as_bytes());
     assert_eq!(r.status, 304);
 }
+
+/// Send only the head of an upload (a big Content-Length, no body) and time the reply.
+fn upload_head_only(srv: &Server, extra_headers: &str) -> (Reply, Duration) {
+    let t = Instant::now();
+    let r = send(
+        srv.addr,
+        format!("POST /api/uploads HTTP/1.1\r\nHost: 127.0.0.1\r\n{extra_headers}Content-Type: application/octet-stream\r\nContent-Length: 40000000\r\n\r\n").as_bytes(),
+    );
+    (r, t.elapsed())
+}
+
+#[test]
+fn upload_bodies_are_not_read_before_the_checks() {
+    // No X-Mibpkg header: refused from the head alone.
+    let srv = start();
+    let (r, took) = upload_head_only(&srv, "");
+    assert_eq!(r.status, 403);
+    assert!(took < Duration::from_secs(2), "{took:?}");
+
+    // PIN set and no session: refused from the head alone.
+    let f = fixture_with_card();
+    let mut s = WebSettings::default();
+    s.pin = Some(hash_pin("2468"));
+    mibpkg::web::settings::save(&f.layout, &s).unwrap();
+    let srv = start_with(f, RecordingRunner::default());
+    let (r, took) = upload_head_only(&srv, "X-Mibpkg: 1\r\n");
+    assert_eq!(r.status, 401);
+    assert!(took < Duration::from_secs(2), "{took:?}");
+}
+
+#[test]
+fn one_upload_at_a_time() {
+    let srv = start();
+    // A slow upload in progress: head plus a few bytes of a 1000-byte body.
+    let mut slow = TcpStream::connect(srv.addr).unwrap();
+    slow.write_all(b"POST /api/uploads HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Mibpkg: 1\r\nContent-Length: 1000\r\n\r\n0123456789").unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    let r = send(srv.addr, b"POST /api/uploads HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Mibpkg: 1\r\nContent-Length: 3\r\n\r\nabc");
+    assert_eq!(r.status, 409, "{}", String::from_utf8_lossy(&r.body));
+    drop(slow);
+}

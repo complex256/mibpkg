@@ -124,10 +124,22 @@ fn connection(app: &App, stream: TcpStream) {
             routes::MAX_BODY
         }
     };
-    let response = match http::read_request(&mut reader, &mut writer, limit) {
-        Ok(req) => {
+    // Head first: refusals (host, header, PIN) happen before any body byte is read, and upload
+    // bodies go straight to their /tmp file instead of into memory.
+    let response = match http::read_head(&mut reader, limit) {
+        Ok((mut req, length)) => {
             let gzip = req.header("accept-encoding").map_or(false, |a| a.contains("gzip"));
-            Some((routes::handle(app, &req, local), gzip))
+            if let Some(refused) = routes::precheck(app, &req) {
+                Some((refused, gzip))
+            } else if req.method == "POST" && req.path == "/api/uploads" {
+                let _ = http::send_continue(&req, &mut writer);
+                Some((routes::upload_streaming(app, &req, length, &mut reader), gzip))
+            } else {
+                match http::read_body(&mut reader, &mut writer, &mut req, length) {
+                    Ok(()) => Some((routes::handle(app, &req, local), gzip)),
+                    Err(_) => None,
+                }
+            }
         }
         Err(http::ReadError::TooLarge) => Some((http::Response::error(413, "request too large"), false)),
         Err(http::ReadError::LengthRequired) => Some((http::Response::error(411, "Content-Length required"), false)),

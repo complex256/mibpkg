@@ -25,6 +25,16 @@ struct Pending {
 #[derive(Default)]
 pub struct Uploads {
     pending: Mutex<Option<Pending>>,
+    /// An upload body is being received (one at a time: each can be 50 MB of RAM in /tmp).
+    receiving: std::sync::atomic::AtomicBool,
+}
+
+/// Why `store_from` did not store anything.
+#[derive(Debug)]
+pub enum StoreError {
+    /// Another upload is being received.
+    Busy,
+    Io(io::Error),
 }
 
 /// /tmp/mibpkg.upload.<id>.mpk: where the `install-file` verb looks for it.
@@ -39,15 +49,44 @@ impl Uploads {
 
     /// Save a new upload, replacing (and deleting) any earlier one: RAM is scarce.
     pub fn store(&self, layout: &Layout, body: &[u8]) -> io::Result<String> {
-        let id = super::settings::random_id();
-        let path = upload_path(layout, &id);
-        let mut g = self.lock();
-        if let Some(old) = g.take() {
-            let _ = fs::remove_file(old.path);
+        let mut r = body;
+        self.store_from(layout, &mut r, body.len() as u64).map_err(|e| match e {
+            StoreError::Busy => io::Error::new(io::ErrorKind::WouldBlock, "another upload is in progress"),
+            StoreError::Io(e) => e,
+        })
+    }
+
+    /// Copy `len` bytes from `r` (the connection) straight into the upload file, never holding
+    /// the whole body in memory. The earlier upload, if any, is deleted first.
+    pub fn store_from(&self, layout: &Layout, r: &mut dyn io::Read, len: u64) -> Result<String, StoreError> {
+        use std::sync::atomic::Ordering;
+        if self.receiving.swap(true, Ordering::SeqCst) {
+            return Err(StoreError::Busy);
         }
-        fs::write(&path, body)?;
-        *g = Some(Pending { id: id.clone(), path, created: Instant::now() });
-        Ok(id)
+        let result = (|| {
+            if let Some(old) = self.lock().take() {
+                let _ = fs::remove_file(old.path);
+            }
+            let id = super::settings::random_id();
+            let path = upload_path(layout, &id);
+            let copied = fs::File::create(&path).and_then(|mut f| io::copy(&mut io::Read::take(&mut *r, len), &mut f));
+            match copied {
+                Ok(n) if n == len => {
+                    *self.lock() = Some(Pending { id: id.clone(), path, created: Instant::now() });
+                    Ok(id)
+                }
+                Ok(_) => {
+                    let _ = fs::remove_file(&path);
+                    Err(StoreError::Io(io::Error::new(io::ErrorKind::UnexpectedEof, "the upload was cut off")))
+                }
+                Err(e) => {
+                    let _ = fs::remove_file(&path);
+                    Err(StoreError::Io(e))
+                }
+            }
+        })();
+        self.receiving.store(false, Ordering::SeqCst);
+        result
     }
 
     /// The file of the pending upload `id`, if it is still there.

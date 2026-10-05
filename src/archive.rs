@@ -11,6 +11,11 @@ use std::path::{Path, PathBuf};
 
 const BLOCK: usize = 512;
 
+/// Largest total unpacked size accepted. A package is held in memory while it is checked and
+/// unpacked, and the unit's RAM is shared with the HMI; uploads make hostile archives possible,
+/// so sizes from tar headers are checked before anything is allocated.
+pub const MAX_UNPACKED: u64 = 128 << 20;
+
 struct Entry {
     path: PathBuf,
     mode: u32,
@@ -134,6 +139,7 @@ fn read_entries(mpk: &Path) -> Result<Vec<Entry>> {
     let file = fs::File::open(mpk).with_context(|| format!("opening {}", mpk.display()))?;
     let mut r = GzDecoder::new(file);
     let mut out = Vec::new();
+    let mut total: u64 = 0;
     let mut h = [0u8; BLOCK];
     loop {
         r.read_exact(&mut h).context("truncated package")?;
@@ -151,7 +157,12 @@ fn read_entries(mpk: &Path) -> Result<Vec<Entry>> {
         let full = if prefix.is_empty() { name } else { format!("{prefix}/{name}") };
         let path = safe_rel(full.trim_end_matches('/'))?;
         let mode = (parse_octal(&h[100..108])? as u32) & 0o777;
-        let size = parse_octal(&h[124..136])? as usize;
+        let size = parse_octal(&h[124..136])?;
+        total += size;
+        if total > MAX_UNPACKED {
+            bail!("package is too large to unpack (more than {} MB)", MAX_UNPACKED >> 20);
+        }
+        let size = size as usize;
         match h[156] {
             b'0' | 0 => {
                 let mut data = vec![0u8; size];

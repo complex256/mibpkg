@@ -96,6 +96,15 @@ fn read_head_line(r: &mut impl BufRead, used: &mut u64) -> Result<String, ReadEr
 /// Read one request. `w` is the same connection, used only to answer `Expect: 100-continue`.
 /// `body_limit(method, path)` is the largest body allowed for that request.
 pub fn read_request(r: &mut impl BufRead, w: &mut impl Write, body_limit: impl Fn(&str, &str) -> u64) -> Result<Request, ReadError> {
+    let (mut req, length) = read_head(r, |m, p| body_limit(m, p))?;
+    read_body(r, w, &mut req, length)?;
+    Ok(req)
+}
+
+/// Read the request line and headers only, and the body length they announce (already checked
+/// against `body_limit`). The body is left unread, so a request can be refused (wrong host,
+/// no PIN, …) before a single body byte is read.
+pub fn read_head(r: &mut impl BufRead, body_limit: impl Fn(&str, &str) -> u64) -> Result<(Request, u64), ReadError> {
     let mut used = 0u64;
 
     // Request line: METHOD TARGET HTTP/1.x
@@ -131,7 +140,7 @@ pub fn read_request(r: &mut impl BufRead, w: &mut impl Write, body_limit: impl F
         let (k, v) = line.split_once(':').ok_or_else(|| bad("malformed header"))?;
         headers.push((k.trim().to_ascii_lowercase(), v.trim().to_string()));
     }
-    let mut req = Request { method: method.to_string(), path, query, headers, body: Vec::new() };
+    let req = Request { method: method.to_string(), path, query, headers, body: Vec::new() };
 
     // Body: Content-Length only.
     if req.header("transfer-encoding").is_some() {
@@ -149,16 +158,27 @@ pub fn read_request(r: &mut impl BufRead, w: &mut impl Write, body_limit: impl F
     if length > body_limit(&req.method, &req.path) {
         return Err(ReadError::TooLarge);
     }
+    Ok((req, length))
+}
+
+/// Answer `Expect: 100-continue` (some clients wait for it before sending the body).
+pub fn send_continue(req: &Request, w: &mut impl Write) -> io::Result<()> {
+    if req.header("expect").map_or(false, |e| e.eq_ignore_ascii_case("100-continue")) {
+        w.write_all(b"HTTP/1.1 100 Continue\r\n\r\n")?;
+        w.flush()?;
+    }
+    Ok(())
+}
+
+/// Read a body of `length` bytes into memory (small bodies; uploads are streamed to a file).
+pub fn read_body(r: &mut impl BufRead, w: &mut impl Write, req: &mut Request, length: u64) -> Result<(), ReadError> {
     if length > 0 {
-        if req.header("expect").map_or(false, |e| e.eq_ignore_ascii_case("100-continue")) {
-            w.write_all(b"HTTP/1.1 100 Continue\r\n\r\n")?;
-            w.flush()?;
-        }
+        send_continue(req, w)?;
         let mut body = vec![0u8; length as usize];
         r.read_exact(&mut body)?;
         req.body = body;
     }
-    Ok(req)
+    Ok(())
 }
 
 pub struct Response {

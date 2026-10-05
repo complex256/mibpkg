@@ -133,3 +133,27 @@ fn one_pending_upload_and_expiry() {
     up.sweep_at(&f.layout, Instant::now());
     assert!(!stray.exists());
 }
+
+#[test]
+fn an_archive_claiming_a_huge_entry_is_refused_before_unpacking() {
+    use std::io::{Read, Write};
+    let f = common::fixture();
+    // Take a real package, claim its first entry is 1 GB (a "gzip bomb" shape), fix the checksum.
+    let real = mpk_bytes(&f, "demo", "1.0.0", "");
+    let mut tar = Vec::new();
+    flate2::read::GzDecoder::new(&real[..]).read_to_end(&mut tar).unwrap();
+    // Skip leading directory entries (header only) to the first file entry.
+    let mut at = 0;
+    while tar[at + 156] != b'0' {
+        at += 512;
+    }
+    let size = format!("{:011o}\0", 1u64 << 30);
+    tar[at + 124..at + 136].copy_from_slice(size.as_bytes());
+    tar[at + 148..at + 156].copy_from_slice(b"        ");
+    let sum: u32 = tar[at..at + 512].iter().map(|b| *b as u32).sum();
+    tar[at + 148..at + 156].copy_from_slice(format!("{sum:06o}\0 ").as_bytes());
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    gz.write_all(&tar).unwrap();
+    let i = look(&f, &[], &gz.finish().unwrap());
+    assert!(i.problems[0].contains("too large"), "{:?}", i.problems);
+}
