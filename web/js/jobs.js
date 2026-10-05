@@ -99,12 +99,20 @@ export function jobView(jobId, { onDone = null, tall = false } = {}) {
   return box;
 }
 
-/** Whether a finished job means mibpkg replaced itself (the page must reload). */
+/**
+ * Whether a finished job means mibpkg replaced itself, so the page must reload:
+ *  - its result says "mibpkg restarts itself" (an update of mibpkg, or update-all that included it);
+ *  - the restarted web server no longer knows the job (`lost`): mibpkg restarted mid-way;
+ *  - an action on mibpkg ended without a result line (it was stopped by the restart).
+ */
 export function isSelfUpdate(job) {
-  if (job.package !== 'mibpkg') {
-    return false;
+  if (job.lost) {
+    return true;
   }
-  return job.result === null || /restarts itself/.test(job.result || '');
+  if (/mibpkg restarts itself/.test(job.result || '')) {
+    return true;
+  }
+  return job.package === 'mibpkg' && !job.result;
 }
 
 /**
@@ -116,17 +124,22 @@ export async function waitForRestart(oldVersion) {
   banner.textContent = 'mibpkg is restarting with the new version…';
   banner.hidden = false;
 
+  // Reload as soon as the new version answers. If the same version keeps answering (a roll
+  // back, or the restart already happened before we started waiting), reload anyway after a few
+  // answers: the server has restarted either way and the page should load fresh.
   const deadline = Date.now() + 3 * 60 * 1000;
+  let sameVersionAnswers = 0;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 2000));
     try {
       const status = await api('GET', '/api/status');
-      if (status.version !== oldVersion) {
+      sameVersionAnswers += 1;
+      if (status.version !== oldVersion || sameVersionAnswers >= 3) {
         location.reload();
         return;
       }
     } catch (e) {
-      // Not back yet.
+      sameVersionAnswers = 0; // not back yet
     }
   }
   banner.textContent = 'mibpkg did not come back within 3 minutes. Check GEM › mibpkg on the car.';

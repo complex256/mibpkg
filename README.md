@@ -36,6 +36,7 @@ services start while it is present.
 - `scripts/bundle.sh [extra.mpk ...]` — SD bundle with the official collection.
 - `scripts/web-fixture.sh <dir>` — a fake unit root for working on the web interface on a Mac
   (`web/` is plain HTML/CSS/JS, no build step; `MIBPKG_WEB_DIR=web` serves it from disk).
+- `node --test web/tests/*.test.mjs` — front-end unit tests (Node's built-in runner, nothing to install).
 
 Design: `docs/superpowers/specs/2026-09-26-mibpkg-design.md`; web interface:
 `docs/superpowers/specs/2026-10-05-web-interface-design.md`. Backlog: `docs/ideas.md`.
