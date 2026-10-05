@@ -293,3 +293,21 @@ fn mibpkg_web_runs_against_a_root() {
     let _ = child.wait();
     assert_eq!(r.status, 200);
 }
+
+#[test]
+fn every_front_end_file_is_served_with_its_type() {
+    let srv = start();
+    let mut n = 0;
+    for path in mibpkg::web::assets::paths() {
+        let r = get(&srv, path, None);
+        assert_eq!(r.status, 200, "{path}");
+        let want = if path == "/" { "text/html" } else if path.ends_with(".css") { "text/css" } else { "text/javascript" };
+        assert!(r.head.contains(want), "{path}: {}", r.head);
+        n += 1;
+    }
+    assert!(n >= 19, "{n} files");
+    // Unchanged files are not sent again.
+    let etag = format!("\"{}\"", env!("CARGO_PKG_VERSION"));
+    let r = send(srv.addr, format!("GET /style.css HTTP/1.1\r\nHost: localhost\r\nIf-None-Match: {etag}\r\n\r\n").as_bytes());
+    assert_eq!(r.status, 304);
+}

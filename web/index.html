@@ -1,2 +1,47 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>mibpkg</title></head><body>mibpkg</body></html>
+<!--
+  mibpkg web interface: the page shell.
+
+  Everything visible is drawn by the views in js/views/ into <main id="view">.
+  The tab bar at the bottom switches between the four top-level views; other
+  pages (a package, the upload flow, settings, ...) are reached from those.
+
+  No build step: these files are embedded in the mibpkg binary exactly as
+  written and served by the car itself.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0d0f13">
+  <title>mibpkg</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Shown above every view when something needs the user's attention
+       (another action is running, the car is restarting mibpkg, ...). -->
+  <div id="banner" class="banner" hidden></div>
+
+  <!-- The current view renders here. -->
+  <main id="view" class="view" aria-live="polite"></main>
+
+  <!-- Bottom tab bar. data-tab matches the first part of the route (#/discover, ...). -->
+  <nav class="tabs" aria-label="Sections">
+    <a href="#/discover" data-tab="discover"><span class="tab-icon" aria-hidden="true">◎</span>Discover</a>
+    <a href="#/updates" data-tab="updates">
+      <span class="tab-icon" aria-hidden="true">⬇</span>Updates
+      <span id="updates-badge" class="badge" hidden></span>
+    </a>
+    <a href="#/installed" data-tab="installed"><span class="tab-icon" aria-hidden="true">▤</span>Installed</a>
+    <a href="#/more" data-tab="more"><span class="tab-icon" aria-hidden="true">⋯</span>More</a>
+  </nav>
+
+  <!-- Short messages ("Saved", errors) slide in here. -->
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
