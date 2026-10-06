@@ -41,7 +41,7 @@ impl Drop for RwGuard<'_, '_> {
             *n -= 1;
             if *n == 0 {
                 if let Err(e) = self.mounts.sys.remount(&self.mount, false) {
-                    eprintln!("warning: {e:#}");
+                    crate::warn!("warning: {e:#}");
                 }
             }
         }
@@ -62,6 +62,6 @@ pub struct Ctx<'a> {
 impl<'a> Ctx<'a> {
     pub fn new(layout: Layout, sys: &'a dyn Sys) -> Ctx<'a> {
         let unit = detect(&layout);
-        Ctx { layout, sys, mounts: Mounts::new(sys), unit, progress: Box::new(|m: &str| println!("{m}")), fetcher: Box::new(crate::fetch::Unavailable) }
+        Ctx { layout, sys, mounts: Mounts::new(sys), unit, progress: Box::new(|m: &str| crate::say!("{m}")), fetcher: Box::new(crate::fetch::Unavailable) }
     }
 }

@@ -259,18 +259,23 @@ fn a_text_file_the_verb_never_read_is_deleted_when_the_job_ends() {
 }
 
 #[test]
-fn reading_new_output_continues_from_the_offset_it_was_given() {
-    use mibpkg::web::jobs::read_new;
+fn gem_survives_its_output_pipe_closing() {
+    // A mibpkg self-update restarts the web server mid-action, closing the pipe the child writes
+    // to; the child must finish its work, not abort on the broken pipe.
     let t = tempfile::tempdir().unwrap();
-    let p = t.path().join("out");
-    std::fs::write(&p, "checking carmqtt\n").unwrap();
-    let (a, at) = read_new(&p, 0);
-    assert_eq!(a, b"checking carmqtt\n");
-    assert_eq!(at, 17);
-    let (none, at2) = read_new(&p, at);
-    assert!(none.is_empty() && at2 == 17);
-    let mut f = std::fs::OpenOptions::new().append(true).open(&p).unwrap();
-    std::io::Write::write_all(&mut f, b"OK: done\n").unwrap();
-    assert_eq!(read_new(&p, at), (b"OK: done\n".to_vec(), 26));
-    assert_eq!(read_new(&t.path().join("missing"), 5), (Vec::new(), 5));
+    for d in ["mnt/app/root", "tmp"] {
+        std::fs::create_dir_all(t.path().join(d)).unwrap();
+    }
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_mibpkg"))
+        .args(["--root", t.path().to_str().unwrap(), "--no-supervisor", "gem", "rescan"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take());
+    drop(child.stderr.take());
+    let status = child.wait().unwrap();
+    assert!(status.success(), "{status:?}");
+    let st = mibpkg::state::State::load(&mibpkg::paths::Layout::load(t.path()).unwrap()).unwrap();
+    assert!(st.results["_"].starts_with("OK: rescanned"), "the action ran: {:?}", st.results);
 }

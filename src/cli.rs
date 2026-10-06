@@ -77,11 +77,11 @@ pub fn run(args: &[String]) -> Result<i32> {
     let _ = fsutil::cap_file(&ctx.layout.run("log"), supervisor::LOG_CAP);
     let after = |ctx: &Ctx| {
         if let Err(e) = gem::regenerate(ctx) {
-            eprintln!("warning: updating GEM screens: {e:#}");
+            crate::warn!("warning: updating GEM screens: {e:#}");
         }
         if !no_supervisor {
             if let Err(e) = control::ensure_supervisor(&ctx.layout, ctx.sys) {
-                eprintln!("warning: starting the supervisor: {e:#}");
+                crate::warn!("warning: starting the supervisor: {e:#}");
             }
         }
     };
@@ -141,7 +141,7 @@ pub fn run(args: &[String]) -> Result<i32> {
                     // Double tap, or GEM and the web racing: nothing was done. The running action
                     // refreshes the screens when it finishes. BUSY (not FAILED) so the web UI can
                     // say "try again" instead of reporting a failure.
-                    println!("BUSY: {e:#}");
+                    crate::say!("BUSY: {e:#}");
                     return Ok(0);
                 }
             };
@@ -156,10 +156,10 @@ pub fn run(args: &[String]) -> Result<i32> {
                 Err(e) => format!("FAILED: {e:#}"),
             };
             if let Err(e) = record_result(&ctx, &key, &text) {
-                eprintln!("warning: recording result: {e:#}");
+                crate::warn!("warning: recording result: {e:#}");
             }
             after(&ctx);
-            println!("{text}");
+            crate::say!("{text}");
             Ok(0)
         }
         "bootstrap" => {
@@ -186,7 +186,7 @@ pub fn run(args: &[String]) -> Result<i32> {
             hook::uninstall_hook(&ctx)?;
             // Close the web interface's hotspot port again (nothing to do if it was never opened).
             if let Err(e) = crate::firewall::apply(&ctx, None) {
-                eprintln!("warning: hotspot firewall: {e:#}");
+                crate::warn!("warning: hotspot firewall: {e:#}");
             }
             {
                 let _rw = ctx.mounts.rw("/mnt/app")?;
@@ -421,7 +421,7 @@ fn online_store(ctx: &Ctx, fetched: std::result::Result<Fetched, String>) -> (St
 /// The online status line: GEM's live row (persistence) and /tmp/mibpkg.online (the web UI).
 fn publish_online(ctx: &Ctx, text: &str) {
     if let Err(e) = ctx.sys.persist_write(crate::persist::NS, crate::persist::KEY_ONLINE, text) {
-        eprintln!("warning: live online status: {e:#}");
+        crate::warn!("warning: live online status: {e:#}");
     }
     let _ = crate::fsutil::atomic_write(&ctx.layout.run("online"), text.as_bytes());
 }
@@ -438,7 +438,7 @@ fn record_result(ctx: &Ctx, key: &str, text: &str) -> Result<()> {
     st.save(&ctx.layout)?;
     // The live "last result" row reads this.
     if let Err(e) = ctx.sys.persist_write(crate::persist::NS, crate::persist::result_key(key), &line) {
-        eprintln!("warning: live result: {e:#}");
+        crate::warn!("warning: live result: {e:#}");
     }
     Ok(())
 }

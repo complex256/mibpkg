@@ -80,7 +80,7 @@ Facts the code depends on, with how and when they were verified.
 | `/dev/urandom` | present | `ls -l`, 2026-10-05 |
 | Hotspot firewall | stock pf (`/etc/pf.conf` = `/mnt/system/etc/pf.conf`, same inode) drops everything to the car on uap0 except DNS, ssh (M.I.B. block), 25010 EXLAP, 49152+ audio; port 80 needs a pass rule before `block in quick on $wlan_if from any to ($wlan_if)` | `pfctl -sr` (`/mnt/app/armle/sbin/pfctl`), 2026-10-05 |
 | **Never `pfctl -f` at runtime** | reloading pf.conf resets anchors `mmi_data`, `dns_data`, `wlan_data` to `block return-icmp quick all` (`/etc/pf.data.default`); the connectivity manager had filled them in, so the unit and hotspot clients lost the internet ("sendto: No route to host"). mibpkg edits pf.conf on flash only (effective next boot) | broke and diagnosed on the unit, 2026-10-05 |
-| Job output on /tmp | following a growing /tmp (shmem) file with `read_to_end` on one descriptor re-read from byte 6 each poll and dropped the first 6 bytes; reopen + seek to an absolute offset instead | web job logs, 2026-10-05 |
+| Job output via a /tmp file | a reader following a growing /tmp (shmem) file written by another process lost the first 5-6 bytes (also with reopen + absolute seek); job output uses pipes instead | web job logs, 2026-10-05 |
 
 ## Pending on-car checks (web interface, mibpkg 0.4.0)
 - A phone on the hotspot reaches `http://10.255.1.1/`.

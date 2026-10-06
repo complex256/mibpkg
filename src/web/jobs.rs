@@ -3,7 +3,7 @@
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -109,20 +109,23 @@ impl<T: Runner + ?Sized> Runner for Arc<T> {
 }
 
 /// The real runner: `<exe> --root <root> gem <argv…>`, started directly (execve with an argv
-/// array, never through a shell).
+/// array, never through a shell). Lines also go to the mibpkg log, like gem.sh does.
 ///
-/// The child writes to a file in /tmp, not a pipe: a package script that leaves a daemon holding
-/// the output, bytes that are not UTF-8, or this web process restarting mid-action (a mibpkg
-/// self-update) can then never stall or kill the child. A thread follows the file into the job
-/// and finishes it when the child exits. Lines also go to the mibpkg log, like gem.sh does.
+/// Output comes through pipes. (Following a file in /tmp was tried: QNX 6.5's /tmp is shared
+/// memory, and a reader there lost the first bytes of the output, seen on the unit 2026-10-05.)
+/// Bytes are read raw and decoded lossily, so odd output cannot stop the reader; the job ends
+/// when the child exits, after a short grace for the rest of its output, so a daemon that a
+/// package script leaves holding the pipe cannot keep the job running.
 pub struct ProcessRunner {
     pub exe: PathBuf,
     pub root: PathBuf,
     pub log: Option<PathBuf>,
 }
 
-/// How often the output file is read while the child runs.
+/// How often the runner looks for new output and for the child's exit.
 const FOLLOW_EVERY: Duration = Duration::from_millis(100);
+/// After the child exits, how long to wait for output still in the pipes.
+const EXIT_GRACE: Duration = Duration::from_secs(1);
 
 /// Push the complete lines in `buf` to the job (and the log), keeping a partial last line.
 fn push_lines(buf: &mut Vec<u8>, job: &Job, log: Option<&PathBuf>, flush_partial: bool) {
@@ -147,60 +150,65 @@ fn emit(bytes: &[u8], job: &Job, log: Option<&PathBuf>) {
     }
 }
 
-/// The bytes of `path` from byte `offset` on, and the offset after them. The file is opened
-/// fresh and read from an absolute position every time: on QNX 6.5's /tmp (shared memory) a
-/// follow-the-file reader that relied on the descriptor's own position re-read the output from
-/// byte 6 on each poll and lost the first 6 bytes (seen on the unit, 2026-10-05).
-pub fn read_new(path: &Path, offset: u64) -> (Vec<u8>, u64) {
-    use std::io::{Read, Seek, SeekFrom};
-    let mut out = Vec::new();
-    let Ok(mut f) = std::fs::File::open(path) else { return (out, offset) };
-    if f.seek(SeekFrom::Start(offset)).is_err() {
-        return (out, offset);
-    }
-    let mut chunk = [0u8; 8192];
-    loop {
-        match f.read(&mut chunk) {
-            Ok(0) | Err(_) => break,
-            Ok(n) => out.extend_from_slice(&chunk[..n]),
+/// Read a pipe until EOF, sending each chunk as (stream, bytes).
+fn pump(mut r: impl io::Read + Send + 'static, stream: usize, tx: std::sync::mpsc::Sender<(usize, Vec<u8>)>) {
+    std::thread::spawn(move || {
+        let mut chunk = [0u8; 4096];
+        loop {
+            match r.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if tx.send((stream, chunk[..n].to_vec())).is_err() {
+                        break;
+                    }
+                }
+            }
         }
-    }
-    let next = offset + out.len() as u64;
-    (out, next)
+    });
 }
 
 impl Runner for ProcessRunner {
     fn start(&self, argv: Vec<String>, job: Arc<Job>) -> io::Result<()> {
-        let out_path = self.root.join("tmp").join(format!("mibpkg.job.{}", job.id));
-        // Opened twice, not try_clone: that needs F_DUPFD_CLOEXEC, which QNX 6.5 rejects.
-        let open = || std::fs::OpenOptions::new().create(true).write(true).append(true).open(&out_path);
         let mut child = Command::new(&self.exe)
             .arg("--root")
             .arg(&self.root)
             .arg("gem")
             .args(&argv)
             .stdin(Stdio::null())
-            .stdout(open()?)
-            .stderr(open()?)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()?;
+        let (tx, rx) = std::sync::mpsc::channel();
+        pump(child.stdout.take().unwrap(), 0, tx.clone());
+        pump(child.stderr.take().unwrap(), 1, tx);
         let log = self.log.clone();
         let root = self.root.clone();
         std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            let mut offset = 0u64;
+            // One buffer per stream, so a partial stdout line never mixes with stderr.
+            let mut bufs = [Vec::new(), Vec::new()];
+            let mut exited_at: Option<Instant> = None;
             loop {
-                let exited = matches!(child.try_wait(), Ok(Some(_)) | Err(_));
-                // Read whatever was written since last time (after the exit, that is everything).
-                let (new, next) = read_new(&out_path, offset);
-                offset = next;
-                buf.extend_from_slice(&new);
-                push_lines(&mut buf, &job, log.as_ref(), exited);
-                if exited {
+                match rx.recv_timeout(FOLLOW_EVERY) {
+                    Ok((stream, bytes)) => {
+                        bufs[stream].extend_from_slice(&bytes);
+                        push_lines(&mut bufs[stream], &job, log.as_ref(), false);
+                    }
+                    // Both pipes closed: all output is in.
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                }
+                if exited_at.is_none() && matches!(child.try_wait(), Ok(Some(_)) | Err(_)) {
+                    exited_at = Some(Instant::now());
+                }
+                // Exited, but something it started still holds the pipes: stop waiting.
+                if exited_at.map_or(false, |t| t.elapsed() >= EXIT_GRACE) {
                     break;
                 }
-                std::thread::sleep(FOLLOW_EVERY);
             }
-            let _ = std::fs::remove_file(&out_path);
+            for b in bufs.iter_mut() {
+                push_lines(b, &job, log.as_ref(), true);
+            }
+            let _ = child.wait();
             // Text handed to the verb (config contents, settings) is normally deleted by the verb;
             // if it never ran (busy, bad arguments), delete it here: /tmp is RAM.
             for id in argv.iter().filter(|a| super::settings::is_id(a)) {
