@@ -272,6 +272,8 @@ fn mibpkg_web_runs_against_a_root() {
     let f = fixture_with_card();
     std::fs::create_dir_all(f.layout.home()).unwrap();
     std::fs::write(mibpkg::web::settings::path(&f.layout), "port = 0\n").unwrap();
+    let pf = f.layout.p("/mnt/system/etc/pf.conf");
+    std::fs::write(&pf, include_str!("fixtures/pf.conf.unit")).unwrap();
     // Killed on drop, even when an assertion below fails (a live child holding the test's
     // stderr would hang `cargo test`).
     struct KillOnDrop(std::process::Child);
@@ -299,6 +301,13 @@ fn mibpkg_web_runs_against_a_root() {
     let port: u16 = text.lines().next().unwrap().trim_start_matches("port ").parse().unwrap();
     let r = send(format!("127.0.0.1:{port}").parse().unwrap(), b"GET /api/status HTTP/1.1\r\nHost: localhost\r\n\r\n");
     assert_eq!(r.status, 200);
+    // At start the server opened its port in the hotspot firewall (through `gem web-firewall`).
+    let end = Instant::now() + Duration::from_secs(10);
+    let want = format!("port {port} keep state");
+    while !std::fs::read_to_string(&pf).unwrap().contains(&want) && Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(std::fs::read_to_string(&pf).unwrap().contains(&want), "pf.conf rule for port {port}");
 }
 
 #[test]

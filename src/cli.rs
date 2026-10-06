@@ -184,6 +184,10 @@ pub fn run(args: &[String]) -> Result<i32> {
                 std::thread::sleep(Duration::from_millis(200));
             }
             hook::uninstall_hook(&ctx)?;
+            // Close the web interface's hotspot port again (nothing to do if it was never opened).
+            if let Err(e) = crate::firewall::apply(&ctx, None) {
+                eprintln!("warning: hotspot firewall: {e:#}");
+            }
             {
                 let _rw = ctx.mounts.rw("/mnt/app")?;
                 gem::remove_screens(&ctx.layout)?;
@@ -359,6 +363,14 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
             control::request_reload(&ctx.layout)?;
             control::request_restart(&ctx.layout, WEB_SERVICE)?;
             Ok("web settings reset to the defaults; the web server restarts".into())
+        }
+        "web-firewall" => {
+            // Run by the web server when pf.conf does not match its port and listen choice.
+            let port = match arg(args, 0, "port or off")? {
+                "off" => None,
+                p => Some(p.parse::<u16>().ok().filter(|p| *p > 0).with_context(|| format!("invalid port {p:?}"))?),
+            };
+            crate::firewall::apply(ctx, port)
         }
         "web-restart" => {
             control::request_restart(&ctx.layout, WEB_SERVICE)?;

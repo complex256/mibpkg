@@ -191,6 +191,37 @@ fn write_url_file(app: &App) {
     }
 }
 
+/// Make the hotspot firewall match this server (its bound port, its listen choice) by running
+/// `mibpkg gem web-firewall` once, under the action lock like every flash write. Only when pf.conf
+/// differs, and never while an earlier attempt still runs. Called at start and every 30 s, so a
+/// busy lock just means a later try.
+fn ensure_firewall(app: &App, running: &mut Option<std::process::Child>) {
+    if let Some(child) = running.as_mut() {
+        match child.try_wait() {
+            Ok(None) => return,
+            _ => *running = None,
+        }
+    }
+    let want = crate::firewall::wanted(&app.settings, app.port.load(Ordering::Relaxed));
+    if !crate::firewall::needs_change(&app.layout, want) {
+        return;
+    }
+    let arg = want.map_or("off".to_string(), |p| p.to_string());
+    let exe = std::env::current_exe().unwrap_or_else(|_| app.layout.tmp_bin());
+    // Opened twice, not try_clone (QNX 6.5).
+    let log = || std::fs::OpenOptions::new().create(true).append(true).open(app.layout.run("log"));
+    let (Ok(out), Ok(err)) = (log(), log()) else { return };
+    *running = std::process::Command::new(exe)
+        .arg("--root")
+        .arg(&app.layout.root)
+        .args(["gem", "web-firewall", &arg])
+        .stdin(std::process::Stdio::null())
+        .stdout(out)
+        .stderr(err)
+        .spawn()
+        .ok();
+}
+
 /// `mibpkg web`: bind, then serve until killed.
 pub fn run(layout: Layout) -> Result<()> {
     let app = App::new(layout, Allowed::ifconfig_probe());
@@ -215,11 +246,16 @@ pub fn run(layout: Layout) -> Result<()> {
     println!("mibpkg web: listening on port {}", app.port.load(Ordering::SeqCst));
     let app = Arc::new(app);
     write_url_file(&app);
-    // Interfaces come and go (Tailscale, the hotspot): keep the URL file current.
+    // Interfaces come and go (Tailscale, the hotspot): keep the URL file current. The hotspot
+    // firewall is checked at start and again while it still differs (e.g. the lock was busy).
     let a = app.clone();
-    std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_secs(30));
-        write_url_file(&a);
+    std::thread::spawn(move || {
+        let mut firewall = None;
+        loop {
+            ensure_firewall(&a, &mut firewall);
+            std::thread::sleep(Duration::from_secs(30));
+            write_url_file(&a);
+        }
     });
     serve(app, listener);
     Ok(())
