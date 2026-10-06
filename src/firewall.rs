@@ -11,7 +11,6 @@ use crate::web::settings::WebSettings;
 use anyhow::{bail, Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 /// The comment line that marks mibpkg's rule (the rule is the line after it).
 pub const MARK: &str = "# mibpkg web interface: added and removed by mibpkg";
@@ -89,10 +88,16 @@ fn pfctl(layout: &Layout, args: &[&str]) -> Result<()> {
     if layout.root != Path::new("/") {
         return Ok(());
     }
-    let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    let (ok, out) = crate::sys::run_limited(Path::new(PFCTL), &args, &[], Duration::from_secs(15)).map_err(anyhow::Error::msg)?;
-    if !ok {
-        bail!("pfctl {}: {}", args.join(" "), out.trim());
+    // pfctl reports problems on stderr; keep it so a refusal says why. `-n` only parses, so it
+    // returns quickly.
+    let out = std::process::Command::new(PFCTL)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .context("running pfctl")?;
+    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    if !out.status.success() || text.contains("pfctl:") {
+        bail!("pfctl {}: {}", args.join(" "), text.trim());
     }
     Ok(())
 }
@@ -128,7 +133,15 @@ pub fn apply_with(ctx: &Ctx, port: Option<u16>, pfctl: &mut dyn FnMut(&[&str]) -
         atomic_write(&check, new.as_bytes())?;
         let checked = pfctl(&["-nf", &layout.unit_path(&check)]);
         let _ = fs::remove_file(&check);
-        checked.with_context(|| format!("the changed {} does not load; not changing anything", path.display()))?;
+        if let Err(e) = checked {
+            // Some variants cannot be checked at all right now: pf.ppp0.conf shapes traffic on
+            // ppp0, and without that uplink pfctl fails on the stock file too ("SIOCGIFMTU: No such
+            // device or address", seen on the unit 2026-10-06). Only an edit that breaks a file
+            // which checked fine before is refused.
+            if pfctl(&["-nf", &layout.unit_path(&path)]).is_ok() {
+                return Err(e.context(format!("the changed {} does not load; not changing anything", path.display())));
+            }
+        }
         changes.push((path, old, new));
     }
     if changes.is_empty() {

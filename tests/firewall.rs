@@ -143,3 +143,37 @@ fn every_pf_variant_the_car_may_load_gets_the_rule() {
     assert_eq!(fs::read_to_string(etc.join("pf.conf")).unwrap(), STOCK);
     assert_eq!(fs::read_to_string(etc.join("pf.ecm0.conf")).unwrap(), ECM0);
 }
+
+#[test]
+fn a_variant_whose_stock_file_also_fails_the_check_is_still_edited() {
+    // pf.ppp0.conf shapes traffic on ppp0; without that uplink `pfctl -nf` fails on the stock file
+    // too ("SIOCGIFMTU: No such device or address", seen on the unit 2026-10-06), so the check
+    // cannot judge the edit and must not block it.
+    let f = common::fixture();
+    let etc = f.layout.p("/mnt/system/etc");
+    fs::write(etc.join("pf.conf"), STOCK).unwrap();
+    // A marker stands for "needs the ppp0 uplink to check".
+    fs::write(etc.join("pf.ppp0.conf"), format!("# NEEDS_PPP0\n{ECM0}")).unwrap();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let ppp0 = |args: &[&str]| -> anyhow::Result<()> {
+        // Fails for the stock ppp0 file and for the check copy made from it.
+        let text = fs::read_to_string(f.layout.p(args[1])).unwrap_or_default();
+        if text.contains("NEEDS_PPP0") { anyhow::bail!("SIOCGIFMTU: No such device or address") } else { Ok(()) }
+    };
+    firewall::apply_with(&ctx, Some(80), &mut |a: &[&str]| ppp0(a)).unwrap();
+    assert_eq!(fs::read_to_string(etc.join("pf.ppp0.conf")).unwrap().matches(MARK).count(), 1);
+
+    // But when only the edited file fails, nothing changes and the reason is reported.
+    let g = common::fixture();
+    let etc = g.layout.p("/mnt/system/etc");
+    fs::write(etc.join("pf.conf"), STOCK).unwrap();
+    let ctx = Ctx::new(g.layout.clone(), &sys);
+    let e = firewall::apply_with(&ctx, Some(80), &mut |a: &[&str]| {
+        let text = fs::read_to_string(g.layout.p(a[1])).unwrap_or_default();
+        if text.contains(MARK) { anyhow::bail!("syntax error on line 139") } else { Ok(()) }
+    })
+    .unwrap_err();
+    assert!(format!("{e:#}").contains("syntax error on line 139"), "{e:#}");
+    assert!(!fs::read_to_string(etc.join("pf.conf")).unwrap().contains(MARK));
+}
