@@ -4,7 +4,7 @@
 */
 import { api } from '../api.js';
 import { h, pageHead, toast } from '../dom.js';
-import { isSelfUpdate, jobView, startAction, waitForRestart } from '../jobs.js';
+import { isSelfUpdate, jobView, redrawSoon, startAction, waitForRestart } from '../jobs.js';
 import { packageRow } from '../rows.js';
 
 export async function render() {
@@ -26,7 +26,7 @@ export async function render() {
                 waitForRestart(status.version);
               } else {
                 // Redraw with the new state after a moment to read the result.
-                setTimeout(() => window.dispatchEvent(new HashChangeEvent('hashchange')), 1500);
+                redrawSoon(1500);
               }
             },
           }),

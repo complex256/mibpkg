@@ -144,3 +144,17 @@ export async function waitForRestart(oldVersion) {
   }
   banner.textContent = 'mibpkg did not come back within 3 minutes. Check GEM › mibpkg on the car.';
 }
+
+/**
+ * Redraw the page after an action finished, `ms` later so its result can be read first, but only
+ * if the user is still on the page that started it. (Redrawing whatever page they had moved to
+ * made that page render twice, e.g. Logs flashing and showing its content again.)
+ */
+export function redrawSoon(ms) {
+  const here = location.hash;
+  setTimeout(() => {
+    if (location.hash === here) {
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    }
+  }, ms);
+}

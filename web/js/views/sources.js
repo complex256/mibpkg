@@ -6,7 +6,7 @@
 */
 import { api } from '../api.js';
 import { backLink, h, pageHead, replace, toast } from '../dom.js';
-import { jobView } from '../jobs.js';
+import { jobView, redrawSoon } from '../jobs.js';
 
 const ORIGIN = { default: 'built in', settings: 'settings.toml', added: 'added here' };
 
@@ -17,7 +17,7 @@ export async function render() {
   async function change(method, source) {
     try {
       const reply = await api(method, '/api/sources', { source });
-      replace(jobArea, jobView(reply.job, { onDone: () => setTimeout(() => window.dispatchEvent(new HashChangeEvent('hashchange')), 1500) }));
+      replace(jobArea, jobView(reply.job, { onDone: () => redrawSoon(1500) }));
     } catch (e) {
       toast(e.message, { error: true });
     }

@@ -49,7 +49,7 @@ pub fn run(args: &[String]) -> Result<i32> {
     let cmd = match rest.first() {
         Some(c) => c.clone(),
         None => {
-            eprintln!("{USAGE}");
+            crate::warn!("{USAGE}");
             return Ok(2);
         }
     };
@@ -58,7 +58,7 @@ pub fn run(args: &[String]) -> Result<i32> {
         "build" => return host_build(args),
         "index" => return host_index(args),
         "help" | "--help" | "-h" => {
-            println!("{USAGE}");
+            crate::say!("{USAGE}");
             return Ok(0);
         }
         _ => {}
@@ -101,7 +101,7 @@ pub fn run(args: &[String]) -> Result<i32> {
         "sntp" => {
             // Diagnostic: always queries, ignoring the cached offset.
             let server = args.first().map(|s| s.as_str()).unwrap_or(crate::clock::SERVERS[0]);
-            println!("{}", crate::clock::sntp_offset(server, Duration::from_secs(5))?);
+            crate::say!("{}", crate::clock::sntp_offset(server, Duration::from_secs(5))?);
             Ok(0)
         }
         "online-check" => {
@@ -111,14 +111,14 @@ pub fn run(args: &[String]) -> Result<i32> {
             let _lock = match Lock::acquire(&ctx.layout, ctx.sys) {
                 Ok(l) => l,
                 Err(_) => {
-                    println!("online: busy");
+                    crate::say!("online: busy");
                     return Ok(1);
                 }
             };
             let (text, ok) = online_store(&ctx, fetched);
             publish_online(&ctx, &text);
             after(&ctx);
-            println!("{text}");
+            crate::say!("{text}");
             Ok(if ok { 0 } else { 1 })
         }
         "list" => {
@@ -130,7 +130,7 @@ pub fn run(args: &[String]) -> Result<i32> {
             let _lock = Lock::acquire(&ctx.layout, ctx.sys)?;
             let r = action(&ctx, &cmd, args);
             after(&ctx);
-            println!("{}", r?);
+            crate::say!("{}", r?);
             Ok(0)
         }
         "gem" => {
@@ -173,7 +173,7 @@ pub fn run(args: &[String]) -> Result<i32> {
             }
             let changed = hook::install_hook(&ctx)?;
             after(&ctx);
-            println!("{}", if changed { "boot hook installed" } else { "boot hook already present" });
+            crate::say!("{}", if changed { "boot hook installed" } else { "boot hook already present" });
             Ok(0)
         }
         "uninstall-self" => {
@@ -193,7 +193,7 @@ pub fn run(args: &[String]) -> Result<i32> {
                 gem::remove_screens(&ctx.layout)?;
             }
             let _ = fs::remove_file(ctx.layout.run("stop"));
-            println!(
+            crate::say!(
                 "mibpkg removed from boot and GEM; installed files remain in {} (delete by hand if wanted)",
                 ctx.layout.unit_path(&ctx.layout.home())
             );
@@ -448,35 +448,35 @@ fn print_status(ctx: &Ctx) {
     match fs::read_to_string(ctx.layout.run("web.url")) {
         Ok(t) => {
             let urls: Vec<&str> = t.lines().skip(1).filter(|l| !l.starts_with("iface ")).collect();
-            println!("web: {}", if urls.is_empty() { t.lines().next().unwrap_or("running").to_string() } else { urls.join(", ") });
+            crate::say!("web: {}", if urls.is_empty() { t.lines().next().unwrap_or("running").to_string() } else { urls.join(", ") });
         }
-        Err(_) => println!("web: not running"),
+        Err(_) => crate::say!("web: not running"),
     }
     match status::read(&ctx.layout) {
-        None => println!("supervisor: no status (not running since boot?)"),
+        None => crate::say!("supervisor: no status (not running since boot?)"),
         Some(s) => {
             let alive = control::supervisor_pid(&ctx.layout, ctx.sys).is_some();
-            println!(
+            crate::say!(
                 "supervisor pid {} ({}){}",
                 s.pid,
                 if alive { "running" } else { "gone" },
                 if s.disabled { ", DISABLED" } else { "" }
             );
             for (id, v) in &s.services {
-                println!("  {id}: {}", status::describe(v));
+                crate::say!("  {id}: {}", status::describe(v));
             }
             for (f, e) in &s.invalid {
-                println!("  boot.d/{f}: {e}");
+                crate::say!("  boot.d/{f}: {e}");
             }
         }
     }
 }
 
 fn print_list(ctx: &Ctx) -> Result<()> {
-    println!("unit: {}", ctx.unit.describe());
+    crate::say!("unit: {}", ctx.unit.describe());
     let st = State::load(&ctx.layout)?;
     for (n, i) in &st.packages {
-        println!(
+        crate::say!(
             "installed {n} {} [{}]{}",
             i.version,
             i.collection,
@@ -487,10 +487,10 @@ fn print_list(ctx: &Ctx) -> Result<()> {
         match c {
             Ok(c) => {
                 for e in &c.index.packages {
-                    println!("card [{}] {} {}", c.id(), e.name, e.version);
+                    crate::say!("card [{}] {} {}", c.id(), e.name, e.version);
                 }
             }
-            Err(e) => println!("card {}: {e:#}", dir.display()),
+            Err(e) => crate::say!("card {}: {e:#}", dir.display()),
         }
     }
     Ok(())
@@ -503,7 +503,7 @@ fn host_build(args: &[String]) -> Result<i32> {
     fs::create_dir_all(out_dir)?;
     let out = out_dir.join(format!("{}-{}.mpk", m.package.name, m.package.version));
     archive::pack(src, &out)?;
-    println!("{}", out.display());
+    crate::say!("{}", out.display());
     Ok(0)
 }
 
@@ -525,7 +525,7 @@ fn host_index(args: &[String]) -> Result<i32> {
     let name = name.unwrap_or_else(|| id.clone());
     let idx = if flat { crate::index::build_index_flat(dir, &id, &name)? } else { build_index(dir, &id, &name)? };
     write_index(dir, &idx)?;
-    println!("{} packages in {}", idx.packages.len(), dir.join("index.json").display());
+    crate::say!("{} packages in {}", idx.packages.len(), dir.join("index.json").display());
     Ok(0)
 }
 

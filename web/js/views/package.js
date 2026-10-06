@@ -12,17 +12,12 @@
 import { api } from '../api.js';
 import { backLink, formatSize, h, replace, toast } from '../dom.js';
 import { packageIcon } from '../icons.js';
-import { isSelfUpdate, jobView, startAction, waitForRestart } from '../jobs.js';
+import { isSelfUpdate, jobView, redrawSoon, startAction, waitForRestart } from '../jobs.js';
 import { compareVersions, offeringCollections } from '../rows.js';
 
 // The last job started from a package page: shown again (finished) after the redraw,
 // so the user can still read its output. { name, id }
 let lastJob = null;
-
-/** Redraw the current view (after an action finished). */
-function redraw() {
-  window.dispatchEvent(new HashChangeEvent('hashchange'));
-}
 
 export async function render(name) {
   const [packages, status] = await Promise.all([api('GET', '/api/packages'), api('GET', '/api/status')]);
@@ -58,7 +53,7 @@ export async function render(name) {
           if (isSelfUpdate(job)) {
             waitForRestart(status.version);
           } else {
-            setTimeout(redraw, 1200);
+            redrawSoon(1200);
           }
         }
       : null;

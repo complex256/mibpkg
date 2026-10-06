@@ -123,3 +123,21 @@ fn online_check_off_the_unit_reports_and_exits_nonzero() {
     let st = State::load(&f.layout).unwrap();
     assert!(st.results["_"].contains("online"), "{:?}", st.results);
 }
+
+#[test]
+fn status_and_list_survive_a_closed_output_pipe() {
+    // `mibpkg status | head -1` on the unit: the reader goes away early. A panic there aborts and
+    // writes a core file to flash (seen on the unit, 2026-10-06).
+    let f = common::fixture();
+    for cmd in ["status", "list"] {
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_mibpkg"))
+            .args(["--root", f.root().to_str().unwrap(), "--no-supervisor", cmd])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        drop(child.stdout.take());
+        let status = child.wait().unwrap();
+        assert!(status.success(), "{cmd}: {status:?}");
+    }
+}
