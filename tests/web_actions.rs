@@ -257,3 +257,20 @@ fn a_text_file_the_verb_never_read_is_deleted_when_the_job_ends() {
     }
     assert!(!text.exists());
 }
+
+#[test]
+fn reading_new_output_continues_from_the_offset_it_was_given() {
+    use mibpkg::web::jobs::read_new;
+    let t = tempfile::tempdir().unwrap();
+    let p = t.path().join("out");
+    std::fs::write(&p, "checking carmqtt\n").unwrap();
+    let (a, at) = read_new(&p, 0);
+    assert_eq!(a, b"checking carmqtt\n");
+    assert_eq!(at, 17);
+    let (none, at2) = read_new(&p, at);
+    assert!(none.is_empty() && at2 == 17);
+    let mut f = std::fs::OpenOptions::new().append(true).open(&p).unwrap();
+    std::io::Write::write_all(&mut f, b"OK: done\n").unwrap();
+    assert_eq!(read_new(&p, at), (b"OK: done\n".to_vec(), 26));
+    assert_eq!(read_new(&t.path().join("missing"), 5), (Vec::new(), 5));
+}

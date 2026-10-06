@@ -58,7 +58,7 @@ fn apply_writes_pf_conf_under_a_system_remount_and_backs_it_up_once() {
     fs::write(&pf, STOCK).unwrap();
     let sys = RecordingSys::default();
     let ctx = Ctx::new(f.layout.clone(), &sys);
-    assert_eq!(firewall::apply(&ctx, Some(80)).unwrap(), "hotspot firewall: port 80 open for the web interface");
+    assert_eq!(firewall::apply(&ctx, Some(80)).unwrap(), "hotspot firewall: port 80 opens after the next restart of the head unit");
     assert!(fs::read_to_string(&pf).unwrap().contains(MARK));
     assert_eq!(fs::read_to_string(firewall::backup_path(&f.layout)).unwrap(), STOCK);
     assert_eq!(*sys.calls.borrow(), vec!["rw /mnt/system", "ro /mnt/system"]);
@@ -81,8 +81,8 @@ fn the_verb_runs_under_the_lock_and_checks_its_argument() {
         mibpkg::cli::run(&args).unwrap();
         mibpkg::state::State::load(&f.layout).unwrap().results["_"].clone()
     };
-    assert!(run("80").starts_with("OK: hotspot firewall: port 80 open"));
-    assert!(run("off").starts_with("OK: hotspot firewall: closed"));
+    assert!(run("80").starts_with("OK: hotspot firewall: port 80 opens"));
+    assert!(run("off").starts_with("OK: hotspot firewall: closed after"));
     assert!(run("$(reboot)").starts_with("FAILED"));
     assert!(run("0").starts_with("FAILED"));
 }
@@ -95,4 +95,23 @@ fn uninstall_self_closes_the_hotspot_port() {
     let args: Vec<String> = ["--root", f.root().to_str().unwrap(), "--no-supervisor", "uninstall-self"].iter().map(|s| s.to_string()).collect();
     mibpkg::cli::run(&args).unwrap();
     assert_eq!(fs::read_to_string(&pf).unwrap(), STOCK);
+}
+
+#[test]
+fn apply_only_checks_with_pfctl_and_never_reloads_the_live_firewall() {
+    // Reloading pf.conf at runtime resets the anchors the car's connectivity manager fills in
+    // (mmi_data, dns_data, wlan_data back to "block all"): the car lost its internet (2026-10-05).
+    let f = common::fixture();
+    fs::write(f.layout.p("/mnt/system/etc/pf.conf"), STOCK).unwrap();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let mut calls: Vec<Vec<String>> = Vec::new();
+    let msg = firewall::apply_with(&ctx, Some(80), &mut |args: &[&str]| {
+        calls.push(args.iter().map(|s| s.to_string()).collect());
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert_eq!(calls[0][0], "-nf", "only a syntax check");
+    assert!(msg.contains("after the next restart"), "{msg}");
 }

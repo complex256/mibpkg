@@ -3,7 +3,7 @@
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -147,6 +147,28 @@ fn emit(bytes: &[u8], job: &Job, log: Option<&PathBuf>) {
     }
 }
 
+/// The bytes of `path` from byte `offset` on, and the offset after them. The file is opened
+/// fresh and read from an absolute position every time: on QNX 6.5's /tmp (shared memory) a
+/// follow-the-file reader that relied on the descriptor's own position re-read the output from
+/// byte 6 on each poll and lost the first 6 bytes (seen on the unit, 2026-10-05).
+pub fn read_new(path: &Path, offset: u64) -> (Vec<u8>, u64) {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut out = Vec::new();
+    let Ok(mut f) = std::fs::File::open(path) else { return (out, offset) };
+    if f.seek(SeekFrom::Start(offset)).is_err() {
+        return (out, offset);
+    }
+    let mut chunk = [0u8; 8192];
+    loop {
+        match f.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => out.extend_from_slice(&chunk[..n]),
+        }
+    }
+    let next = offset + out.len() as u64;
+    (out, next)
+}
+
 impl Runner for ProcessRunner {
     fn start(&self, argv: Vec<String>, job: Arc<Job>) -> io::Result<()> {
         let out_path = self.root.join("tmp").join(format!("mibpkg.job.{}", job.id));
@@ -164,19 +186,14 @@ impl Runner for ProcessRunner {
         let log = self.log.clone();
         let root = self.root.clone();
         std::thread::spawn(move || {
-            let mut file = match std::fs::File::open(&out_path) {
-                Ok(f) => f,
-                Err(_) => {
-                    let _ = child.wait();
-                    job.finish();
-                    return;
-                }
-            };
             let mut buf = Vec::new();
+            let mut offset = 0u64;
             loop {
                 let exited = matches!(child.try_wait(), Ok(Some(_)) | Err(_));
                 // Read whatever was written since last time (after the exit, that is everything).
-                let _ = io::Read::read_to_end(&mut file, &mut buf);
+                let (new, next) = read_new(&out_path, offset);
+                offset = next;
+                buf.extend_from_slice(&new);
                 push_lines(&mut buf, &job, log.as_ref(), exited);
                 if exited {
                     break;

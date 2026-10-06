@@ -2,7 +2,8 @@
 //! connection to the car on its Wi-Fi hotspot except a short stock list (DNS, audio, EXLAP; the
 //! M.I.B. toolbox adds ssh the same way). For the web interface to be reachable on the hotspot,
 //! mibpkg keeps one marked pass rule just before the stock "block everything else" line, and takes
-//! it out again when the hotspot is not wanted or mibpkg is uninstalled.
+//! it out again when the hotspot is not wanted or mibpkg is uninstalled. Changes are made on flash
+//! only and apply at the next start of the head unit (see `apply` for why).
 use crate::ctx::Ctx;
 use crate::fsutil::atomic_write;
 use crate::paths::Layout;
@@ -80,8 +81,19 @@ fn pfctl(layout: &Layout, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-/// Make pf.conf match `port` and reload the firewall. Caller holds the action lock.
+/// Make pf.conf on flash match `port`. Caller holds the action lock.
+///
+/// The live firewall is never reloaded: `pfctl -f` re-reads pf.conf and resets the anchors the
+/// car's connectivity manager fills in at runtime (mmi_data, dns_data, wlan_data go back to
+/// "block all" from /etc/pf.data.default), which cut the car off the internet (seen on the unit,
+/// 2026-10-05). The rule takes effect when the head unit next starts; Tailscale works meanwhile.
 pub fn apply(ctx: &Ctx, port: Option<u16>) -> Result<String> {
+    let layout = ctx.layout.clone();
+    apply_with(ctx, port, &mut |args: &[&str]| pfctl(&layout, args))
+}
+
+/// `apply` with the pfctl runner passed in (tests record the calls).
+pub fn apply_with(ctx: &Ctx, port: Option<u16>, pfctl: &mut dyn FnMut(&[&str]) -> Result<()>) -> Result<String> {
     let layout = &ctx.layout;
     let path = pf_conf(layout);
     let old = fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
@@ -89,10 +101,11 @@ pub fn apply(ctx: &Ctx, port: Option<u16>) -> Result<String> {
     if new == old {
         return Ok("hotspot firewall: already set".into());
     }
-    // Check the new file with pfctl before it replaces the real one.
+    // Check the new file's syntax with pfctl (-n: parse only, load nothing) before it replaces
+    // the real one.
     let check = layout.run("pf.conf.check");
     atomic_write(&check, new.as_bytes())?;
-    let checked = pfctl(layout, &["-nf", &layout.unit_path(&check)]);
+    let checked = pfctl(&["-nf", &layout.unit_path(&check)]);
     let _ = fs::remove_file(&check);
     checked.context("the changed pf.conf does not load; not changing it")?;
     {
@@ -102,9 +115,8 @@ pub fn apply(ctx: &Ctx, port: Option<u16>) -> Result<String> {
         }
         atomic_write(&path, new.as_bytes())?;
     }
-    pfctl(layout, &["-f", "/etc/pf.conf"]).context("reloading the firewall")?;
     Ok(match port {
-        Some(p) => format!("hotspot firewall: port {p} open for the web interface"),
-        None => "hotspot firewall: closed".into(),
+        Some(p) => format!("hotspot firewall: port {p} opens after the next restart of the head unit"),
+        None => "hotspot firewall: closed after the next restart of the head unit".into(),
     })
 }
