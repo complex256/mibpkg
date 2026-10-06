@@ -70,3 +70,24 @@ Facts the code depends on, with how and when they were verified.
 - End to end: GEM "Check for updates" -> "Update to 0.3.1" downloaded from GitHub and self-updated.
 - GitHub's releases/latest redirect lagged ~20 s after publishing a new release.
 - The car's SD card is mounted read-only (write collections on the Mac).
+
+## Web interface facts (2026-10-05, MHI2Q, mibpkg 0.3.1 installed)
+| Fact | Value | Verified |
+|---|---|---|
+| Interfaces (`ifconfig`, no args, lists all; fixture `ifconfig-all-unit.txt`) | uap0 10.255.1.1 = car Wi-Fi hotspot; mmx0 10.255.0.15 = internal vehicle network (many services listen on it); ecm0 = SIM data; tun9 100.64.0.55 = Tailscale; mlan0/ecm1 no address | ssh, 2026-10-05 |
+| Hotspot rule | only `uap*` counts as hotspot (mmx0 is private too and must never be) | test `on_the_real_unit_only_the_hotspot_and_tailscale_are_classed` |
+| pf variants | the connectivity manager loads `pf.<uplink>.conf` (`pf.ecm0.conf` with SIM data up) after boot; `pf.conf`, `pf.ecm0.conf`, `pf.mlan0.conf`, `pf.ppp0.conf` all carry the same hotspot block line, so mibpkg edits every one present (a rule only in pf.conf never went live) | `pfctl -sr` after a reboot, 2026-10-05 |
+| Port 80 | free; 127.0.0.1:8080 is already used by a stock process | `netstat -an`, 2026-10-05 |
+| `/dev/urandom` | present | `ls -l`, 2026-10-05 |
+| Hotspot firewall | stock pf (`/etc/pf.conf` = `/mnt/system/etc/pf.conf`, same inode) drops everything to the car on uap0 except DNS, ssh (M.I.B. block), 25010 EXLAP, 49152+ audio; port 80 needs a pass rule before `block in quick on $wlan_if from any to ($wlan_if)` | `pfctl -sr` (`/mnt/app/armle/sbin/pfctl`), 2026-10-05 |
+| **Never `pfctl -f` at runtime** | reloading pf.conf resets anchors `mmi_data`, `dns_data`, `wlan_data` to `block return-icmp quick all` (`/etc/pf.data.default`); the connectivity manager had filled them in, so the unit and hotspot clients lost the internet ("sendto: No route to host"). mibpkg edits pf.conf on flash only (effective next boot) | broke and diagnosed on the unit, 2026-10-05 |
+| Job output via a /tmp file | a reader following a growing /tmp (shmem) file written by another process lost the first 5-6 bytes (also with reopen + absolute seek); job output uses pipes instead | web job logs, 2026-10-05 |
+
+## Pending on-car checks (web interface, mibpkg 0.4.0)
+- A phone on the hotspot reaches `http://10.255.1.1/`.
+- `mibpkg web` idle and busy memory/CPU.
+- Phone flow: upload -> install -> logs -> config edit -> restart -> roll back -> remove.
+- mibpkg self-update from the web UI: the page shows "restarting" and reloads on the new version.
+- A web action while GEM runs one (and the reverse): both show busy, nothing breaks.
+- DISABLE card: the web server does not start either.
+- Tailscale: the page loads from a laptop on the tailnet.

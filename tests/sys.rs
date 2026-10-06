@@ -86,3 +86,15 @@ fn lock_file_without_its_pid_yet_is_busy_not_stale() {
     assert!(format!("{e}").starts_with("busy"), "{e}");
     w.join().unwrap();
 }
+
+#[test]
+fn liveness_comes_from_proc_without_starting_a_process() {
+    use mibpkg::sys::alive_in_proc;
+    let t = tempfile::tempdir().unwrap();
+    // No /proc/self: this system has no usable /proc (macOS); the caller falls back to kill -0.
+    assert_eq!(alive_in_proc(t.path(), 123), None);
+    std::fs::create_dir_all(t.path().join("self")).unwrap();
+    std::fs::create_dir_all(t.path().join("123")).unwrap();
+    assert_eq!(alive_in_proc(t.path(), 123), Some(true));
+    assert_eq!(alive_in_proc(t.path(), 456), Some(false));
+}

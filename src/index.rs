@@ -10,6 +10,9 @@ use std::path::{Path, PathBuf};
 
 pub const FORMAT: u32 = 1;
 
+/// Collection id recorded for packages installed from an uploaded file; no index may use it.
+pub const RESERVED_COLLECTION: &str = "uploaded";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Index {
     pub format: u32,
@@ -66,6 +69,7 @@ impl Collection {
         if !valid_name(&index.collection.id) {
             bail!("{}: collection id {:?} must be 1-40 of [a-z0-9-]", p.display(), index.collection.id);
         }
+        reserved_check(&index.collection.id)?;
         for e in &index.packages {
             // Names become file names and script arguments on the unit.
             if !valid_name(&e.name) {
@@ -87,6 +91,7 @@ impl Collection {
         if !valid_name(&index.collection.id) {
             bail!("collection id {:?} must be 1-40 of [a-z0-9-]", index.collection.id);
         }
+        reserved_check(&index.collection.id)?;
         for e in &index.packages {
             if !valid_name(&e.name) {
                 bail!("package name {:?} must be 1-40 of [a-z0-9-]", e.name);
@@ -137,6 +142,13 @@ impl Collection {
     }
 }
 
+fn reserved_check(id: &str) -> Result<()> {
+    if id == RESERVED_COLLECTION {
+        bail!("collection id {id:?} is reserved (mibpkg records uploaded packages under it)");
+    }
+    Ok(())
+}
+
 pub fn cmp_versions(a: &str, b: &str) -> Ordering {
     match (semver::Version::parse(a), semver::Version::parse(b)) {
         (Ok(x), Ok(y)) => x.cmp(&y),
@@ -158,6 +170,7 @@ fn index_dir(pkgs: &Path, id: &str, name: &str, prefix: &str) -> Result<Index> {
     if !valid_name(id) {
         bail!("collection id {id:?} must be 1-40 of [a-z0-9-]");
     }
+    reserved_check(id)?;
     let mut files: Vec<PathBuf> = fs::read_dir(pkgs)
         .with_context(|| format!("reading {}", pkgs.display()))?
         .filter_map(|e| e.ok().map(|e| e.path()))

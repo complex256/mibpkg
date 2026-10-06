@@ -168,6 +168,29 @@ pub struct Supervisor<'a> {
     services: BTreeMap<String, Service>,
     invalid: BTreeMap<String, String>,
     view: Box<dyn SystemView>,
+    /// The mibpkg binary built-in services run (default: /tmp/mibpkg).
+    self_exe: Option<std::path::PathBuf>,
+}
+
+/// `exec` of a built-in service: the mibpkg binary itself, run as `mibpkg --root <root> <args>`.
+pub const SELF_EXEC: &str = "@self";
+
+/// The built-in web interface service (`mibpkg web`), unless web.toml disables it.
+fn builtin_entries(layout: &Layout) -> Vec<BootEntry> {
+    if !crate::web::settings::load(layout).0.enabled {
+        return Vec::new();
+    }
+    vec![BootEntry {
+        package: "mibpkg".into(),
+        name: "web".into(),
+        exec: SELF_EXEC.into(),
+        args: vec!["web".into()],
+        phase: "default".into(),
+        restart: Restart::Always,
+        requires: Vec::new(),
+        after: Vec::new(),
+        after_timeout_secs: None,
+    }]
 }
 
 fn pump(mut r: impl Read + Send + 'static, log: Arc<Mutex<CappedLog>>) {
@@ -188,7 +211,13 @@ fn pump(mut r: impl Read + Send + 'static, log: Arc<Mutex<CappedLog>>) {
 
 impl<'a> Supervisor<'a> {
     pub fn new(layout: &'a Layout, sys: &'a dyn Sys, timing: Timing) -> Supervisor<'a> {
-        Supervisor { layout, sys, timing, services: BTreeMap::new(), invalid: BTreeMap::new(), view: Box::new(RealView::default()) }
+        Supervisor { layout, sys, timing, services: BTreeMap::new(), invalid: BTreeMap::new(), view: Box::new(RealView::default()), self_exe: None }
+    }
+
+    /// Run built-in services with this binary instead of /tmp/mibpkg (tests).
+    pub fn with_self_exe(mut self, exe: std::path::PathBuf) -> Self {
+        self.self_exe = Some(exe);
+        self
     }
 
     /// Replace how start conditions read the system (tests).
@@ -202,7 +231,8 @@ impl<'a> Supervisor<'a> {
     pub fn reload(&mut self) {
         self.invalid.clear();
         let mut seen = Vec::new();
-        for (file, r) in bootd::load_all(self.layout) {
+        let builtin = builtin_entries(self.layout).into_iter().map(|e| (format!("(built-in) {}", e.id()), Ok(e)));
+        for (file, r) in bootd::load_all(self.layout).into_iter().chain(builtin) {
             let e = match r {
                 Ok(e) => e,
                 Err(err) => {
@@ -366,7 +396,28 @@ impl<'a> Supervisor<'a> {
         }
     }
 
+    /// Start a built-in service: the mibpkg binary itself, no package dir, no /tmp copy.
+    fn start_builtin(&self, s: &mut Service, now: Instant) {
+        let e = &s.entry;
+        let id = e.id();
+        let exe = self.self_exe.clone().unwrap_or_else(|| self.layout.tmp_bin());
+        let log = Arc::new(Mutex::new(CappedLog::open(self.layout.run(&format!("{id}.log")), LOG_CAP)));
+        let spawned = Command::new(&exe)
+            .arg("--root")
+            .arg(&self.layout.root)
+            .args(&e.args)
+            .current_dir(self.layout.p("/tmp"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn();
+        self.started(s, now, &id, log, spawned);
+    }
+
     fn start(&self, s: &mut Service, now: Instant) {
+        if s.entry.exec == SELF_EXEC {
+            return self.start_builtin(s, now);
+        }
         let e = &s.entry;
         let pkg_dir = match current_dir(self.layout, &e.package) {
             Some(d) => d,
@@ -403,6 +454,11 @@ impl<'a> Supervisor<'a> {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn();
+        self.started(s, now, &id, log, spawned);
+    }
+
+    /// Record the outcome of spawning a service's process.
+    fn started(&self, s: &mut Service, now: Instant, id: &str, log: Arc<Mutex<CappedLog>>, spawned: std::io::Result<Child>) {
         match spawned {
             Ok(mut child) => {
                 if let Some(o) = child.stdout.take() {

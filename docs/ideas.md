@@ -92,6 +92,10 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
   between packages editing the same file (carplay-rgi: smartphone_integrator.json, dio_manager.json, lsd jars).
 - [v1] Compatibility metadata: unit (MHI2 / MHI2Q), region, firmware train/version.
 - [later] Dependencies between packages.
+- [later] Conflicts between differently named packages (raised 2026-10-05, web UI brainstorm). The same
+  name can't be installed twice (state is keyed by name; service ids are `<pkg>.<service>`; another
+  collection's copy is refused), but a fork like `carmqtt-lite` installs beside `carmqtt` and both run
+  (e.g. same MQTT client id). Fix: manifest `conflicts = ["carmqtt"]` (maybe `provides`), refused at install.
 - [v1] Package model (decided 2026-09-26): declarative manifest first — files, services, boot phase,
   patches to stock files (e.g. json-merge) — so the manager can back up/undo/detect conflicts.
   Optional install/uninstall scripts allowed for odd cases; the in-car screen flags packages that use them.
@@ -129,7 +133,11 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
 ## UI
 - [v1] In-car picker: GEM (engineering menu) screen — installed / update / install / remove, then Apply.
   (Decided 2026-09-26: offline users choose IN THE CAR from what's on the SD card.)
-- [later] Web UI on the hotspot.
+- [built 2026-10-05, mibpkg 0.4.0; verify on the car] Web UI on the hotspot + Tailscale: spec
+  docs/superpowers/specs/2026-10-05-web-interface-design.md (M1 web UI beside GEM; M2 GEM shrinks to
+  one recovery page).
+- [later] Web UI extras needing index/manifest fields: package icons, release notes / "what's new",
+  curated featured packages (Discover's hero slot shows an updates banner until then).
 - [done 0.2.2, confirmed on the car 2026-09-30] Live GEM status: supervisor writes status strings with `pc` into an
   unlisted persistence namespace (SQLite backend, e.g. 1835626603) and GEM rows poll them (`per <ns> <key>`,
   poll 1000). Writes land on flash (/mnt/persist SQLite): write on state changes only, never a per-second timer.

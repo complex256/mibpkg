@@ -1,3 +1,5 @@
 /target
 /out
 /spikes/*/target
+.superpowers/
+.playwright-mcp/

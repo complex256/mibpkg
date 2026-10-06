@@ -129,6 +129,7 @@ pub fn screens(m: &Model) -> Vec<Screen> {
         main.push(Item::Live { label: "last result".into(), key: crate::persist::KEY_RESULT_GLOBAL });
     }
     let mut out = vec![Screen { name: "mibpkg".into(), parent: m.layout.settings.gem_parent.clone(), items: main }];
+    out.push(web_screen(m.layout));
 
     // name -> [(collection, newest entry, origin)]
     let mut available: BTreeMap<String, Vec<(&Collection, &IndexEntry, &str)>> = BTreeMap::new();
@@ -218,6 +219,43 @@ pub fn screens(m: &Model) -> Vec<Screen> {
         out.push(Screen { name: screen_name(&name), parent: "mibpkg".into(), items });
     }
     out
+}
+
+/// The web interface's screen. "__" keeps it apart from package screens ("mibpkg_<pkg>", and no
+/// package name can start with '-').
+pub const WEB_SCREEN: &str = "mibpkg__web";
+
+/// Web server status, where to reach it, and the two recovery buttons (restart, reset settings).
+fn web_screen(layout: &Layout) -> Screen {
+    let (web, warning) = crate::web::settings::load(layout);
+    let mut items = vec![Item::Live { label: "web server".into(), key: crate::persist::service_key(crate::cli::WEB_SERVICE) }];
+    if !web.enabled {
+        items.push(text("disabled in web.toml (Reset web settings turns it back on)"));
+    }
+    // Written by the running server: "port N", "<class> <url>" lines, "iface <name> <addr>" lines.
+    let file = fs::read_to_string(layout.run("web.url")).unwrap_or_default();
+    let lines: Vec<&str> = file.lines().skip(1).collect();
+    let ifaces: Vec<&str> = lines.iter().filter_map(|l| l.strip_prefix("iface ")).collect();
+    let urls: Vec<String> = lines.iter().filter(|l| !l.starts_with("iface ")).map(|l| l.replacen(' ', ": ", 1)).collect();
+    if urls.is_empty() && ifaces.is_empty() {
+        items.push(text("address: not known yet (join the car's Wi-Fi, then open this screen again)"));
+    } else if urls.is_empty() {
+        items.push(text("address: no hotspot or Tailscale address recognised (see interfaces below)"));
+    }
+    for u in urls {
+        items.push(text(u));
+    }
+    if !ifaces.is_empty() {
+        items.push(text(format!("interfaces up: {}", ifaces.join(", "))));
+    }
+    items.push(text(format!("listen: {}", web.listen.join(", "))));
+    items.push(text(format!("PIN: {}", if web.pin.is_some() { "set" } else { "not set" })));
+    if let Some(w) = warning {
+        items.push(text(w));
+    }
+    items.push(button("Restart web server", &["web-restart"]));
+    items.push(button("Reset web settings", &["web-reset"]));
+    Screen { name: WEB_SCREEN.into(), parent: "mibpkg".into(), items }
 }
 
 /// Delete every mibpkg*.esd in engdefs. Caller holds /mnt/app rw.

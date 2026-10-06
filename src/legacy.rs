@@ -39,7 +39,7 @@ pub fn migrate(ctx: &Ctx, pkg: &str) -> Result<Option<String>> {
     let control = dir.join(l.control);
     if control.is_file() {
         if let Err(e) = ctx.sys.run_script(&control, &["stop"], &[], Duration::from_secs(30)) {
-            eprintln!("warning: stopping the old {pkg}: {e:#}");
+            crate::warn!("warning: stopping the old {pkg}: {e:#}");
         }
     }
     for (old, new) in l.configs {

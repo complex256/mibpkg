@@ -12,6 +12,18 @@ watches the installed services.
 3. GEM -> M.I.B. -> Advanced Settings -> Run Custom Script. This installs mibpkg once.
 4. GEM -> mibpkg: install, update, remove, restart, roll back.
 
+### Web interface
+
+mibpkg also serves an app-store-style page from the car, with everything GEM offers plus
+installing a `.mpk` from your phone, logs, config files and online sources.
+
+1. Join the car's Wi-Fi hotspot (or reach the car over Tailscale).
+2. GEM -> mibpkg -> mibpkg__web shows the address, e.g. `http://10.255.1.1`.
+3. Open it in the phone's browser.
+
+By default it answers only on the hotspot and Tailscale (never the SIM data link); Web settings
+can change that and set a PIN. Locked out? GEM -> mibpkg -> mibpkg__web -> Reset web settings.
+
 Emergency stop: create an empty file `mibpkg/DISABLE` on the card and reboot; no package
 services start while it is present.
 
@@ -22,6 +34,10 @@ services start while it is present.
 - `mibpkg build <src-dir> <out-dir>` — build a `.mpk` from a directory with `manifest.toml`.
 - `mibpkg index <collection-dir> --id ID --name NAME` — write `index.json`.
 - `scripts/bundle.sh [extra.mpk ...]` — SD bundle with the official collection.
+- `scripts/web-fixture.sh <dir>` — a fake unit root for working on the web interface on a Mac
+  (`web/` is plain HTML/CSS/JS, no build step; `MIBPKG_WEB_DIR=web` serves it from disk).
+- `node --test web/tests/*.test.mjs` — front-end unit tests (Node's built-in runner, nothing to install).
 
-Design: `docs/superpowers/specs/2026-09-26-mibpkg-design.md`. Backlog: `docs/ideas.md`.
+Design: `docs/superpowers/specs/2026-09-26-mibpkg-design.md`; web interface:
+`docs/superpowers/specs/2026-10-05-web-interface-design.md`. Backlog: `docs/ideas.md`.
 Verified unit facts: `docs/unit-facts.md`.

@@ -52,6 +52,16 @@ pub fn run_limited(cmd: &Path, args: &[String], env: &[(String, String)], timeou
     }
 }
 
+/// Whether `pid` is running, from `<proc>/<pid>` (QNX and Linux list each process there), or None
+/// when this system has no usable /proc (no `<proc>/self`). Starting `kill -0` through a shell for
+/// every check was slow on the unit, and the web server checks on every status request.
+pub fn alive_in_proc(proc_root: &Path, pid: u32) -> Option<bool> {
+    if !proc_root.join("self").exists() {
+        return None;
+    }
+    Some(proc_root.join(pid.to_string()).exists())
+}
+
 /// The unit's persistence client; aborts (and writes a core dump) without IPL_CONFIG_DIR.
 pub const PC: &str = "/eso/bin/apps/pc";
 
@@ -113,7 +123,10 @@ impl Sys for RealSys {
     }
 
     fn process_alive(&self, pid: u32) -> bool {
-        quiet_status(Command::new("/bin/sh").arg("-c").arg(format!("kill -0 {pid}")))
+        match alive_in_proc(Path::new("/proc"), pid) {
+            Some(alive) => alive,
+            None => quiet_status(Command::new("/bin/sh").arg("-c").arg(format!("kill -0 {pid}"))),
+        }
     }
 
     fn terminate(&self, pid: u32) {

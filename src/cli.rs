@@ -27,7 +27,9 @@ const USAGE: &str = "usage:
   mibpkg [--root DIR] [--no-supervisor] <command>
     supervise | status | list | install <pkg> [collection] | remove <pkg> [--purge]
     rollback <pkg> | restart <pkg> | rescan | update-all | gem <action> [args..]
-    online-check | sntp [host:port]
+    online-check | sntp [host:port] | web
+    gem install-file <pkg> <id> <collection|-> | gem config-set <pkg> <n> <id>
+    gem source-add <source> | gem source-remove <source> | gem web-settings <id> | gem web-reset | gem web-restart
     bootstrap | uninstall-self";
 
 pub fn run(args: &[String]) -> Result<i32> {
@@ -35,17 +37,19 @@ pub fn run(args: &[String]) -> Result<i32> {
     let mut no_supervisor = false;
     let mut rest: Vec<String> = Vec::new();
     let mut it = args.iter();
+    // Global flags only before the command word: after it, "--root" is just an argument (a
+    // package name from GEM or the web must never be able to redirect mibpkg to another root).
     while let Some(a) = it.next() {
         match a.as_str() {
-            "--root" => root = PathBuf::from(it.next().context("--root needs a directory")?),
-            "--no-supervisor" => no_supervisor = true,
+            "--root" if rest.is_empty() => root = PathBuf::from(it.next().context("--root needs a directory")?),
+            "--no-supervisor" if rest.is_empty() => no_supervisor = true,
             _ => rest.push(a.clone()),
         }
     }
     let cmd = match rest.first() {
         Some(c) => c.clone(),
         None => {
-            eprintln!("{USAGE}");
+            crate::warn!("{USAGE}");
             return Ok(2);
         }
     };
@@ -54,7 +58,7 @@ pub fn run(args: &[String]) -> Result<i32> {
         "build" => return host_build(args),
         "index" => return host_index(args),
         "help" | "--help" | "-h" => {
-            println!("{USAGE}");
+            crate::say!("{USAGE}");
             return Ok(0);
         }
         _ => {}
@@ -73,17 +77,21 @@ pub fn run(args: &[String]) -> Result<i32> {
     let _ = fsutil::cap_file(&ctx.layout.run("log"), supervisor::LOG_CAP);
     let after = |ctx: &Ctx| {
         if let Err(e) = gem::regenerate(ctx) {
-            eprintln!("warning: updating GEM screens: {e:#}");
+            crate::warn!("warning: updating GEM screens: {e:#}");
         }
         if !no_supervisor {
             if let Err(e) = control::ensure_supervisor(&ctx.layout, ctx.sys) {
-                eprintln!("warning: starting the supervisor: {e:#}");
+                crate::warn!("warning: starting the supervisor: {e:#}");
             }
         }
     };
     match cmd.as_str() {
         "supervise" => {
             supervisor::run(&ctx.layout, &sys, Timing::default())?;
+            Ok(0)
+        }
+        "web" => {
+            crate::web::run(ctx.layout.clone())?;
             Ok(0)
         }
         "status" => {
@@ -93,7 +101,7 @@ pub fn run(args: &[String]) -> Result<i32> {
         "sntp" => {
             // Diagnostic: always queries, ignoring the cached offset.
             let server = args.first().map(|s| s.as_str()).unwrap_or(crate::clock::SERVERS[0]);
-            println!("{}", crate::clock::sntp_offset(server, Duration::from_secs(5))?);
+            crate::say!("{}", crate::clock::sntp_offset(server, Duration::from_secs(5))?);
             Ok(0)
         }
         "online-check" => {
@@ -103,16 +111,14 @@ pub fn run(args: &[String]) -> Result<i32> {
             let _lock = match Lock::acquire(&ctx.layout, ctx.sys) {
                 Ok(l) => l,
                 Err(_) => {
-                    println!("online: busy");
+                    crate::say!("online: busy");
                     return Ok(1);
                 }
             };
             let (text, ok) = online_store(&ctx, fetched);
-            if let Err(e) = ctx.sys.persist_write(crate::persist::NS, crate::persist::KEY_ONLINE, &text) {
-                eprintln!("warning: live online status: {e:#}");
-            }
+            publish_online(&ctx, &text);
             after(&ctx);
-            println!("{text}");
+            crate::say!("{text}");
             Ok(if ok { 0 } else { 1 })
         }
         "list" => {
@@ -124,7 +130,7 @@ pub fn run(args: &[String]) -> Result<i32> {
             let _lock = Lock::acquire(&ctx.layout, ctx.sys)?;
             let r = action(&ctx, &cmd, args);
             after(&ctx);
-            println!("{}", r?);
+            crate::say!("{}", r?);
             Ok(0)
         }
         "gem" => {
@@ -132,13 +138,17 @@ pub fn run(args: &[String]) -> Result<i32> {
             let _lock = match Lock::acquire(&ctx.layout, ctx.sys) {
                 Ok(l) => l,
                 Err(e) => {
-                    // Double tap: the running action refreshes the screens when it finishes.
-                    println!("FAILED: {e:#}");
+                    // Double tap, or GEM and the web racing: nothing was done. The running action
+                    // refreshes the screens when it finishes. BUSY (not FAILED) so the web UI can
+                    // say "try again" instead of reporting a failure.
+                    crate::say!("BUSY: {e:#}");
                     return Ok(0);
                 }
             };
             let key = match verb.as_str() {
-                "install" | "remove" | "rollback" | "restart" => args.get(1).cloned().unwrap_or_else(|| "_".into()),
+                "install" | "remove" | "rollback" | "restart" | "install-file" | "config-set" => {
+                    args.get(1).filter(|n| crate::manifest::valid_name(n)).cloned().unwrap_or_else(|| "_".into())
+                }
                 _ => "_".into(),
             };
             let text = match action(&ctx, &verb, &args[1..]) {
@@ -146,10 +156,10 @@ pub fn run(args: &[String]) -> Result<i32> {
                 Err(e) => format!("FAILED: {e:#}"),
             };
             if let Err(e) = record_result(&ctx, &key, &text) {
-                eprintln!("warning: recording result: {e:#}");
+                crate::warn!("warning: recording result: {e:#}");
             }
             after(&ctx);
-            println!("{text}");
+            crate::say!("{text}");
             Ok(0)
         }
         "bootstrap" => {
@@ -163,7 +173,7 @@ pub fn run(args: &[String]) -> Result<i32> {
             }
             let changed = hook::install_hook(&ctx)?;
             after(&ctx);
-            println!("{}", if changed { "boot hook installed" } else { "boot hook already present" });
+            crate::say!("{}", if changed { "boot hook installed" } else { "boot hook already present" });
             Ok(0)
         }
         "uninstall-self" => {
@@ -174,12 +184,16 @@ pub fn run(args: &[String]) -> Result<i32> {
                 std::thread::sleep(Duration::from_millis(200));
             }
             hook::uninstall_hook(&ctx)?;
+            // Close the web interface's hotspot port again (nothing to do if it was never opened).
+            if let Err(e) = crate::firewall::apply(&ctx, None) {
+                crate::warn!("warning: hotspot firewall: {e:#}");
+            }
             {
                 let _rw = ctx.mounts.rw("/mnt/app")?;
                 gem::remove_screens(&ctx.layout)?;
             }
             let _ = fs::remove_file(ctx.layout.run("stop"));
-            println!(
+            crate::say!(
                 "mibpkg removed from boot and GEM; installed files remain in {} (delete by hand if wanted)",
                 ctx.layout.unit_path(&ctx.layout.home())
             );
@@ -217,6 +231,25 @@ fn arg<'a>(args: &'a [String], i: usize, what: &str) -> Result<&'a str> {
     args.get(i).map(|s| s.as_str()).with_context(|| format!("missing {what}"))
 }
 
+/// The supervisor's id for the built-in web server service.
+pub const WEB_SERVICE: &str = "mibpkg.web";
+
+fn id_arg<'a>(args: &'a [String], i: usize) -> Result<&'a str> {
+    let id = arg(args, i, "id")?;
+    if !crate::web::settings::is_id(id) {
+        bail!("invalid id {id:?}");
+    }
+    Ok(id)
+}
+
+fn pkg_arg<'a>(args: &'a [String], i: usize) -> Result<&'a str> {
+    let name = arg(args, i, "package name")?;
+    if !crate::manifest::valid_name(name) {
+        bail!("invalid package name {name:?}");
+    }
+    Ok(name)
+}
+
 /// Caller holds the action lock.
 fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
     let media_roots = media::roots(&ctx.layout);
@@ -225,14 +258,14 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
     let state = State::load(&ctx.layout)?;
     match verb {
         "install" => {
-            let name = arg(args, 0, "package name")?;
+            let name = pkg_arg(args, 0)?;
             let coll = install::pick_collection(&state, &colls, name, args.get(1).map(|s| s.as_str()), &ctx.unit)?;
             install::install(ctx, &media_roots, coll, name)
         }
-        "remove" => install::remove(ctx, arg(args, 0, "package name")?, args.iter().any(|a| a == "--purge")),
-        "rollback" => install::rollback(ctx, arg(args, 0, "package name")?),
+        "remove" => install::remove(ctx, pkg_arg(args, 0)?, args.iter().any(|a| a == "--purge")),
+        "rollback" => install::rollback(ctx, pkg_arg(args, 0)?),
         "restart" => {
-            let name = arg(args, 0, "package name")?;
+            let name = pkg_arg(args, 0)?;
             let inst = state.packages.get(name).with_context(|| format!("{name} is not installed"))?;
             for id in &inst.services {
                 control::request_restart(&ctx.layout, id)?;
@@ -255,9 +288,97 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
             Ok(if msgs.is_empty() { "rescanned; no new config files".into() } else { msgs.join("; ") })
         }
         "update-all" => Ok(install::update_all(ctx, &media_roots, &colls)?.join("; ")),
+        "install-file" => {
+            let name = pkg_arg(args, 0)?;
+            let id = id_arg(args, 1)?;
+            let coll = arg(args, 2, "collection")?;
+            if coll != "-" && !crate::manifest::valid_name(coll) {
+                bail!("invalid collection {coll:?}");
+            }
+            let path = ctx.layout.run(&format!("upload.{id}.mpk"));
+            // The upload is in RAM (/tmp): gone after one attempt, whatever the outcome.
+            let r = install::install_file(ctx, &media_roots, &colls, &path, name, Some(coll));
+            let _ = fs::remove_file(&path);
+            r
+        }
+        "config-set" => {
+            let name = pkg_arg(args, 0)?;
+            let n: usize = arg(args, 1, "config number")?.parse().context("invalid config number")?;
+            let id = id_arg(args, 2)?;
+            let text = ctx.layout.run(&format!("text.{id}"));
+            let r = (|| -> Result<String> {
+                let m = install::current_manifest(&ctx.layout, name)?;
+                let c = m.configs.get(n).with_context(|| format!("{name} has no config number {n}"))?;
+                {
+                    let _rw = ctx.mounts.rw("/mnt/app")?;
+                    config::import_file(&ctx.layout, name, &c.path, &text)?;
+                }
+                let inst = state.packages.get(name).with_context(|| format!("{name} is not installed"))?;
+                for svc in &inst.services {
+                    control::request_restart(&ctx.layout, svc)?;
+                }
+                Ok(format!("saved {} for {name}; restarting its services", c.path))
+            })();
+            let _ = fs::remove_file(&text);
+            r
+        }
+        "source-add" => {
+            let source = arg(args, 0, "source")?;
+            let msg = {
+                let _rw = ctx.mounts.rw("/mnt/app")?;
+                crate::online::add_source(&ctx.layout, source)?
+            };
+            let t = online_check(ctx);
+            publish_online(ctx, &t);
+            Ok(format!("{msg}; {t}"))
+        }
+        "source-remove" => {
+            let _rw = ctx.mounts.rw("/mnt/app")?;
+            crate::online::remove_source(&ctx.layout, arg(args, 0, "source")?)
+        }
+        "web-settings" => {
+            let id = id_arg(args, 0)?;
+            let text = ctx.layout.run(&format!("text.{id}"));
+            let r = (|| -> Result<String> {
+                let s: crate::web::settings::WebSettings = serde_json::from_str(&fs::read_to_string(&text)?).context("reading the new web settings")?;
+                s.validate()?;
+                let _rw = ctx.mounts.rw("/mnt/app")?;
+                crate::web::settings::save(&ctx.layout, &s)?;
+                // "enabled" may have changed: the supervisor re-reads its built-in services.
+                control::request_reload(&ctx.layout)?;
+                Ok("web settings saved".into())
+            })();
+            let _ = fs::remove_file(&text);
+            r
+        }
+        "web-reset" => {
+            {
+                let _rw = ctx.mounts.rw("/mnt/app")?;
+                match fs::remove_file(crate::web::settings::path(&ctx.layout)) {
+                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+                    _ => {}
+                }
+            }
+            // Reload starts it if web.toml had disabled it; restart applies the defaults if running.
+            control::request_reload(&ctx.layout)?;
+            control::request_restart(&ctx.layout, WEB_SERVICE)?;
+            Ok("web settings reset to the defaults; the web server restarts".into())
+        }
+        "web-firewall" => {
+            // Run by the web server when pf.conf does not match its port and listen choice.
+            let port = match arg(args, 0, "port or off")? {
+                "off" => None,
+                p => Some(p.parse::<u16>().ok().filter(|p| *p > 0).with_context(|| format!("invalid port {p:?}"))?),
+            };
+            crate::firewall::apply(ctx, port)
+        }
+        "web-restart" => {
+            control::request_restart(&ctx.layout, WEB_SERVICE)?;
+            Ok("web server restart requested".into())
+        }
         "check" => {
             let t = online_check(ctx);
-            let _ = ctx.sys.persist_write(crate::persist::NS, crate::persist::KEY_ONLINE, &t);
+            publish_online(ctx, &t);
             Ok(t)
         }
         other => bail!("unknown action {other:?}"),
@@ -297,6 +418,14 @@ fn online_store(ctx: &Ctx, fetched: std::result::Result<Fetched, String>) -> (St
     }
 }
 
+/// The online status line: GEM's live row (persistence) and /tmp/mibpkg.online (the web UI).
+fn publish_online(ctx: &Ctx, text: &str) {
+    if let Err(e) = ctx.sys.persist_write(crate::persist::NS, crate::persist::KEY_ONLINE, text) {
+        crate::warn!("warning: live online status: {e:#}");
+    }
+    let _ = crate::fsutil::atomic_write(&ctx.layout.run("online"), text.as_bytes());
+}
+
 fn online_check(ctx: &Ctx) -> String {
     online_store(ctx, online_fetch(ctx)).0
 }
@@ -309,37 +438,45 @@ fn record_result(ctx: &Ctx, key: &str, text: &str) -> Result<()> {
     st.save(&ctx.layout)?;
     // The live "last result" row reads this.
     if let Err(e) = ctx.sys.persist_write(crate::persist::NS, crate::persist::result_key(key), &line) {
-        eprintln!("warning: live result: {e:#}");
+        crate::warn!("warning: live result: {e:#}");
     }
     Ok(())
 }
 
 fn print_status(ctx: &Ctx) {
+    // "port N" then "<class> <url>" lines, written by the running web server.
+    match fs::read_to_string(ctx.layout.run("web.url")) {
+        Ok(t) => {
+            let urls: Vec<&str> = t.lines().skip(1).filter(|l| !l.starts_with("iface ")).collect();
+            crate::say!("web: {}", if urls.is_empty() { t.lines().next().unwrap_or("running").to_string() } else { urls.join(", ") });
+        }
+        Err(_) => crate::say!("web: not running"),
+    }
     match status::read(&ctx.layout) {
-        None => println!("supervisor: no status (not running since boot?)"),
+        None => crate::say!("supervisor: no status (not running since boot?)"),
         Some(s) => {
             let alive = control::supervisor_pid(&ctx.layout, ctx.sys).is_some();
-            println!(
+            crate::say!(
                 "supervisor pid {} ({}){}",
                 s.pid,
                 if alive { "running" } else { "gone" },
                 if s.disabled { ", DISABLED" } else { "" }
             );
             for (id, v) in &s.services {
-                println!("  {id}: {}", status::describe(v));
+                crate::say!("  {id}: {}", status::describe(v));
             }
             for (f, e) in &s.invalid {
-                println!("  boot.d/{f}: {e}");
+                crate::say!("  boot.d/{f}: {e}");
             }
         }
     }
 }
 
 fn print_list(ctx: &Ctx) -> Result<()> {
-    println!("unit: {}", ctx.unit.describe());
+    crate::say!("unit: {}", ctx.unit.describe());
     let st = State::load(&ctx.layout)?;
     for (n, i) in &st.packages {
-        println!(
+        crate::say!(
             "installed {n} {} [{}]{}",
             i.version,
             i.collection,
@@ -350,10 +487,10 @@ fn print_list(ctx: &Ctx) -> Result<()> {
         match c {
             Ok(c) => {
                 for e in &c.index.packages {
-                    println!("card [{}] {} {}", c.id(), e.name, e.version);
+                    crate::say!("card [{}] {} {}", c.id(), e.name, e.version);
                 }
             }
-            Err(e) => println!("card {}: {e:#}", dir.display()),
+            Err(e) => crate::say!("card {}: {e:#}", dir.display()),
         }
     }
     Ok(())
@@ -366,7 +503,7 @@ fn host_build(args: &[String]) -> Result<i32> {
     fs::create_dir_all(out_dir)?;
     let out = out_dir.join(format!("{}-{}.mpk", m.package.name, m.package.version));
     archive::pack(src, &out)?;
-    println!("{}", out.display());
+    crate::say!("{}", out.display());
     Ok(0)
 }
 
@@ -388,7 +525,7 @@ fn host_index(args: &[String]) -> Result<i32> {
     let name = name.unwrap_or_else(|| id.clone());
     let idx = if flat { crate::index::build_index_flat(dir, &id, &name)? } else { build_index(dir, &id, &name)? };
     write_index(dir, &idx)?;
-    println!("{} packages in {}", idx.packages.len(), dir.join("index.json").display());
+    crate::say!("{} packages in {}", idx.packages.len(), dir.join("index.json").display());
     Ok(0)
 }
 

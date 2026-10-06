@@ -117,7 +117,8 @@ fn reload_restarts_on_version_change_and_stops_removed() {
     let ctx = Ctx::new(f.layout.clone(), &rs);
     install::remove(&ctx, "demo", false).unwrap();
     sup.reload();
-    assert!(sup.status().services.is_empty());
+    // Only the built-in web server is left.
+    assert_eq!(sup.status().services.keys().collect::<Vec<_>>(), ["mibpkg.web"]);
     assert!(!sys.process_alive(pid2));
 }
 
@@ -352,4 +353,26 @@ fn a_pending_self_update_is_acted_on_by_a_newly_started_supervisor() {
         std::thread::sleep(Duration::from_millis(20));
     }
     assert!(marker.exists(), "launch.sh was not run for the pending self-update");
+}
+
+#[test]
+fn the_web_server_is_a_built_in_service() {
+    let f = common::fixture();
+    let exe = f.root().join("fake-mibpkg");
+    fs::write(&exe, "#!/bin/sh\necho \"args: $*\"\nsleep 30\n").unwrap();
+    fs::set_permissions(&exe, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let sys = RealSys { mounts: false };
+    let mut sup = Supervisor::new(&f.layout, &sys, fast()).with_self_exe(exe);
+    sup.reload();
+    assert!(until(&mut sup, |s| s.status().services.get("mibpkg.web").map(|w| w.state) == Some(SvcState::Running)));
+    let want = format!("args: --root {} web", f.root().display());
+    assert!(until(&mut sup, |_| fs::read_to_string(f.layout.run("mibpkg.web.log")).unwrap_or_default().contains(&want)));
+    sup.stop_all();
+
+    // Disabled in web.toml: not started at all.
+    fs::create_dir_all(f.layout.home()).unwrap();
+    fs::write(mibpkg::web::settings::path(&f.layout), "enabled = false\n").unwrap();
+    let mut sup = Supervisor::new(&f.layout, &sys, fast());
+    sup.reload();
+    assert!(!sup.status().services.contains_key("mibpkg.web"));
 }
