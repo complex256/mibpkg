@@ -4,7 +4,8 @@
 use super::settings::WebSettings;
 use std::collections::BTreeMap;
 use std::net::{IpAddr, Ipv4Addr};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// How long one `ifconfig` reading is trusted.
@@ -83,13 +84,18 @@ struct Snapshot {
     ifaces: Vec<Iface>,
 }
 
-/// The allowed-address check, with a short-lived cache of `ifconfig`.
+type Probe = Arc<dyn Fn() -> Option<String> + Send + Sync>;
+
+/// The allowed-address check, with a short-lived cache of `ifconfig`. Only the very first check
+/// waits for `ifconfig`; after that a stale snapshot is answered from at once and refreshed on a
+/// background thread (starting a process is slow on the unit, and every page load would wait).
 pub struct Allowed {
     any: bool,
     listen: Vec<String>,
     overrides: BTreeMap<String, Vec<String>>,
-    probe: Box<dyn Fn() -> Option<String> + Send + Sync>,
-    snap: Mutex<Option<Snapshot>>,
+    probe: Probe,
+    snap: Arc<Mutex<Option<Snapshot>>>,
+    refreshing: Arc<AtomicBool>,
 }
 
 impl Allowed {
@@ -99,8 +105,9 @@ impl Allowed {
             any: settings.any(),
             listen: settings.listen.clone(),
             overrides: settings.interfaces.clone(),
-            probe,
-            snap: Mutex::new(None),
+            probe: Arc::from(probe),
+            snap: Arc::new(Mutex::new(None)),
+            refreshing: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -114,12 +121,25 @@ impl Allowed {
 
     fn ifaces_at(&self, now: Instant) -> Vec<Iface> {
         let mut snap = self.snap.lock().unwrap_or_else(|e| e.into_inner());
-        let stale = snap.as_ref().map_or(true, |s| now.duration_since(s.at) >= REFRESH);
-        if stale {
-            let ifaces = (self.probe)().map(|t| parse_ifconfig_all(&t)).unwrap_or_default();
-            *snap = Some(Snapshot { at: now, ifaces });
+        match snap.as_ref() {
+            // First check: nothing to answer from yet, so wait for one probe.
+            None => {
+                let ifaces = (self.probe)().map(|t| parse_ifconfig_all(&t)).unwrap_or_default();
+                *snap = Some(Snapshot { at: now, ifaces: ifaces.clone() });
+                ifaces
+            }
+            Some(s) => {
+                if now.saturating_duration_since(s.at) >= REFRESH && !self.refreshing.swap(true, Ordering::SeqCst) {
+                    let (probe, store, flag) = (self.probe.clone(), self.snap.clone(), self.refreshing.clone());
+                    std::thread::spawn(move || {
+                        let ifaces = probe().map(|t| parse_ifconfig_all(&t)).unwrap_or_default();
+                        *store.lock().unwrap_or_else(|e| e.into_inner()) = Some(Snapshot { at: now, ifaces });
+                        flag.store(false, Ordering::SeqCst);
+                    });
+                }
+                s.ifaces.clone()
+            }
         }
-        snap.as_ref().map(|s| s.ifaces.clone()).unwrap_or_default()
     }
 
     pub fn permits(&self, local: IpAddr) -> bool {

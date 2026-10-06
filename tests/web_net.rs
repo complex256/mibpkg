@@ -75,7 +75,11 @@ fn an_interface_that_comes_up_later_is_seen_after_the_refresh() {
     assert!(!a.permits_at(ip("100.64.0.55"), t0));
     *text.lock().unwrap() = UNIT.to_string();
     assert!(!a.permits_at(ip("100.64.0.55"), t0 + Duration::from_secs(1)), "cached");
-    assert!(a.permits_at(ip("100.64.0.55"), t0 + Duration::from_secs(11)));
+    // Stale: this check still answers from the old snapshot and starts a background refresh...
+    assert!(!a.permits_at(ip("100.64.0.55"), t0 + Duration::from_secs(11)));
+    std::thread::sleep(Duration::from_millis(200));
+    // ...after which the new interface is seen.
+    assert!(a.permits_at(ip("100.64.0.55"), t0 + Duration::from_secs(12)));
 }
 
 #[test]
@@ -110,4 +114,24 @@ fn on_the_real_unit_only_the_hotspot_and_tailscale_are_classed() {
     let a = allowed(WebSettings::default(), Arc::new(Mutex::new(REAL_UNIT.to_string())));
     assert!(!a.permits_at(ip("10.255.0.15"), Instant::now()), "never the car's internal network (mmx0)");
     assert!(a.permits_at(ip("10.255.1.1"), Instant::now()));
+}
+
+#[test]
+fn a_slow_ifconfig_never_holds_up_a_request_after_the_first() {
+    // ifconfig is a process start on the unit; requests must not wait for it every 10 s.
+    let text = Arc::new(Mutex::new(UNIT.to_string()));
+    let t2 = text.clone();
+    let a = Allowed::new(
+        &WebSettings::default(),
+        Box::new(move || {
+            std::thread::sleep(Duration::from_millis(800));
+            Some(t2.lock().unwrap().clone())
+        }),
+    );
+    let t0 = Instant::now();
+    assert!(a.permits_at(ip("10.255.1.1"), t0), "the first answer waits for one probe");
+    // Stale: answered from the old snapshot at once, refreshed in the background.
+    let start = Instant::now();
+    assert!(a.permits_at(ip("10.255.1.1"), t0 + Duration::from_secs(11)));
+    assert!(start.elapsed() < Duration::from_millis(300), "{:?}", start.elapsed());
 }

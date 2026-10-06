@@ -8,7 +8,10 @@ use crate::state::State;
 use crate::unit::UnitInfo;
 use serde::Serialize;
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::SystemTime;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Avail {
@@ -63,11 +66,59 @@ pub struct PkgView {
     pub update: Option<String>,
 }
 
+/// Parsed indexes, keyed by file, valid while the file's size and modification time are unchanged.
+/// The web server builds the catalog for every page; indexes on the SD card and the online caches
+/// rarely change, and reading plus parsing them each time made the pages slow on the unit.
+type ParseCache = Mutex<HashMap<PathBuf, (u64, Option<SystemTime>, Option<Collection>)>>;
+static PARSED: OnceLock<ParseCache> = OnceLock::new();
+
+/// `parse(file)` once per version of `file` (None when the file is unreadable or invalid).
+fn cached(file: &Path, parse: impl FnOnce() -> Option<Collection>) -> Option<Collection> {
+    let meta = std::fs::metadata(file).ok()?;
+    let key = (meta.len(), meta.modified().ok());
+    let cache = PARSED.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some((len, mtime, c)) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(file) {
+        if (*len, *mtime) == key {
+            return c.clone();
+        }
+    }
+    let c = parse();
+    cache.lock().unwrap_or_else(|e| e.into_inner()).insert(file.to_path_buf(), (key.0, key.1, c.clone()));
+    c
+}
+
 /// Card collections (first copy of each id) then cached online ones, with their origin.
 pub fn sources(layout: &Layout) -> Vec<(Collection, &'static str)> {
-    let mut out: Vec<(Collection, &'static str)> =
-        crate::media::loaded(&crate::media::scan(layout)).into_iter().map(|c| (c, "card")).collect();
-    out.extend(crate::online::collections(layout).into_iter().map(|c| (c, "online")));
+    let mut out: Vec<(Collection, &'static str)> = Vec::new();
+    // Card: <media root>/mibpkg/collections/<dir>/index.json, as media::scan finds them.
+    for root in crate::media::roots(layout) {
+        let mut dirs: Vec<PathBuf> = match std::fs::read_dir(root.join("mibpkg/collections")) {
+            Ok(rd) => rd.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).collect(),
+            Err(_) => continue,
+        };
+        dirs.sort();
+        for d in dirs {
+            if let Some(c) = cached(&d.join("index.json"), || Collection::load(&d).ok()) {
+                if !out.iter().any(|(o, _)| o.id() == c.id()) {
+                    out.push((c, "card"));
+                }
+            }
+        }
+    }
+    // Online: state/online/<id>.json, as online::collections reads them.
+    if let Ok(rd) = std::fs::read_dir(layout.state_dir().join("online")) {
+        let mut paths: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map_or(false, |x| x == "json")).collect();
+        paths.sort();
+        for p in paths {
+            let parse = || {
+                let cached: crate::online::Cached = serde_json::from_str(&std::fs::read_to_string(&p).ok()?).ok()?;
+                Collection::from_online(cached.index, &cached.base_url).ok()
+            };
+            if let Some(c) = cached(&p, parse) {
+                out.push((c, "online"));
+            }
+        }
+    }
     out
 }
 
