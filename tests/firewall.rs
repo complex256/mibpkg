@@ -115,3 +115,31 @@ fn apply_only_checks_with_pfctl_and_never_reloads_the_live_firewall() {
     assert_eq!(calls[0][0], "-nf", "only a syntax check");
     assert!(msg.contains("after the next restart"), "{msg}");
 }
+
+/// The variant the car loads once its data connection is up on ecm0 (captured 2026-10-05).
+const ECM0: &str = include_str!("fixtures/pf.ecm0.conf.unit");
+
+#[test]
+fn every_pf_variant_the_car_may_load_gets_the_rule() {
+    // The connectivity manager swaps in pf.<uplink>.conf (pf.ecm0.conf when SIM data is up), so a
+    // rule only in pf.conf vanished from the live firewall (seen on the unit, 2026-10-05).
+    let f = common::fixture();
+    let etc = f.layout.p("/mnt/system/etc");
+    fs::write(etc.join("pf.conf"), STOCK).unwrap();
+    fs::write(etc.join("pf.ecm0.conf"), ECM0).unwrap();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    firewall::apply_with(&ctx, Some(80), &mut |_: &[&str]| Ok(())).unwrap();
+    for name in ["pf.conf", "pf.ecm0.conf"] {
+        let text = fs::read_to_string(etc.join(name)).unwrap();
+        assert_eq!(text.matches(MARK).count(), 1, "{name}");
+        assert!(etc.join(format!("{name}.mibpkg-orig")).is_file(), "{name} backed up");
+    }
+    assert!(!etc.join("pf.ppp0.conf").exists(), "variants that are not there are not created");
+    assert!(!firewall::needs_change(&f.layout, Some(80)));
+    fs::write(etc.join("pf.ecm0.conf"), ECM0).unwrap();
+    assert!(firewall::needs_change(&f.layout, Some(80)), "any variant without the rule needs a change");
+    firewall::apply_with(&ctx, None, &mut |_: &[&str]| Ok(())).unwrap();
+    assert_eq!(fs::read_to_string(etc.join("pf.conf")).unwrap(), STOCK);
+    assert_eq!(fs::read_to_string(etc.join("pf.ecm0.conf")).unwrap(), ECM0);
+}

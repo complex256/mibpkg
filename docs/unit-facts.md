@@ -76,6 +76,7 @@ Facts the code depends on, with how and when they were verified.
 |---|---|---|
 | Interfaces (`ifconfig`, no args, lists all; fixture `ifconfig-all-unit.txt`) | uap0 10.255.1.1 = car Wi-Fi hotspot; mmx0 10.255.0.15 = internal vehicle network (many services listen on it); ecm0 = SIM data; tun9 100.64.0.55 = Tailscale; mlan0/ecm1 no address | ssh, 2026-10-05 |
 | Hotspot rule | only `uap*` counts as hotspot (mmx0 is private too and must never be) | test `on_the_real_unit_only_the_hotspot_and_tailscale_are_classed` |
+| pf variants | the connectivity manager loads `pf.<uplink>.conf` (`pf.ecm0.conf` with SIM data up) after boot; `pf.conf`, `pf.ecm0.conf`, `pf.mlan0.conf`, `pf.ppp0.conf` all carry the same hotspot block line, so mibpkg edits every one present (a rule only in pf.conf never went live) | `pfctl -sr` after a reboot, 2026-10-05 |
 | Port 80 | free; 127.0.0.1:8080 is already used by a stock process | `netstat -an`, 2026-10-05 |
 | `/dev/urandom` | present | `ls -l`, 2026-10-05 |
 | Hotspot firewall | stock pf (`/etc/pf.conf` = `/mnt/system/etc/pf.conf`, same inode) drops everything to the car on uap0 except DNS, ssh (M.I.B. block), 25010 EXLAP, 49152+ audio; port 80 needs a pass rule before `block in quick on $wlan_if from any to ($wlan_if)` | `pfctl -sr` (`/mnt/app/armle/sbin/pfctl`), 2026-10-05 |

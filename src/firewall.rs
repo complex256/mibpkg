@@ -24,13 +24,29 @@ fn rule(port: u16) -> String {
     format!("pass in quick on $wlan_if proto tcp from ($wlan_if:network) to ($wlan_if) port {port} keep state allow-opts")
 }
 
+/// The rule sets the car may load: pf.conf at boot, then the connectivity manager swaps in the
+/// one for the current uplink (pf.ecm0.conf when SIM data is up, seen on the unit 2026-10-05).
+/// Every one of them that exists gets the rule, as the M.I.B. toolbox does for ssh.
+pub const VARIANTS: &[&str] = &["pf.conf", "pf.ecm0.conf", "pf.mlan0.conf", "pf.ppp0.conf"];
+
 pub fn pf_conf(layout: &Layout) -> PathBuf {
     layout.p("/mnt/system/etc/pf.conf")
 }
 
 /// The original pf.conf, saved before mibpkg first changed it.
 pub fn backup_path(layout: &Layout) -> PathBuf {
-    layout.p("/mnt/system/etc/pf.conf.mibpkg-orig")
+    variant_backup(&pf_conf(layout))
+}
+
+fn variant_backup(path: &Path) -> PathBuf {
+    let mut s = path.as_os_str().to_owned();
+    s.push(".mibpkg-orig");
+    PathBuf::from(s)
+}
+
+/// The variants present on this unit.
+fn variants(layout: &Layout) -> Vec<PathBuf> {
+    VARIANTS.iter().map(|v| layout.p("/mnt/system/etc").join(v)).filter(|p| p.is_file()).collect()
 }
 
 /// The port the hotspot rule should open: the web server's bound port when it is enabled and
@@ -60,12 +76,12 @@ pub fn edit(text: &str, port: Option<u16>) -> Result<String> {
     Ok(out)
 }
 
-/// Whether pf.conf differs from what `port` wants (a cheap read-only check).
+/// Whether any pf variant differs from what `port` wants (a cheap read-only check).
 pub fn needs_change(layout: &Layout, port: Option<u16>) -> bool {
-    match fs::read_to_string(pf_conf(layout)) {
+    variants(layout).iter().any(|p| match fs::read_to_string(p) {
         Ok(text) => edit(&text, port).map_or(false, |new| new != text),
-        Err(_) => false, // no pf.conf (not a MIB2 High?): nothing mibpkg can do
-    }
+        Err(_) => false,
+    })
 }
 
 /// Run pfctl on the unit (never in tests or under --root).
@@ -95,25 +111,38 @@ pub fn apply(ctx: &Ctx, port: Option<u16>) -> Result<String> {
 /// `apply` with the pfctl runner passed in (tests record the calls).
 pub fn apply_with(ctx: &Ctx, port: Option<u16>, pfctl: &mut dyn FnMut(&[&str]) -> Result<()>) -> Result<String> {
     let layout = &ctx.layout;
-    let path = pf_conf(layout);
-    let old = fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    let new = edit(&old, port)?;
-    if new == old {
+    let present = variants(layout);
+    if present.is_empty() {
+        bail!("no pf.conf in /mnt/system/etc; not a MIB2 High firewall mibpkg knows");
+    }
+    // Work out every change first and check each with pfctl (-n: parse only, load nothing):
+    // either all variants change or none does.
+    let mut changes: Vec<(PathBuf, String, String)> = Vec::new();
+    for path in present {
+        let old = fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        let new = edit(&old, port).with_context(|| path.display().to_string())?;
+        if new == old {
+            continue;
+        }
+        let check = layout.run("pf.conf.check");
+        atomic_write(&check, new.as_bytes())?;
+        let checked = pfctl(&["-nf", &layout.unit_path(&check)]);
+        let _ = fs::remove_file(&check);
+        checked.with_context(|| format!("the changed {} does not load; not changing anything", path.display()))?;
+        changes.push((path, old, new));
+    }
+    if changes.is_empty() {
         return Ok("hotspot firewall: already set".into());
     }
-    // Check the new file's syntax with pfctl (-n: parse only, load nothing) before it replaces
-    // the real one.
-    let check = layout.run("pf.conf.check");
-    atomic_write(&check, new.as_bytes())?;
-    let checked = pfctl(&["-nf", &layout.unit_path(&check)]);
-    let _ = fs::remove_file(&check);
-    checked.context("the changed pf.conf does not load; not changing it")?;
     {
         let _rw = ctx.mounts.rw("/mnt/system")?;
-        if !backup_path(layout).exists() {
-            atomic_write(&backup_path(layout), old.as_bytes())?;
+        for (path, old, new) in &changes {
+            let backup = variant_backup(path);
+            if !backup.exists() {
+                atomic_write(&backup, old.as_bytes())?;
+            }
+            atomic_write(path, new.as_bytes())?;
         }
-        atomic_write(&path, new.as_bytes())?;
     }
     Ok(match port {
         Some(p) => format!("hotspot firewall: port {p} opens after the next restart of the head unit"),
