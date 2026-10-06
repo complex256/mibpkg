@@ -71,12 +71,16 @@ Facts the code depends on, with how and when they were verified.
 - GitHub's releases/latest redirect lagged ~20 s after publishing a new release.
 - The car's SD card is mounted read-only (write collections on the Mac).
 
+## Web interface facts (2026-10-05, MHI2Q, mibpkg 0.3.1 installed)
+| Fact | Value | Verified |
+|---|---|---|
+| Interfaces (`ifconfig`, no args, lists all; fixture `ifconfig-all-unit.txt`) | uap0 10.255.1.1 = car Wi-Fi hotspot; mmx0 10.255.0.15 = internal vehicle network (many services listen on it); ecm0 = SIM data; tun9 100.64.0.55 = Tailscale; mlan0/ecm1 no address | ssh, 2026-10-05 |
+| Hotspot rule | only `uap*` counts as hotspot (mmx0 is private too and must never be) | test `on_the_real_unit_only_the_hotspot_and_tailscale_are_classed` |
+| Port 80 | free; 127.0.0.1:8080 is already used by a stock process | `netstat -an`, 2026-10-05 |
+| `/dev/urandom` | present | `ls -l`, 2026-10-05 |
+
 ## Pending on-car checks (web interface, mibpkg 0.4.0)
-- Hotspot interface name and address; does the auto rule (up, RFC 1918, not lo/tun/ecm/ppp) pick it?
-  If not, set `interfaces = { hotspot = ["<name>"] }` in web.toml and record the name here.
-- A phone on the hotspot reaches `http://<hotspot ip>/`; is port 80 free (else 8080 is used)?
-- `/dev/urandom` exists (PIN salts, sessions, upload ids; a weaker fallback is logged otherwise).
-- `ifconfig` with no arguments lists every interface with `inet` lines (the filter parses it).
+- A phone on the hotspot reaches `http://10.255.1.1/`.
 - `mibpkg web` idle and busy memory/CPU.
 - Phone flow: upload -> install -> logs -> config edit -> restart -> roll back -> remove.
 - mibpkg self-update from the web UI: the page shows "restarting" and reloads on the new version.

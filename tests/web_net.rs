@@ -95,3 +95,19 @@ fn a_failing_probe_permits_only_loopback() {
     assert!(a.permits_at(ip("127.0.0.1"), Instant::now()));
     assert!(!a.permits_at(ip("10.255.1.1"), Instant::now()));
 }
+
+/// Captured from the car (MHI2Q, 2026-10-05): uap0 is the hotspot, mmx0 the internal vehicle
+/// network, ecm0 SIM data, tun9 Tailscale.
+const REAL_UNIT: &str = include_str!("fixtures/ifconfig-all-unit.txt");
+
+#[test]
+fn on_the_real_unit_only_the_hotspot_and_tailscale_are_classed() {
+    let none = BTreeMap::new();
+    let classes: Vec<(String, Option<&str>)> =
+        parse_ifconfig_all(REAL_UNIT).iter().map(|i| (i.name.clone(), class_of(i, &none))).collect();
+    let classed: Vec<(&str, &str)> = classes.iter().filter_map(|(n, c)| c.map(|c| (n.as_str(), c))).collect();
+    assert_eq!(classed, [("uap0", "hotspot"), ("tun9", "tailscale")], "{classes:?}");
+    let a = allowed(WebSettings::default(), Arc::new(Mutex::new(REAL_UNIT.to_string())));
+    assert!(!a.permits_at(ip("10.255.0.15"), Instant::now()), "never the car's internal network (mmx0)");
+    assert!(a.permits_at(ip("10.255.1.1"), Instant::now()));
+}

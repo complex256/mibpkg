@@ -43,8 +43,11 @@ pub fn parse_ifconfig_all(text: &str) -> Vec<Iface> {
     out
 }
 
-/// Cellular links (SIM data): never classed as hotspot, whatever their address.
-const CELLULAR: &[&str] = &["ecm", "ppp", "rmnet", "wwan"];
+/// The car's own Wi-Fi access point: Marvell "uap" (micro access point) interfaces, verified on an
+/// MHI2Q (uap0). An allowlist on purpose: the unit has other private networks (mmx0 = the internal
+/// vehicle network, 10.0.0.x) that must never count as the hotspot. Other units' hotspots are named
+/// in web.toml (`interfaces = { hotspot = ["<name>"] }`, also settable in Web settings).
+const HOTSPOT_PREFIXES: &[&str] = &["uap"];
 
 fn in_tailnet(a: &Ipv4Addr) -> bool {
     // 100.64.0.0/10 (CGNAT space Tailscale assigns from)
@@ -52,8 +55,8 @@ fn in_tailnet(a: &Ipv4Addr) -> bool {
 }
 
 /// "hotspot", "tailscale", or None. Explicit `interfaces` overrides replace the automatic rule
-/// for their class: Tailscale = a tun* with a 100.64/10 address; hotspot = any other up
-/// interface with a private (RFC 1918) address that is not loopback or cellular.
+/// for their class: Tailscale = a tun* with a 100.64/10 address; hotspot = an up uap* interface
+/// with a private (RFC 1918) address.
 pub fn class_of(iface: &Iface, overrides: &BTreeMap<String, Vec<String>>) -> Option<&'static str> {
     for (class, name) in [("tailscale", "tailscale"), ("hotspot", "hotspot")] {
         if let Some(names) = overrides.get(name) {
@@ -68,8 +71,8 @@ pub fn class_of(iface: &Iface, overrides: &BTreeMap<String, Vec<String>>) -> Opt
     if !overrides.contains_key("tailscale") && iface.name.starts_with("tun") && iface.v4.iter().any(in_tailnet) {
         return Some("tailscale");
     }
-    let skip = iface.name.starts_with("lo") || iface.name.starts_with("tun") || CELLULAR.iter().any(|p| iface.name.starts_with(p));
-    if !overrides.contains_key("hotspot") && !skip && iface.v4.iter().any(|a| a.is_private()) {
+    let wifi = HOTSPOT_PREFIXES.iter().any(|p| iface.name.starts_with(p));
+    if !overrides.contains_key("hotspot") && wifi && iface.v4.iter().any(|a| a.is_private()) {
         return Some("hotspot");
     }
     None
