@@ -16,8 +16,31 @@ pub fn request_reload(layout: &Layout) -> Result<()> {
 pub fn request_restart(layout: &Layout, id: &str) -> Result<()> {
     touch(&layout.run(&format!("restart.{id}")))
 }
+/// Ask the supervisor to restart through launch.sh with the new binary. Also marks the restart
+/// as pending, so nothing else starts a supervisor (from an old binary) meanwhile.
 pub fn request_selfupdate(layout: &Layout) -> Result<()> {
+    touch(&layout.run("selfupdate.pending"))?;
     touch(&layout.run("selfupdate"))
+}
+
+/// How long a pending self-update holds off other supervisor starts. If launch.sh never starts
+/// the new supervisor, the usual "make sure one runs" step takes over again after this.
+const SELFUPDATE_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Whether a self-update restart is under way: launch.sh starts the next supervisor, from the new
+/// binary. Starting one meanwhile would run the old binary and make launch.sh's exit (seen on the
+/// unit 2026-10-07: the old supervisor kept running after a "successful" self-update).
+pub fn supervisor_start_deferred(layout: &Layout) -> bool {
+    fs::metadata(layout.run("selfupdate.pending"))
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .map_or(false, |age| age < SELFUPDATE_GRACE)
+}
+
+/// The new supervisor is up: the self-update restart is complete.
+pub fn selfupdate_done(layout: &Layout) {
+    let _ = fs::remove_file(layout.run("selfupdate.pending"));
 }
 pub fn request_stop(layout: &Layout) -> Result<()> {
     touch(&layout.run("stop"))
@@ -61,7 +84,7 @@ pub fn supervisor_pid(layout: &Layout, sys: &dyn Sys) -> Option<u32> {
 
 /// Start `mibpkg supervise` in the background if none is running.
 pub fn ensure_supervisor(layout: &Layout, sys: &dyn Sys) -> Result<()> {
-    if supervisor_pid(layout, sys).is_some() {
+    if supervisor_pid(layout, sys).is_some() || supervisor_start_deferred(layout) {
         return Ok(());
     }
     let exe = std::env::current_exe().unwrap_or_else(|_| layout.tmp_bin());

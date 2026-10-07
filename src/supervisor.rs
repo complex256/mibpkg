@@ -513,7 +513,14 @@ impl<'a> Supervisor<'a> {
                 )
             })
             .collect();
-        Status { updated: now_secs(), pid: std::process::id(), disabled: false, services, invalid: self.invalid.clone() }
+        Status {
+            updated: now_secs(),
+            pid: std::process::id(),
+            disabled: false,
+            services,
+            invalid: self.invalid.clone(),
+            version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        }
     }
 }
 
@@ -645,6 +652,8 @@ pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
         }
     }
     atomic_write(&layout.run("pid"), std::process::id().to_string().as_bytes())?;
+    // This is the supervisor a self-update was waiting for (if one was).
+    control::selfupdate_done(layout);
     // A stop request left before this supervisor existed is stale. A pending self-update
     // is not: acting on it (re-running launch.sh) is always right and harmless if redundant.
     let _ = fs::remove_file(layout.run("stop"));
@@ -653,7 +662,7 @@ pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
     if media::disabled(layout) {
         live.set(sys, crate::persist::KEY_SUPERVISOR, "DISABLE card");
         println!("mibpkg: DISABLE marker on the card; starting nothing");
-        status::write(layout, &Status { updated: now_secs(), pid: std::process::id(), disabled: true, ..Default::default() })?;
+        status::write(layout, &Status { updated: now_secs(), pid: std::process::id(), disabled: true, version: Some(env!("CARGO_PKG_VERSION").to_string()), ..Default::default() })?;
         let _ = fs::remove_file(layout.run("pid"));
         return Ok(());
     }

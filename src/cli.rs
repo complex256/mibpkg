@@ -490,7 +490,8 @@ fn print_status(ctx: &Ctx) {
         Some(s) => {
             let alive = control::supervisor_pid(&ctx.layout, ctx.sys).is_some();
             crate::say!(
-                "supervisor pid {} ({}){}",
+                "supervisor {}pid {} ({}){}",
+                s.version.as_deref().map(|v| format!("{v} ")).unwrap_or_default(),
                 s.pid,
                 if alive { "running" } else { "gone" },
                 if s.disabled { ", DISABLED" } else { "" }
