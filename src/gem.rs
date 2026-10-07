@@ -34,6 +34,8 @@ pub struct Model<'a> {
     pub has_result: bool,
     /// A result for mibpkg itself exists (Update mibpkg): show its live row.
     pub has_update_result: bool,
+    /// The kept earlier mibpkg version: a self-update that broke the web UI is undone from here.
+    pub rollback_to: Option<String>,
 }
 
 
@@ -129,7 +131,10 @@ pub fn screens(m: &Model) -> Vec<Screen> {
         // A forgotten PIN: being in GEM (in the car) is the authorization.
         items.push(button("Remove PIN", &["web-clear-pin"]));
     }
-    items.push(button("Update mibpkg (SD card or online)", &["install", SELF]));
+    items.push(button("Update mibpkg (SD card or online)", &["self-update"]));
+    if let Some(p) = &m.rollback_to {
+        items.push(button(format!("Roll back mibpkg to {p}"), &["rollback", SELF]));
+    }
     if m.has_result {
         items.push(Item::Live { label: "last result".into(), key: crate::persist::KEY_RESULT_GLOBAL });
     }
@@ -162,6 +167,7 @@ pub fn regenerate(ctx: &Ctx) -> Result<()> {
         disabled: media::disabled(layout),
         has_result: state.results.contains_key("_"),
         has_update_result: state.results.contains_key(SELF),
+        rollback_to: state.packages.get(SELF).and_then(|i| i.previous.clone()),
     };
     let screens = screens(&model);
     let gem_unit = layout.unit_path(&layout.gem_dir());

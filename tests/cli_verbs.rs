@@ -13,6 +13,7 @@ fn gem(f: &common::Fixture, rest: &[&str]) -> String {
     let st = State::load(&f.layout).unwrap();
     let key = match rest[0] {
         "install-file" | "config-set" => rest[1],
+        "self-update" => "mibpkg",
         _ => "_",
     };
     st.results.get(key).cloned().unwrap_or_else(|| st.results.get("_").cloned().unwrap_or_default())
@@ -108,4 +109,24 @@ fn web_clear_pin_removes_only_the_pin() {
     assert_eq!((now.port, now.listen.clone()), (8080, vec!["tailscale".to_string()]), "everything else kept");
     assert!(f.layout.run("restart.mibpkg.web").exists(), "the web server restarts without the PIN");
     assert!(gem(&f, &["web-clear-pin"]).starts_with("OK: no PIN was set"));
+}
+
+#[test]
+fn self_update_checks_online_before_installing() {
+    // The fixture has no internet and no mibpkg anywhere: the check runs (and says so), then the
+    // install fails plainly.
+    let f = common::fixture();
+    let r = gem(&f, &["self-update"]);
+    assert!(r.starts_with("FAILED") && r.contains("online:"), "{r}");
+}
+
+#[test]
+fn gem_screens_redraws_the_page_without_recording_a_result() {
+    let f = common::fixture();
+    fs::write(f.layout.run("web.url"), "port 80\nhotspot http://10.255.1.1\n").unwrap();
+    let v: Vec<String> = ["--root", f.root().to_str().unwrap(), "--no-supervisor", "gem-screens"].iter().map(|s| s.to_string()).collect();
+    assert_eq!(run(&v).unwrap(), 0);
+    let esd = fs::read_to_string(f.layout.engdefs().join("mibpkg.esd")).unwrap();
+    assert!(esd.contains("hotspot: http://10.255.1.1"), "{esd}");
+    assert!(State::load(&f.layout).unwrap().results.is_empty(), "no result row churn");
 }

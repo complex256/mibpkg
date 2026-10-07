@@ -153,7 +153,7 @@ fn recovery_buttons_are_always_there() {
         for label in ["Restart web server", "Reset web settings", "Update mibpkg"] {
             assert!(p.contains(label), "{label} with web.toml {web_toml:?}");
         }
-        for script in ["web-restart.sh", "web-reset.sh", "install.mibpkg.sh"] {
+        for script in ["web-restart.sh", "web-reset.sh", "self-update.sh"] {
             assert!(f.layout.gem_dir().join(script).is_file(), "{script}");
         }
     }
@@ -205,5 +205,22 @@ fn upgrading_removes_the_package_and_web_screens() {
     assert_eq!(esd, ["mibpkg.esd"]);
     let mut scripts: Vec<String> = fs::read_dir(f.layout.gem_dir()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
     scripts.sort();
-    assert_eq!(scripts, ["install.mibpkg.sh", "web-reset.sh", "web-restart.sh"]);
+    assert_eq!(scripts, ["self-update.sh", "web-reset.sh", "web-restart.sh"]);
+}
+
+#[test]
+fn update_checks_online_first_and_a_previous_mibpkg_can_be_rolled_back_to() {
+    let f = common::fixture();
+    let p = page(&f);
+    assert!(p.contains("Update mibpkg") && f.layout.gem_dir().join("self-update.sh").is_file(), "{p}");
+    assert!(!p.contains("Roll back mibpkg"), "nothing to roll back to yet");
+    let mut st = State::default();
+    st.packages.insert(
+        "mibpkg".into(),
+        mibpkg::state::Installed { collection: "complex256-mibpkg".into(), version: "0.5.0".into(), previous: Some("0.4.4".into()), services: vec![], uses_scripts: false },
+    );
+    st.save(&f.layout).unwrap();
+    let p = page(&f);
+    assert!(p.contains("Roll back mibpkg to 0.4.4"), "{p}");
+    assert!(f.layout.gem_dir().join("rollback.mibpkg.sh").is_file());
 }

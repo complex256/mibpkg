@@ -90,6 +90,16 @@ pub fn run(args: &[String]) -> Result<i32> {
             supervisor::run(&ctx.layout, &sys, Timing::default())?;
             Ok(0)
         }
+        "gem-screens" => {
+            // Redraw the GEM page (run by the web server when its addresses change). Skipped
+            // quietly while an action holds the lock: that action redraws the page when it ends.
+            // Exit 1 when busy, so the web server tries again later.
+            let Ok(_lock) = Lock::acquire(&ctx.layout, ctx.sys) else { return Ok(1) };
+            if let Err(e) = gem::regenerate(&ctx) {
+                crate::warn!("warning: updating GEM screens: {e:#}");
+            }
+            Ok(0)
+        }
         "web" => {
             crate::web::run(ctx.layout.clone())?;
             Ok(0)
@@ -146,6 +156,8 @@ pub fn run(args: &[String]) -> Result<i32> {
                 }
             };
             let key = match verb.as_str() {
+                // The mibpkg update shows on GEM's "mibpkg update" row.
+                "self-update" => install::SELF.to_string(),
                 "install" | "remove" | "rollback" | "restart" | "install-file" | "config-set" => {
                     args.get(1).filter(|n| crate::manifest::valid_name(n)).cloned().unwrap_or_else(|| "_".into())
                 }
@@ -371,6 +383,17 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
                 p => Some(p.parse::<u16>().ok().filter(|p| *p > 0).with_context(|| format!("invalid port {p:?}"))?),
             };
             crate::firewall::apply(ctx, port)
+        }
+        "self-update" => {
+            // GEM's "Update mibpkg": refresh the online indexes first (the cache can be hours old
+            // and GEM has no separate check), then install the newest mibpkg, card or online.
+            let checked = online_check(ctx);
+            publish_online(ctx, &checked);
+            let mut fresh: Vec<Collection> = media::loaded(&media::scan(&ctx.layout));
+            fresh.extend(crate::online::collections(&ctx.layout));
+            let coll = install::pick_collection(&state, &fresh, install::SELF, None, &ctx.unit).with_context(|| checked.clone())?;
+            let msg = install::install(ctx, &media_roots, coll, install::SELF).with_context(|| checked.clone())?;
+            Ok(format!("{checked}; {msg}"))
         }
         "web-clear-pin" => {
             // GEM's "Remove PIN" for a forgotten PIN: whoever can open GEM may use the car.
