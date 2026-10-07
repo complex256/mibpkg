@@ -107,7 +107,16 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
 - [v1] Offline: SD card / USB transport. Full bundle zip (everything) copied to SD; car picks.
 - [later] Slimmed-down zip: PC/phone web tool where the user ticks packages and downloads a
   smaller SD bundle (user wants this — people may not want everything on the card).
-- [designing 2026-09-30] Online updates v2: spec docs/superpowers/specs/2026-09-30-online-updates-design.md (plain HTTPS sources incl. github:owner/repo latest release; community list repo + SD sources.toml; notify + tap; ed25519 trust-on-first-use; frictionless keygen/release/verify + GitHub Action).
+- Online updates v2 milestones (spec below):
+  - [done 2026-10-02, mibpkg 0.3.0/0.3.1, verified on the car] M1 time + fetch: SNTP offset, libcurl HTTPS,
+    official collection online, GEM Check for updates -> Update over the internet.
+  - [next] M2 signatures + trust on first use: signed index.json, key pinned on enable, "key changed"
+    refusal + Trust new key; SD copy must verify when its id is pinned. Build with M4's signing half.
+  - [later] M3 sources: community source list (tap to enable), SD sources.toml, mibpkg_online screen
+    (now also a web UI page).
+  - [later] M4 publisher tooling: keygen --github, automatic signing, `mibpkg release` (carries old versions
+    forward), `mibpkg verify`, key-rotation guard, GitHub Action, community list repo + CI.
+- [spec 2026-09-30] Online updates v2: spec docs/superpowers/specs/2026-09-30-online-updates-design.md (plain HTTPS sources incl. github:owner/repo latest release; community list repo + SD sources.toml; notify + tap; ed25519 trust-on-first-use; frictionless keygen/release/verify + GitHub Action).
 - [was] Online: static index (GitHub Releases / R2) pulled when the car has network.
   Spike 2026-09-26 (spikes/README.md): pure-Rust TLS does not build for QNX 6.5 arm (ring/aws-lc via
   cc-rs: unknown arch; rustls-rustcrypto: `libc` crate fails for nto65). Unit ships libcurl 7.56.0 +
