@@ -455,11 +455,9 @@ fn online_store(ctx: &Ctx, fetched: std::result::Result<Fetched, String>) -> (St
     }
 }
 
-/// The online status line: GEM's live row (persistence) and /tmp/mibpkg.online (the web UI).
+/// The online status line, for the web UI (/tmp/mibpkg.online, RAM). GEM has no online row since
+/// it became the single recovery page, so nothing goes to persistence (flash).
 fn publish_online(ctx: &Ctx, text: &str) {
-    if let Err(e) = ctx.sys.persist_write(crate::persist::NS, crate::persist::KEY_ONLINE, text) {
-        crate::warn!("warning: live online status: {e:#}");
-    }
     let _ = crate::fsutil::atomic_write(&ctx.layout.run("online"), text.as_bytes());
 }
 
@@ -474,9 +472,7 @@ fn record_result(ctx: &Ctx, key: &str, text: &str) -> Result<()> {
     st.results.insert(key.to_string(), line.clone());
     st.save(&ctx.layout)?;
     // The live "last result" row reads this.
-    if let Err(e) = ctx.sys.persist_write(crate::persist::NS, crate::persist::result_key(key), &line) {
-        crate::warn!("warning: live result: {e:#}");
-    }
+    crate::persist::publish_result(ctx.sys, &ctx.layout, key, &line);
     Ok(())
 }
 

@@ -649,9 +649,9 @@ pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
     // is not: acting on it (re-running launch.sh) is always right and harmless if redundant.
     let _ = fs::remove_file(layout.run("stop"));
     reap_orphans(layout, sys, timing.stop_grace);
-    let mut live = crate::persist::Publisher::default();
+    let mut live = crate::persist::Publisher::with_memo(layout);
     if media::disabled(layout) {
-        live.set(sys, crate::persist::KEY_SUPERVISOR, "DISABLE card present: nothing started");
+        live.set(sys, crate::persist::KEY_SUPERVISOR, "DISABLE card");
         println!("mibpkg: DISABLE marker on the card; starting nothing");
         status::write(layout, &Status { updated: now_secs(), pid: std::process::id(), disabled: true, ..Default::default() })?;
         let _ = fs::remove_file(layout.run("pid"));
@@ -668,10 +668,9 @@ pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
     let mut next_probe = Instant::now();
     if clock_is_uptime() {
         println!("mibpkg: supervisor started at {} s", now_secs());
-        live.set(sys, crate::persist::KEY_SUPERVISOR, &format!("running since {} s after boot", now_secs()));
-    } else {
-        live.set(sys, crate::persist::KEY_SUPERVISOR, "running");
     }
+    // Plain "running": a start time would make every boot a new value, i.e. a flash write.
+    live.set(sys, crate::persist::KEY_SUPERVISOR, "running");
     loop {
         if !markers.done() && clock_is_uptime() {
             for line in markers.check(layout, now_secs()) {
