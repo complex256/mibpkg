@@ -372,6 +372,20 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
             };
             crate::firewall::apply(ctx, port)
         }
+        "web-clear-pin" => {
+            // GEM's "Remove PIN" for a forgotten PIN: whoever can open GEM may use the car.
+            let (mut s, _) = crate::web::settings::load(&ctx.layout);
+            if s.pin.is_none() {
+                return Ok("no PIN was set".into());
+            }
+            s.pin = None;
+            {
+                let _rw = ctx.mounts.rw("/mnt/app")?;
+                crate::web::settings::save(&ctx.layout, &s)?;
+            }
+            control::request_restart(&ctx.layout, WEB_SERVICE)?;
+            Ok("PIN removed; the web server restarts without it".into())
+        }
         "web-restart" => {
             control::request_restart(&ctx.layout, WEB_SERVICE)?;
             Ok("web server restart requested".into())

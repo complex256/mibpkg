@@ -92,3 +92,20 @@ fn sources_can_be_added_and_removed() {
     assert!(gem(&f, &["source-add", "http://bad"]).starts_with("FAILED"));
     assert!(gem(&f, &["source-remove", "github:someone/carstuff"]).starts_with("OK: removed"));
 }
+
+#[test]
+fn web_clear_pin_removes_only_the_pin() {
+    let f = common::fixture();
+    let mut s = mibpkg::web::settings::WebSettings::default();
+    s.port = 8080;
+    s.listen = vec!["tailscale".into()];
+    s.pin = Some(mibpkg::web::settings::hash_pin("2468"));
+    mibpkg::web::settings::save(&f.layout, &s).unwrap();
+    assert!(gem(&f, &["web-clear-pin"]).starts_with("OK: PIN removed"));
+    let (now, warning) = mibpkg::web::settings::load(&f.layout);
+    assert!(warning.is_none());
+    assert_eq!(now.pin, None);
+    assert_eq!((now.port, now.listen.clone()), (8080, vec!["tailscale".to_string()]), "everything else kept");
+    assert!(f.layout.run("restart.mibpkg.web").exists(), "the web server restarts without the PIN");
+    assert!(gem(&f, &["web-clear-pin"]).starts_with("OK: no PIN was set"));
+}
