@@ -3,7 +3,7 @@
 
   Saving restarts the web server with the new settings. If the new settings
   would cut off the connection this phone is using, the car asks first.
-  Locked out anyway? GEM › mibpkg › mibpkg__web › Reset web settings.
+  Locked out anyway? GEM › mibpkg › Reset web settings (or Remove PIN for a forgotten PIN).
 */
 import { api, ApiError } from '../api.js';
 import { backLink, h, pageHead, replace, toast } from '../dom.js';
@@ -116,7 +116,7 @@ export async function render() {
     pinArea,
     save,
     result,
-    h('p', { class: 'muted' }, 'Locked out? On the car: GEM › mibpkg › mibpkg__web › Reset web settings.'),
+    h('p', { class: 'muted' }, 'Forgot the PIN or locked out? On the car: GEM › mibpkg › Remove PIN, or Reset web settings.'),
   );
 }
 

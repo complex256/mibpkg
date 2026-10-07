@@ -318,9 +318,10 @@ argv without running anything.
 
 - **M1**: unchanged, plus a "Web interface" sub-screen: running/stopped, URLs, listen mode, PIN set,
   Restart web server, Reset web settings.
-- **M2**: GEM becomes a single mibpkg page: web server status and URLs, listen mode and PIN set
+- **M2** (done, mibpkg 0.5.0; plan docs/superpowers/plans/2026-10-06-slim-gem.md): GEM becomes a single mibpkg page: web server status and URLs, listen mode and PIN set
   (read-only), Restart web server, Reset web settings, Update mibpkg from SD card. All package
   screens are removed; packages, logs and sources are web-only.
+  It also has Remove PIN (shown when a PIN is set): whoever can open GEM is authorized.
 
 ## Errors and robustness
 

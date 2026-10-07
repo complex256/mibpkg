@@ -49,6 +49,6 @@ export async function render() {
       h('li', {}, h('span', {}, 'Installed packages'), h('span', {}, String(status.installed))),
       status.last_result ? h('li', {}, h('span', {}, 'Last result'), h('span', {}, status.last_result)) : null,
     ),
-    h('p', { class: 'muted' }, 'If this page ever stops working: GEM › mibpkg › mibpkg__web › Reset web settings.'),
+    h('p', { class: 'muted' }, 'If this page ever stops working: GEM › mibpkg › Reset web settings.'),
   );
 }
