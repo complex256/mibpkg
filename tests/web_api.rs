@@ -107,6 +107,12 @@ fn config_shows_the_example_until_a_file_exists() {
     let (_, v) = body(api::config_get(&app, "demo", 0));
     assert_eq!(v["exists"], true);
     assert_eq!(v["content"], "broker = \"real\"\n");
+    assert_eq!(v["card"], Value::Null);
+    // In conflict: the card's copy is shown next to the car's.
+    fs::write(mibpkg::config::pending_path(&f.layout, "demo", "demo.conf"), "broker = \"card\"\n").unwrap();
+    let (_, v) = body(api::config_get(&app, "demo", 0));
+    assert_eq!(v["content"], "broker = \"real\"\n");
+    assert_eq!(v["card"], "broker = \"card\"\n");
     assert_eq!(api::config_get(&app, "demo", 1).status, 404);
     assert_eq!(api::config_get(&app, "nope", 0).status, 404);
 }

@@ -59,14 +59,14 @@ fn config_import_prev_and_missing() {
     let card = config::card_path(&f.sd(), "carmqtt", "carmqtt.toml");
     fs::create_dir_all(card.parent().unwrap()).unwrap();
     fs::write(&card, "v1").unwrap();
-    assert_eq!(config::import(&f.layout, &[f.sd()], &m).unwrap(), vec!["carmqtt.toml"]);
+    assert_eq!(config::import(&f.layout, &[f.sd()], &m, None).unwrap().imported, vec!["carmqtt.toml"]);
     let dst = f.layout.config_dir("carmqtt").join("carmqtt.toml");
     assert_eq!(fs::read_to_string(&dst).unwrap(), "v1");
     assert_eq!(fs::metadata(&dst).unwrap().permissions().mode() & 0o777, 0o600);
     assert!(config::missing_required(&f.layout, &m).is_empty());
-    assert!(config::import(&f.layout, &[f.sd()], &m).unwrap().is_empty(), "unchanged file is not re-imported");
+    assert_eq!(config::import(&f.layout, &[f.sd()], &m, None).unwrap(), config::Report::default(), "unchanged file is not re-imported");
     fs::write(&card, "v2").unwrap();
-    config::import(&f.layout, &[f.sd()], &m).unwrap();
+    config::import(&f.layout, &[f.sd()], &m, None).unwrap();
     assert_eq!(fs::read_to_string(&dst).unwrap(), "v2");
     assert_eq!(fs::read_to_string(dst.with_file_name("carmqtt.toml.prev")).unwrap(), "v1");
 }

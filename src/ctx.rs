@@ -57,11 +57,14 @@ pub struct Ctx<'a> {
     pub progress: Box<dyn Fn(&str) + 'a>,
     /// How online packages and indexes are downloaded (unavailable unless set).
     pub fetcher: Box<dyn crate::fetch::Fetcher + 'a>,
+    /// How a config changed both on the card and on the car is settled (`--config=keep|card`);
+    /// None leaves the conflict for the user.
+    pub config_choice: Option<crate::config::Choice>,
 }
 
 impl<'a> Ctx<'a> {
     pub fn new(layout: Layout, sys: &'a dyn Sys) -> Ctx<'a> {
         let unit = detect(&layout);
-        Ctx { layout, sys, mounts: Mounts::new(sys), unit, progress: Box::new(|m: &str| crate::say!("{m}")), fetcher: Box::new(crate::fetch::Unavailable) }
+        Ctx { layout, sys, mounts: Mounts::new(sys), unit, progress: Box::new(|m: &str| crate::say!("{m}")), fetcher: Box::new(crate::fetch::Unavailable), config_choice: None }
     }
 }

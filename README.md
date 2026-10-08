@@ -8,7 +8,8 @@ watches the installed services.
 
 1. Unzip `mibpkg-sd-<version>.zip` onto the M.I.B. SD card (FAT32).
 2. If a package needs a config file (e.g. carmqtt), put it on the card at
-   `mibpkg/config/<package>/<file>` (an example ships in the package).
+   `mibpkg/config/<package>/<file>` (an example ships in the package). Changes made later in
+   the web interface are kept: a card file is only imported again once you change it on the card.
 3. GEM -> M.I.B. -> Advanced Settings -> Run Custom Script. This installs mibpkg once.
 4. GEM -> mibpkg: install, update, remove, restart, roll back.
 

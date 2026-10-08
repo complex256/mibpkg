@@ -3,7 +3,7 @@
 
     header      big icon, name, where it comes from, the main button
     facts       installed version · service state · size
-    notices     missing config files
+    notices     missing config files, config conflicts
     job         live output while an action on this package runs
     actions     Restart · Roll back · Remove
     links       logs and config files
@@ -156,10 +156,15 @@ function facts(p) {
 
 function notices(p) {
   const inst = p.installed;
-  if (!inst || !inst.missing_config.length) {
+  if (!inst) {
     return null;
   }
-  return inst.missing_config.map((path) => {
+  const conflicts = inst.configs
+    .filter((c) => c.conflict)
+    .map((c) =>
+      h('div', { class: 'notice' }, `⚠ ${c.path} changed both on the SD card and on the car. `, h('a', { href: `#/package/${p.name}/config/${c.index}` }, 'Choose which to keep')),
+    );
+  return [...conflicts, ...inst.missing_config.map((path) => {
     const cfg = inst.configs.find((c) => c.path === path);
     return h(
       'div',
@@ -167,7 +172,7 @@ function notices(p) {
       `⚠ ${p.name} needs ${path} before it can start. `,
       cfg ? h('a', { href: `#/package/${p.name}/config/${cfg.index}` }, 'Edit it') : null,
     );
-  });
+  })];
 }
 
 /** Restart, Roll back, Remove (with an in-page confirmation). */
@@ -208,7 +213,7 @@ function links(p) {
       h(
         'li',
         {},
-        h('a', { href: `#/package/${p.name}/config/${c.index}` }, h('span', {}, `Config: ${c.path}`), h('span', { class: 'chevron' }, c.exists ? '›' : 'missing ›')),
+        h('a', { href: `#/package/${p.name}/config/${c.index}` }, h('span', {}, `Config: ${c.path}`), h('span', { class: 'chevron' }, c.conflict ? 'conflict ›' : c.exists ? '›' : 'missing ›')),
       ),
     ),
   ];

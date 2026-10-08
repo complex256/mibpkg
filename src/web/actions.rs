@@ -18,6 +18,7 @@ pub enum Action {
     Rollback { package: String },
     Restart { package: String },
     Remove { package: String, #[serde(default)] purge: bool },
+    ConfigResolve { package: String, config: usize, choice: String },
 }
 
 /// Names that exist right now, so a request can only name real things.
@@ -99,6 +100,16 @@ pub fn validate(a: &Action, known: &Known) -> Result<Validated, String> {
                 argv.push("--purge");
             }
             v(format!("Remove {p}"), Some(&p), argv)
+        }
+        Action::ConfigResolve { package, config, choice } => {
+            let p = installed(known, package)?;
+            let label = match choice.as_str() {
+                "keep" => format!("Keep the car's config of {p}"),
+                "card" => format!("Use the card's config for {p}"),
+                _ => return Err(format!("{choice:?} is not keep or card")),
+            };
+            let n = config.to_string();
+            v(label, Some(&p), vec!["config-resolve", &p, choice, &n])
         }
     })
 }

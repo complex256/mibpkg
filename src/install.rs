@@ -235,6 +235,7 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
         // rollback moved away from. Re-extract it fresh.
         fs::remove_dir_all(&ver_dir)?;
     }
+    let mut cfg = config::Report::default();
     let staged = if repair {
         Ok(())
     } else {
@@ -242,7 +243,7 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
         (|| -> Result<()> {
         pkg.extract_to(&new_dir)?;
         fs::rename(&new_dir, &ver_dir)?;
-        config::import(layout, media, &pkg.manifest)?;
+        cfg = config::import(layout, media, &pkg.manifest, ctx.config_choice)?;
         if let Some(s) = &pkg.manifest.scripts.post_install {
             (ctx.progress)("running post_install");
             ctx.sys
@@ -296,6 +297,11 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
     if name == SELF {
         self_update(layout, &ver_dir)?;
         msg.push_str("; mibpkg restarts itself");
+    }
+    let cfg = cfg.summary(name);
+    if !cfg.is_empty() {
+        msg.push_str("; ");
+        msg.push_str(&cfg);
     }
     let missing = config::missing_required(layout, &pkg.manifest);
     if !missing.is_empty() {
@@ -416,9 +422,11 @@ pub fn remove(ctx: &Ctx, name: &str, purge: bool) -> Result<String> {
         _ => {}
     }
     if purge {
-        match fs::remove_dir_all(layout.config_dir(name)) {
-            Err(e) if e.kind() != ErrorKind::NotFound => return Err(e.into()),
-            _ => {}
+        for d in [layout.config_dir(name), config::base_dir(layout, name)] {
+            match fs::remove_dir_all(d) {
+                Err(e) if e.kind() != ErrorKind::NotFound => return Err(e.into()),
+                _ => {}
+            }
         }
     }
     state.packages.remove(name);

@@ -210,6 +210,12 @@ pub fn screens(m: &Model) -> Vec<Screen> {
                             missing.join(", ")
                         )));
                     }
+                    let conflicts = crate::config::conflicts(m.layout, &man);
+                    if !conflicts.is_empty() {
+                        items.push(text(format!("config conflict: {} changed on the card and on the car", conflicts.join(", "))));
+                        items.push(button("Keep the car's config", &["config-resolve", name.as_str(), "keep"]));
+                        items.push(button("Use the card's config", &["config-resolve", name.as_str(), "card"]));
+                    }
                 }
             }
         }
