@@ -36,7 +36,7 @@ export async function render(name, index) {
     backLink(`#/package/${name}`, name),
     pageHead(cfg.path),
     state,
-    cfg.card === null ? null : conflict(name, index, cfg, jobArea),
+    cfg.card === null ? null : conflict(name, index, cfg),
     h('label', { class: 'field' }, h('span', {}, `${name} · ${cfg.path}`), textarea),
     save,
     jobArea,
@@ -44,19 +44,30 @@ export async function render(name, index) {
 }
 
 /** Both copies, lines only one of them has marked, and the two ways out. */
-function conflict(name, index, cfg, jobArea) {
+function conflict(name, index, cfg) {
+  // Right under the buttons: the editor's job area is a screen further down.
+  const jobArea = h('div', {});
+  // Settled: say what happened, then redraw without the conflict. A failure stays on screen.
+  const onDone = (job) => {
+    if (job.ok) {
+      toast(job.result.replace(/^OK:\s*/, ''));
+      redrawSoon(1200);
+    }
+  };
   async function choose(choice) {
     try {
       const id = await startAction({ action: 'config-resolve', package: name, config: Number(index), choice });
       if (id) {
-        replace(jobArea, jobView(id, { onDone: () => redrawSoon(1200) }));
+        replace(jobArea, jobView(id, { onDone }));
       }
     } catch (e) {
       toast(e.message, { error: true });
     }
   }
-  const car = cfg.content.split('\n');
-  const card = cfg.card.split('\n');
+  // No phantom empty last line for text ending in a newline.
+  const lines = (t) => t.replace(/\n$/, '').split('\n');
+  const car = lines(cfg.content);
+  const card = lines(cfg.card);
   const side = (title, lines, other) => {
     const others = new Set(other);
     return h(
@@ -77,5 +88,6 @@ function conflict(name, index, cfg, jobArea) {
       h('button', { class: 'pill', type: 'button', onclick: () => choose('keep') }, "Keep the car's copy"),
       h('button', { class: 'pill', type: 'button', onclick: () => choose('card') }, "Use the card's copy"),
     ),
+    jobArea,
   );
 }

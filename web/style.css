@@ -690,6 +690,11 @@ button {
   }
 }
 
+/* Grid items default to min-width: auto; long lines must scroll inside the box, not widen the page. */
+.compare > div {
+  min-width: 0;
+}
+
 .compare-head {
   margin-bottom: 4px;
   color: var(--muted);

@@ -6,6 +6,8 @@
 # The root has:
 #   - carmqtt 0.1.2 installed from the SD card collection, missing its required broker.toml,
 #     with 0.1.3 waiting on the card (an update);
+#   - gps-logger 1.0.0 installed with a config conflict: logger.toml was edited on the car
+#     and changed on the card too (logger.toml.card waits for Keep / Use card);
 #   - a "community" card collection with tpms-overlay and its own dashcam-sync;
 #   - an online collection (cached index) with carplay-rgi and another dashcam-sync,
 #     so dashcam-sync is offered by two sources;
@@ -79,6 +81,19 @@ collection "$CARD/complex256-carmqtt" complex256-carmqtt "carmqtt" "$C012"
 "$BIN" --root "$ROOT" --no-supervisor install carmqtt complex256-carmqtt
 rm -rf "$CARD/complex256-carmqtt"
 collection "$CARD/complex256-carmqtt" complex256-carmqtt "carmqtt" "$C012" "$C013"
+
+# gps-logger: config imported from the card, edited on the car, then changed on the card.
+LOG_CONF='[[config]]
+path = "logger.toml"'
+collection "$CARD/complex256-gps" complex256-gps "gps-logger" "$(pkg gps-logger 1.0.0 "Logs GPS fixes to the SD card" "$LOG_CONF")"
+LOG_CARD="$ROOT/fs/sda0/mibpkg/config/gps-logger"
+mkdir -p "$LOG_CARD"
+printf '[log]\ninterval = 5\npath = "/fs/sda0/gps"\n' >"$LOG_CARD/logger.toml"
+"$BIN" --root "$ROOT" --no-supervisor install gps-logger complex256-gps >/dev/null
+printf '[log]\ninterval = 1\npath = "/fs/sda0/gps"\n\n[sources.ubx]\nenabled = true\npriority = 20\n' \
+    >"$ROOT/mnt/app/root/mibpkg/state/config/gps-logger/logger.toml"
+printf '[log]\ninterval = 10\npath = "/fs/sda0/gps"\nformat = "gpx"\n' >"$LOG_CARD/logger.toml"
+"$BIN" --root "$ROOT" --no-supervisor rescan
 
 collection "$CARD/community" community "Community packages" \
     "$(pkg tpms-overlay 0.2.0 "Tyre pressures on the map")" \
