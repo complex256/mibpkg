@@ -376,3 +376,13 @@ fn the_web_server_is_a_built_in_service() {
     sup.reload();
     assert!(!sup.status().services.contains_key("mibpkg.web"));
 }
+
+#[test]
+fn the_status_says_which_mibpkg_version_the_supervisor_runs() {
+    // After a self-update, the web server can be new while the supervisor is still the old binary
+    // (seen on the unit, 2026-10-07): the status file names the supervisor's own version.
+    let f = common::fixture();
+    let sys = RealSys { mounts: false };
+    let sup = Supervisor::new(&f.layout, &sys, fast());
+    assert_eq!(sup.status().version.as_deref(), Some(env!("CARGO_PKG_VERSION")));
+}

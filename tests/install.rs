@@ -306,3 +306,27 @@ fn self_update_installs_the_ca_bundle() {
     install::install(&ctx, &[f.sd()], &c, "mibpkg").unwrap();
     assert_eq!(fs::read_to_string(f.layout.bin_dir().join("ca.pem")).unwrap(), "ca.pem");
 }
+
+#[test]
+fn a_self_update_hands_the_supervisor_restart_to_launch_sh() {
+    // On the unit (2026-10-07) the `gem` action that installed a new mibpkg finished by starting a
+    // supervisor itself (the "make sure one runs" step), from its own old binary, in the gap before
+    // launch.sh started the new one; launch.sh's supervisor then found one running and exited.
+    let f = common::fixture();
+    assert!(!mibpkg::control::supervisor_start_deferred(&f.layout), "nothing pending");
+    let src = f.root().join("src-mibpkg");
+    fs::create_dir_all(src.join("bin")).unwrap();
+    fs::write(src.join("manifest.toml"), "[package]\nname = \"mibpkg\"\nversion = \"9.9.9\"\n\n[[file]]\nsrc = \"bin/mibpkg\"\nmode = \"755\"\n\n[[file]]\nsrc = \"bin/launch.sh\"\nmode = \"755\"\n\n[[file]]\nsrc = \"bin/gem.sh\"\nmode = \"755\"\n").unwrap();
+    for n in ["mibpkg", "launch.sh", "gem.sh"] {
+        fs::write(src.join("bin").join(n), n).unwrap();
+    }
+    let c = Collection::load(&common::collection(&f.sd(), "complex256-mibpkg", &[src])).unwrap();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let msg = install::install(&ctx, &[f.sd()], &c, "mibpkg").unwrap();
+    assert!(msg.contains("restarts itself"), "{msg}");
+    assert!(mibpkg::control::supervisor_start_deferred(&f.layout), "launch.sh starts the next supervisor");
+    // The new supervisor clears it when it starts.
+    mibpkg::control::selfupdate_done(&f.layout);
+    assert!(!mibpkg::control::supervisor_start_deferred(&f.layout));
+}

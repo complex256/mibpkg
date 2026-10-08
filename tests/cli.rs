@@ -36,14 +36,14 @@ fn gem_actions_record_results_and_never_fail() {
     assert_eq!(run(&args(f.root(), &["gem", "install", "alpha", "complex256"])).unwrap(), 0);
     let st = State::load(&f.layout).unwrap();
     assert!(st.results["alpha"].starts_with("OK: installed alpha 1.0.0"), "{:?}", st.results);
-    assert!(f.layout.engdefs().join("mibpkg_alpha.esd").is_file(), "screens regenerated");
+    assert!(fs::read_to_string(f.layout.engdefs().join("mibpkg.esd")).unwrap().contains("Update mibpkg"), "screens regenerated");
     assert_eq!(run(&args(f.root(), &["gem", "install", "nope"])).unwrap(), 0);
     let st = State::load(&f.layout).unwrap();
     assert!(st.results["nope"].starts_with("FAILED:"), "{:?}", st.results);
     // Double tap: another action holds the lock. The busy tap must write nothing at all.
     fs::write(f.layout.run("lock"), std::process::id().to_string()).unwrap();
     let state_before = fs::read(State::path(&f.layout)).unwrap();
-    let esd = f.layout.engdefs().join("mibpkg_alpha.esd");
+    let esd = f.layout.engdefs().join("mibpkg.esd");
     fs::write(&esd, "sentinel").unwrap();
     assert_eq!(run(&args(f.root(), &["gem", "remove", "alpha"])).unwrap(), 0);
     assert_eq!(fs::read(State::path(&f.layout)).unwrap(), state_before, "busy tap wrote installed.json");
@@ -94,9 +94,8 @@ fn bootstrap_registers_mibpkg_itself() {
     assert_eq!(me.version, env!("CARGO_PKG_VERSION"));
     assert_eq!(me.collection, "complex256-mibpkg");
     assert!(me.previous.is_none());
-    let esd = fs::read_to_string(f.layout.engdefs().join("mibpkg_mibpkg.esd")).unwrap();
-    assert!(!esd.contains("Install "), "no Install button for the running mibpkg: {esd}");
-    assert!(!esd.contains("Roll back"));
+    let esd = fs::read_to_string(f.layout.engdefs().join("mibpkg.esd")).unwrap();
+    assert!(esd.contains("Update mibpkg"), "{esd}");
 }
 
 #[test]

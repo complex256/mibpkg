@@ -177,7 +177,7 @@ pub fn serve(app: Arc<App>, listener: TcpListener) {
 /// Write /tmp/mibpkg.web.url for GEM and `status`: "port N", then "<class> <url>" lines, then
 /// "iface <name> <address>" for every interface that is up (so a hotspot that was not recognised
 /// can be identified from GEM).
-fn write_url_file(app: &App) {
+pub fn write_url_file(app: &App) -> bool {
     let port = app.port.load(Ordering::Relaxed);
     let mut text = format!("port {port}\n");
     for (class, url) in app.allowed.urls(port) {
@@ -186,31 +186,61 @@ fn write_url_file(app: &App) {
     for (name, addr) in app.allowed.interfaces_up() {
         text.push_str(&format!("iface {name} {addr}\n"));
     }
-    if std::fs::read_to_string(app.layout.run("web.url")).ok().as_deref() != Some(text.as_str()) {
-        let _ = crate::fsutil::atomic_write(&app.layout.run("web.url"), text.as_bytes());
+    if std::fs::read_to_string(app.layout.run("web.url")).ok().as_deref() == Some(text.as_str()) {
+        return false;
     }
+    crate::fsutil::atomic_write(&app.layout.run("web.url"), text.as_bytes()).is_ok()
+}
+
+/// Redraw the GEM page with the current addresses (`mibpkg gem-screens`) while `dirty`: GEM is
+/// where a user finds the address, and GEM only reads its files. A redraw that found the action
+/// lock busy (exit 1) leaves the page dirty for the next pass.
+fn redraw_gem(app: &App, running: &mut Option<std::process::Child>, dirty: &mut bool) {
+    if let Some(child) = running.as_mut() {
+        match child.try_wait() {
+            Ok(None) => return,
+            Ok(Some(status)) if !status.success() => *dirty = true,
+            _ => {}
+        }
+        *running = None;
+    }
+    if !*dirty {
+        return;
+    }
+    let exe = std::env::current_exe().unwrap_or_else(|_| app.layout.tmp_bin());
+    *running = std::process::Command::new(exe)
+        .arg("--root")
+        .arg(&app.layout.root)
+        .arg("gem-screens")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok();
+    *dirty = running.is_none();
 }
 
 /// Make the hotspot firewall match this server (its bound port, its listen choice) by running
 /// `mibpkg gem web-firewall` once, under the action lock like every flash write. Only when pf.conf
 /// differs, and never while an earlier attempt still runs. Called at start and every 30 s, so a
 /// busy lock just means a later try.
-fn ensure_firewall(app: &App, running: &mut Option<std::process::Child>) {
+/// Returns true when it started a run (that run redraws the GEM page when it ends).
+fn ensure_firewall(app: &App, running: &mut Option<std::process::Child>) -> bool {
     if let Some(child) = running.as_mut() {
         match child.try_wait() {
-            Ok(None) => return,
+            Ok(None) => return false,
             _ => *running = None,
         }
     }
     let want = crate::firewall::wanted(&app.settings, app.port.load(Ordering::Relaxed));
     if !crate::firewall::needs_change(&app.layout, want) {
-        return;
+        return false;
     }
     let arg = want.map_or("off".to_string(), |p| p.to_string());
     let exe = std::env::current_exe().unwrap_or_else(|_| app.layout.tmp_bin());
     // Opened twice, not try_clone (QNX 6.5).
     let log = || std::fs::OpenOptions::new().create(true).append(true).open(app.layout.run("log"));
-    let (Ok(out), Ok(err)) = (log(), log()) else { return };
+    let (Ok(out), Ok(err)) = (log(), log()) else { return false };
     *running = std::process::Command::new(exe)
         .arg("--root")
         .arg(&app.layout.root)
@@ -220,6 +250,7 @@ fn ensure_firewall(app: &App, running: &mut Option<std::process::Child>) {
         .stderr(err)
         .spawn()
         .ok();
+    running.is_some()
 }
 
 /// `mibpkg web`: bind, then serve until killed.
@@ -250,11 +281,20 @@ pub fn run(layout: Layout) -> Result<()> {
     // firewall is checked at start and again while it still differs (e.g. the lock was busy).
     let a = app.clone();
     std::thread::spawn(move || {
-        let mut firewall = None;
+        let (mut firewall, mut gem_redraw) = (None, None);
+        // The GEM page is drawn with the addresses at start, then again whenever they change.
+        let mut gem_dirty = true;
         loop {
-            ensure_firewall(&a, &mut firewall);
+            if write_url_file(&a) {
+                gem_dirty = true;
+            }
+            if ensure_firewall(&a, &mut firewall) {
+                // That run takes the action lock and redraws GEM itself when it ends.
+                gem_dirty = false;
+            } else if firewall.is_none() {
+                redraw_gem(&a, &mut gem_redraw, &mut gem_dirty);
+            }
             std::thread::sleep(Duration::from_secs(30));
-            write_url_file(&a);
         }
     });
     serve(app, listener);
