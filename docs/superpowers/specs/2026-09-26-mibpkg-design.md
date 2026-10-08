@@ -211,7 +211,7 @@ pre_remove   = "scripts/pre-remove.sh"
   - card file changed, internal copy untouched (or none yet): the card copy is imported;
   - both changed (or no record yet, from an older mibpkg, and they differ): a conflict. The
     internal copy is kept, the card's is saved beside it as `<path>.card`, and the action's
-    result says so. `config-resolve <pkg> keep|card [config]` (GEM buttons, the web config page)
+    result says so. `config-resolve <pkg> keep|card [config]` (also behind the web config page)
     settles it; `--config=keep|card` on install/rescan/update-all settles it up front.
   An imported or chosen card copy keeps the previous internal copy as `.prev`.
 - Never overwritten by package updates. Kept on remove; removed (with the card record) only with `remove --purge`.

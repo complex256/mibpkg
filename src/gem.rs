@@ -1,19 +1,14 @@
-//! Generated GEM (green engineering menu) screens: static .esd files in
-//! /eso/hmi/engdefs whose buttons run one-line scripts in <home>/gem/.
-use crate::config::missing_required;
-use crate::control::supervisor_pid;
+//! The generated GEM (green engineering menu) page: one static .esd file in
+//! /eso/hmi/engdefs whose buttons run one-line scripts in <home>/gem/. Since the web interface
+//! (M2), GEM is only the way back in: where the web UI is, and buttons that work when it does not.
 use crate::ctx::Ctx;
 use crate::fsutil::{atomic_write, set_mode};
-use crate::index::{cmp_versions, Collection, IndexEntry};
-use crate::install::{current_manifest, updates_available, SELF};
+use crate::install::SELF;
 use crate::media;
 use crate::paths::{Layout, HOME};
 use crate::state::State;
-use crate::status::{self, Status};
 use crate::unit::UnitInfo;
 use anyhow::Result;
-use std::cmp::Ordering;
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -33,18 +28,16 @@ pub struct Screen {
 pub struct Model<'a> {
     pub layout: &'a Layout,
     pub unit: &'a UnitInfo,
-    pub state: &'a State,
-    pub status: Option<&'a Status>,
-    pub scan: &'a [(PathBuf, Result<Collection>)],
-    /// Cached online collections.
-    pub online: &'a [Collection],
+    /// DISABLE marker on a card: no services start (the web server neither).
     pub disabled: bool,
-    pub supervisor_running: bool,
+    /// A global result exists (restart / reset web): show its live row.
+    pub has_result: bool,
+    /// A result for mibpkg itself exists (Update mibpkg): show its live row.
+    pub has_update_result: bool,
+    /// The kept earlier mibpkg version: a self-update that broke the web UI is undone from here.
+    pub rollback_to: Option<String>,
 }
 
-pub fn screen_name(pkg: &str) -> String {
-    format!("mibpkg_{}", pkg.replace('-', "_"))
-}
 
 /// "." cannot appear in package or collection names, so it can't make two actions collide.
 pub fn script_name(action: &[String]) -> String {
@@ -95,151 +88,23 @@ fn button(label: impl Into<String>, action: &[&str]) -> Item {
     Item::Button { label: label.into(), action: action.iter().map(|s| s.to_string()).collect() }
 }
 
+/// The one GEM page (web interface M2): where the web interface is, how it is set up, and the
+/// buttons that still work when it does not. Packages, logs and sources live in the web UI.
 pub fn screens(m: &Model) -> Vec<Screen> {
-    // Card and online collections, tagged with where they came from.
-    let mut sources: Vec<(&Collection, &str)> = m.scan.iter().filter_map(|(_, c)| c.as_ref().ok()).map(|c| (c, "card")).collect();
-    sources.extend(m.online.iter().map(|c| (c, "online")));
-    let owned: Vec<Collection> = sources.iter().map(|(c, _)| (*c).clone()).collect();
-    let updates = updates_available(m.state, &owned, m.unit);
-
-    let mut main = vec![
+    let (web, warning) = crate::web::settings::load(m.layout);
+    let mut items = vec![
         text(format!("mibpkg {} - unit {}", env!("CARGO_PKG_VERSION"), m.unit.describe())),
         Item::Live { label: "supervisor".into(), key: crate::persist::KEY_SUPERVISOR },
-        Item::Live { label: "online".into(), key: crate::persist::KEY_ONLINE },
     ];
     if m.disabled {
-        main.push(text("DISABLE marker on the card: no services are started"));
+        items.push(text("DISABLE marker on the card: no services are started (the web server neither)"));
     }
-    if m.scan.is_empty() {
-        main.push(text("No collections on SD/USB (expected mibpkg/collections/<id>/index.json)"));
-    }
-    for (dir, c) in m.scan {
-        main.push(match c {
-            Ok(c) => text(format!("card: {} [{}] - {} packages", c.index.collection.name, c.id(), c.index.packages.len())),
-            Err(e) => text(format!("card: unreadable collection {}: {e:#}", dir.display())),
-        });
-    }
-    main.push(text(format!("installed: {}", m.state.packages.len())));
-    main.push(button("Rescan SD card", &["rescan"]));
-    main.push(button("Check for updates", &["check"]));
-    if !updates.is_empty() {
-        main.push(button(format!("Update all ({})", updates.len()), &["update-all"]));
-    }
-    if m.state.results.contains_key("_") {
-        main.push(Item::Live { label: "last result".into(), key: crate::persist::KEY_RESULT_GLOBAL });
-    }
-    let mut out = vec![Screen { name: "mibpkg".into(), parent: m.layout.settings.gem_parent.clone(), items: main }];
-    out.push(web_screen(m.layout));
-
-    // name -> [(collection, newest entry, origin)]
-    let mut available: BTreeMap<String, Vec<(&Collection, &IndexEntry, &str)>> = BTreeMap::new();
-    for &(c, origin) in &sources {
-        let mut names: Vec<&str> = c.index.packages.iter().map(|e| e.name.as_str()).collect();
-        names.sort();
-        names.dedup();
-        for n in names {
-            available.entry(n.to_string()).or_default().push((c, c.latest(n).unwrap(), origin));
-        }
-    }
-    let mut names: Vec<String> = available.keys().cloned().collect();
-    names.extend(m.state.packages.keys().cloned());
-    names.sort();
-    names.dedup();
-
-    for name in names {
-        let inst = m.state.packages.get(&name);
-        let avail = available.get(&name).cloned().unwrap_or_default();
-        let desc = avail.first().map(|(_, e, _)| e.description.clone()).unwrap_or_default();
-        // Newest version that fits this unit, per collection id, across card and online.
-        let best_in = |id: &str| -> Option<&IndexEntry> {
-            avail
-                .iter()
-                .filter(|(c, _, _)| c.id() == id)
-                .filter_map(|(c, _, _)| c.latest_compatible(&name, m.unit))
-                .max_by(|a, b| cmp_versions(&a.version, &b.version))
-        };
-        let mut ids: Vec<&str> = avail.iter().map(|(c, _, _)| c.id()).collect();
-        ids.sort();
-        ids.dedup();
-        let mut items = vec![text(if desc.is_empty() { name.clone() } else { format!("{name}: {desc}") })];
-        items.push(text(match inst {
-            Some(i) => format!("installed: {}", i.version),
-            None => "not installed".to_string(),
-        }));
-        for (c, e, origin) in &avail {
-            let mut l = format!("{origin} [{}]: {}", c.id(), e.version);
-            if !e.compat.matches(m.unit) {
-                l.push_str(" (not for this unit)");
-            }
-            if e.uses_scripts {
-                l.push_str(" (!) runs scripts");
-            }
-            items.push(text(l));
-        }
-        match inst {
-            None => {
-                for id in &ids {
-                    if let Some(e) = best_in(id) {
-                        items.push(button(format!("Install {} from {id}", e.version), &["install", name.as_str(), id]));
-                    }
-                }
-            }
-            Some(i) => {
-                if let Some(e) = best_in(&i.collection) {
-                    if cmp_versions(&e.version, &i.version) == Ordering::Greater {
-                        items.push(button(format!("Update to {}", e.version), &["install", name.as_str(), i.collection.as_str()]));
-                    }
-                }
-                if !i.services.is_empty() {
-                    items.push(button("Restart", &["restart", name.as_str()]));
-                }
-                if let Some(p) = &i.previous {
-                    items.push(button(format!("Roll back to {p}"), &["rollback", name.as_str()]));
-                }
-                if name != SELF {
-                    items.push(button("Remove", &["remove", name.as_str()]));
-                }
-                for id in &i.services {
-                    items.push(Item::Live { label: id.clone(), key: crate::persist::service_key(id) });
-                }
-                if let Ok(man) = current_manifest(m.layout, &name) {
-                    let missing = missing_required(m.layout, &man);
-                    if !missing.is_empty() {
-                        items.push(text(format!(
-                            "needs config: {} - put it on the card in mibpkg/config/{name}/ then Rescan",
-                            missing.join(", ")
-                        )));
-                    }
-                    let conflicts = crate::config::conflicts(m.layout, &man);
-                    if !conflicts.is_empty() {
-                        items.push(text(format!("config conflict: {} changed on the card and on the car", conflicts.join(", "))));
-                        items.push(button("Keep the car's config", &["config-resolve", name.as_str(), "keep"]));
-                        items.push(button("Use the card's config", &["config-resolve", name.as_str(), "card"]));
-                    }
-                }
-            }
-        }
-        if m.state.results.contains_key(&name) {
-            items.push(Item::Live { label: "last result".into(), key: crate::persist::result_key(&name) });
-        }
-        out.push(Screen { name: screen_name(&name), parent: "mibpkg".into(), items });
-    }
-    out
-}
-
-/// The web interface's screen. "__" keeps it apart from package screens ("mibpkg_<pkg>", and no
-/// package name can start with '-').
-pub const WEB_SCREEN: &str = "mibpkg__web";
-
-/// Web server status, where to reach it, and the two recovery buttons (restart, reset settings).
-fn web_screen(layout: &Layout) -> Screen {
-    let (web, warning) = crate::web::settings::load(layout);
-    let mut items = vec![Item::Live { label: "web server".into(), key: crate::persist::service_key(crate::cli::WEB_SERVICE) }];
+    items.push(Item::Live { label: "web server".into(), key: crate::persist::service_key(crate::cli::WEB_SERVICE) });
     if !web.enabled {
-        items.push(text("disabled in web.toml (Reset web settings turns it back on)"));
+        items.push(text("web server disabled in web.toml (Reset web settings turns it back on)"));
     }
     // Written by the running server: "port N", "<class> <url>" lines, "iface <name> <addr>" lines.
-    let file = fs::read_to_string(layout.run("web.url")).unwrap_or_default();
+    let file = fs::read_to_string(m.layout.run("web.url")).unwrap_or_default();
     let lines: Vec<&str> = file.lines().skip(1).collect();
     let ifaces: Vec<&str> = lines.iter().filter_map(|l| l.strip_prefix("iface ")).collect();
     let urls: Vec<String> = lines.iter().filter(|l| !l.starts_with("iface ")).map(|l| l.replacen(' ', ": ", 1)).collect();
@@ -254,6 +119,7 @@ fn web_screen(layout: &Layout) -> Screen {
     if !ifaces.is_empty() {
         items.push(text(format!("interfaces up: {}", ifaces.join(", "))));
     }
+    items.push(text("Packages, logs and settings: open the address above in a phone browser"));
     items.push(text(format!("listen: {}", web.listen.join(", "))));
     items.push(text(format!("PIN: {}", if web.pin.is_some() { "set" } else { "not set" })));
     if let Some(w) = warning {
@@ -261,7 +127,21 @@ fn web_screen(layout: &Layout) -> Screen {
     }
     items.push(button("Restart web server", &["web-restart"]));
     items.push(button("Reset web settings", &["web-reset"]));
-    Screen { name: WEB_SCREEN.into(), parent: "mibpkg".into(), items }
+    if web.pin.is_some() {
+        // A forgotten PIN: being in GEM (in the car) is the authorization.
+        items.push(button("Remove PIN", &["web-clear-pin"]));
+    }
+    items.push(button("Update mibpkg (SD card or online)", &["self-update"]));
+    if let Some(p) = &m.rollback_to {
+        items.push(button(format!("Roll back mibpkg to {p}"), &["rollback", SELF]));
+    }
+    if m.has_result {
+        items.push(Item::Live { label: "last result".into(), key: crate::persist::KEY_RESULT_GLOBAL });
+    }
+    if m.has_update_result {
+        items.push(Item::Live { label: "mibpkg update".into(), key: crate::persist::result_key(SELF) });
+    }
+    vec![Screen { name: "mibpkg".into(), parent: m.layout.settings.gem_parent.clone(), items }]
 }
 
 /// Delete every mibpkg*.esd in engdefs. Caller holds /mnt/app rw.
@@ -281,18 +161,13 @@ pub fn remove_screens(layout: &Layout) -> Result<()> {
 pub fn regenerate(ctx: &Ctx) -> Result<()> {
     let layout = &ctx.layout;
     let state = State::load(layout)?;
-    let scan = media::scan(layout);
-    let online = crate::online::collections(layout);
-    let st = status::read(layout);
     let model = Model {
         layout,
         unit: &ctx.unit,
-        state: &state,
-        status: st.as_ref(),
-        scan: &scan,
-        online: &online,
         disabled: media::disabled(layout),
-        supervisor_running: supervisor_pid(layout, ctx.sys).is_some(),
+        has_result: state.results.contains_key("_"),
+        has_update_result: state.results.contains_key(SELF),
+        rollback_to: state.packages.get(SELF).and_then(|i| i.previous.clone()),
     };
     let screens = screens(&model);
     let gem_unit = layout.unit_path(&layout.gem_dir());

@@ -13,6 +13,7 @@ fn gem(f: &common::Fixture, rest: &[&str]) -> String {
     let st = State::load(&f.layout).unwrap();
     let key = match rest[0] {
         "install-file" | "config-set" => rest[1],
+        "self-update" => "mibpkg",
         _ => "_",
     };
     st.results.get(key).cloned().unwrap_or_else(|| st.results.get("_").cloned().unwrap_or_default())
@@ -91,4 +92,41 @@ fn sources_can_be_added_and_removed() {
     assert!(r.starts_with("OK: added github:someone/carstuff"), "{r}");
     assert!(gem(&f, &["source-add", "http://bad"]).starts_with("FAILED"));
     assert!(gem(&f, &["source-remove", "github:someone/carstuff"]).starts_with("OK: removed"));
+}
+
+#[test]
+fn web_clear_pin_removes_only_the_pin() {
+    let f = common::fixture();
+    let mut s = mibpkg::web::settings::WebSettings::default();
+    s.port = 8080;
+    s.listen = vec!["tailscale".into()];
+    s.pin = Some(mibpkg::web::settings::hash_pin("2468"));
+    mibpkg::web::settings::save(&f.layout, &s).unwrap();
+    assert!(gem(&f, &["web-clear-pin"]).starts_with("OK: PIN removed"));
+    let (now, warning) = mibpkg::web::settings::load(&f.layout);
+    assert!(warning.is_none());
+    assert_eq!(now.pin, None);
+    assert_eq!((now.port, now.listen.clone()), (8080, vec!["tailscale".to_string()]), "everything else kept");
+    assert!(f.layout.run("restart.mibpkg.web").exists(), "the web server restarts without the PIN");
+    assert!(gem(&f, &["web-clear-pin"]).starts_with("OK: no PIN was set"));
+}
+
+#[test]
+fn self_update_checks_online_before_installing() {
+    // The fixture has no internet and no mibpkg anywhere: the check runs (and says so), then the
+    // install fails plainly.
+    let f = common::fixture();
+    let r = gem(&f, &["self-update"]);
+    assert!(r.starts_with("FAILED") && r.contains("online:"), "{r}");
+}
+
+#[test]
+fn gem_screens_redraws_the_page_without_recording_a_result() {
+    let f = common::fixture();
+    fs::write(f.layout.run("web.url"), "port 80\nhotspot http://10.255.1.1\n").unwrap();
+    let v: Vec<String> = ["--root", f.root().to_str().unwrap(), "--no-supervisor", "gem-screens"].iter().map(|s| s.to_string()).collect();
+    assert_eq!(run(&v).unwrap(), 0);
+    let esd = fs::read_to_string(f.layout.engdefs().join("mibpkg.esd")).unwrap();
+    assert!(esd.contains("hotspot: http://10.255.1.1"), "{esd}");
+    assert!(State::load(&f.layout).unwrap().results.is_empty(), "no result row churn");
 }

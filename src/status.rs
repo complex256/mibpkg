@@ -64,6 +64,10 @@ pub struct Status {
     /// boot.d files that could not be used: file -> error.
     #[serde(default)]
     pub invalid: BTreeMap<String, String>,
+    /// The mibpkg version the supervisor itself runs (after a self-update it can differ from the
+    /// installed one; absent in status files from mibpkg before 0.5.2).
+    #[serde(default)]
+    pub version: Option<String>,
 }
 
 pub fn now_secs() -> u64 {

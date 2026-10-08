@@ -308,6 +308,13 @@ fn mibpkg_web_runs_against_a_root() {
         std::thread::sleep(Duration::from_millis(100));
     }
     assert!(std::fs::read_to_string(&pf).unwrap().contains(&want), "pf.conf rule for port {port}");
+    // The GEM page follows the web server's addresses (GEM is the way to find them).
+    let esd = f.layout.engdefs().join("mibpkg.esd");
+    let end = Instant::now() + Duration::from_secs(10);
+    while !std::fs::read_to_string(&esd).unwrap_or_default().contains("interfaces up: lo") && Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(std::fs::read_to_string(&esd).unwrap_or_default().contains("interfaces up: lo"), "GEM page redrawn with the addresses");
 }
 
 #[test]
@@ -380,4 +387,27 @@ fn the_hotspot_interface_can_be_named_from_settings() {
     let id = &argv.last().unwrap()[1];
     let saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(srv.app.layout.run(&format!("text.{id}"))).unwrap()).unwrap();
     assert_eq!(saved["interfaces"]["hotspot"][0], "uap0");
+}
+
+#[test]
+fn the_url_file_reports_when_the_addresses_change() {
+    // The web server redraws the GEM page only when its addresses change (e.g. Tailscale coming up
+    // ~2 minutes after boot), not every 30 s.
+    let f = common::fixture();
+    let text = Arc::new(std::sync::Mutex::new("lo0: flags=8049<UP,LOOPBACK,RUNNING> mtu 33192\n\tinet 127.0.0.1 netmask 0xff000000\n".to_string()));
+    let t2 = text.clone();
+    let app = App::new(f.layout.clone(), Box::new(move || Some(t2.lock().unwrap().clone())));
+    app.port.store(80, Ordering::SeqCst);
+    assert!(mibpkg::web::write_url_file(&app), "first write");
+    assert!(!mibpkg::web::write_url_file(&app), "unchanged");
+    text.lock().unwrap().push_str("tun9: flags=51<UP,POINTOPOINT,RUNNING> mtu 1280\n\tinet 100.64.0.55 -> 100.64.0.55 netmask 0xffffffff\n");
+    // The interface snapshot refreshes in the background after 10 s; the file follows it.
+    let end = Instant::now() + Duration::from_secs(30);
+    let mut changed = false;
+    while !changed && Instant::now() < end {
+        changed = mibpkg::web::write_url_file(&app);
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    assert!(changed, "the new Tailscale address is a change");
+    assert!(std::fs::read_to_string(f.layout.run("web.url")).unwrap().contains("tailscale http://100.64.0.55"));
 }

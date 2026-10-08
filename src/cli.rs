@@ -100,6 +100,16 @@ pub fn run(args: &[String]) -> Result<i32> {
             supervisor::run(&ctx.layout, &sys, Timing::default())?;
             Ok(0)
         }
+        "gem-screens" => {
+            // Redraw the GEM page (run by the web server when its addresses change). Skipped
+            // quietly while an action holds the lock: that action redraws the page when it ends.
+            // Exit 1 when busy, so the web server tries again later.
+            let Ok(_lock) = Lock::acquire(&ctx.layout, ctx.sys) else { return Ok(1) };
+            if let Err(e) = gem::regenerate(&ctx) {
+                crate::warn!("warning: updating GEM screens: {e:#}");
+            }
+            Ok(0)
+        }
         "web" => {
             crate::web::run(ctx.layout.clone())?;
             Ok(0)
@@ -156,6 +166,8 @@ pub fn run(args: &[String]) -> Result<i32> {
                 }
             };
             let key = match verb.as_str() {
+                // The mibpkg update shows on GEM's "mibpkg update" row.
+                "self-update" => install::SELF.to_string(),
                 "install" | "remove" | "rollback" | "restart" | "install-file" | "config-set" | "config-resolve" => {
                     args.get(1).filter(|n| crate::manifest::valid_name(n)).cloned().unwrap_or_else(|| "_".into())
                 }
@@ -410,6 +422,31 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
             };
             crate::firewall::apply(ctx, port)
         }
+        "self-update" => {
+            // GEM's "Update mibpkg": refresh the online indexes first (the cache can be hours old
+            // and GEM has no separate check), then install the newest mibpkg, card or online.
+            let checked = online_check(ctx);
+            publish_online(ctx, &checked);
+            let mut fresh: Vec<Collection> = media::loaded(&media::scan(&ctx.layout));
+            fresh.extend(crate::online::collections(&ctx.layout));
+            let coll = install::pick_collection(&state, &fresh, install::SELF, None, &ctx.unit).with_context(|| checked.clone())?;
+            let msg = install::install(ctx, &media_roots, coll, install::SELF).with_context(|| checked.clone())?;
+            Ok(format!("{checked}; {msg}"))
+        }
+        "web-clear-pin" => {
+            // GEM's "Remove PIN" for a forgotten PIN: whoever can open GEM may use the car.
+            let (mut s, _) = crate::web::settings::load(&ctx.layout);
+            if s.pin.is_none() {
+                return Ok("no PIN was set".into());
+            }
+            s.pin = None;
+            {
+                let _rw = ctx.mounts.rw("/mnt/app")?;
+                crate::web::settings::save(&ctx.layout, &s)?;
+            }
+            control::request_restart(&ctx.layout, WEB_SERVICE)?;
+            Ok("PIN removed; the web server restarts without it".into())
+        }
         "web-restart" => {
             control::request_restart(&ctx.layout, WEB_SERVICE)?;
             Ok("web server restart requested".into())
@@ -456,11 +493,9 @@ fn online_store(ctx: &Ctx, fetched: std::result::Result<Fetched, String>) -> (St
     }
 }
 
-/// The online status line: GEM's live row (persistence) and /tmp/mibpkg.online (the web UI).
+/// The online status line, for the web UI (/tmp/mibpkg.online, RAM). GEM has no online row since
+/// it became the single recovery page, so nothing goes to persistence (flash).
 fn publish_online(ctx: &Ctx, text: &str) {
-    if let Err(e) = ctx.sys.persist_write(crate::persist::NS, crate::persist::KEY_ONLINE, text) {
-        crate::warn!("warning: live online status: {e:#}");
-    }
     let _ = crate::fsutil::atomic_write(&ctx.layout.run("online"), text.as_bytes());
 }
 
@@ -475,9 +510,7 @@ fn record_result(ctx: &Ctx, key: &str, text: &str) -> Result<()> {
     st.results.insert(key.to_string(), line.clone());
     st.save(&ctx.layout)?;
     // The live "last result" row reads this.
-    if let Err(e) = ctx.sys.persist_write(crate::persist::NS, crate::persist::result_key(key), &line) {
-        crate::warn!("warning: live result: {e:#}");
-    }
+    crate::persist::publish_result(ctx.sys, &ctx.layout, key, &line);
     Ok(())
 }
 
@@ -495,7 +528,8 @@ fn print_status(ctx: &Ctx) {
         Some(s) => {
             let alive = control::supervisor_pid(&ctx.layout, ctx.sys).is_some();
             crate::say!(
-                "supervisor pid {} ({}){}",
+                "supervisor {}pid {} ({}){}",
+                s.version.as_deref().map(|v| format!("{v} ")).unwrap_or_default(),
                 s.pid,
                 if alive { "running" } else { "gone" },
                 if s.disabled { ", DISABLED" } else { "" }

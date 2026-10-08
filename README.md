@@ -11,7 +11,8 @@ watches the installed services.
    `mibpkg/config/<package>/<file>` (an example ships in the package). Changes made later in
    the web interface are kept: a card file is only imported again once you change it on the card.
 3. GEM -> M.I.B. -> Advanced Settings -> Run Custom Script. This installs mibpkg once.
-4. GEM -> mibpkg: install, update, remove, restart, roll back.
+4. Open the web interface (below) to install, update, remove, restart and roll back.
+   GEM -> mibpkg shows its address and has the recovery buttons.
 
 ### Web interface
 
@@ -19,11 +20,12 @@ mibpkg also serves an app-store-style page from the car, with everything GEM off
 installing a `.mpk` from your phone, logs, config files and online sources.
 
 1. Join the car's Wi-Fi hotspot (or reach the car over Tailscale).
-2. GEM -> mibpkg -> mibpkg__web shows the address, e.g. `http://10.255.1.1`.
+2. GEM -> mibpkg shows the address, e.g. `http://10.255.1.1`.
 3. Open it in the phone's browser.
 
 By default it answers only on the hotspot and Tailscale (never the SIM data link); Web settings
-can change that and set a PIN. Locked out? GEM -> mibpkg -> mibpkg__web -> Reset web settings.
+can change that and set a PIN. Forgot the PIN? GEM -> mibpkg -> Remove PIN. Locked out
+another way? GEM -> mibpkg -> Reset web settings.
 
 Emergency stop: create an empty file `mibpkg/DISABLE` on the card and reboot; no package
 services start while it is present.
