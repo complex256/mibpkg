@@ -204,9 +204,17 @@ pre_remove   = "scripts/pre-remove.sh"
 ### Config files
 
 - Supplied by the user on the SD card at `/mibpkg/config/<pkg>/<path>`.
-- On install/update/rescan, copied to `state/config/<pkg>/` if present on the card
-  (card copy wins, previous internal copy kept as `.prev`).
-- Never overwritten by package updates. Kept on remove; removed only with `remove --purge`.
+- On install/update/rescan, copied to `state/config/<pkg>/` if present on the card. The web
+  interface also writes there (`config-set`), so the copy is a three-way decision (as dpkg does
+  for conffiles) against the card bytes last imported, kept in `state/card-config/<pkg>/`:
+  - card file unchanged since the last import: the internal copy stands (it may hold web edits);
+  - card file changed, internal copy untouched (or none yet): the card copy is imported;
+  - both changed (or no record yet, from an older mibpkg, and they differ): a conflict. The
+    internal copy is kept, the card's is saved beside it as `<path>.card`, and the action's
+    result says so. `config-resolve <pkg> keep|card [config]` (also behind the web config page)
+    settles it; `--config=keep|card` on install/rescan/update-all settles it up front.
+  An imported or chosen card copy keeps the previous internal copy as `.prev`.
+- Never overwritten by package updates. Kept on remove; removed (with the card record) only with `remove --purge`.
 - Missing required config ⇒ package installs, services show `needs-config`.
 
 ### Collections

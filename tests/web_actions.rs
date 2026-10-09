@@ -28,6 +28,8 @@ fn valid_actions_build_fixed_argv() {
     assert_eq!(argv(r#"{"action":"update-all"}"#).unwrap(), ["update-all"]);
     assert_eq!(argv(r#"{"action":"rescan"}"#).unwrap(), ["rescan"]);
     assert_eq!(argv(r#"{"action":"check"}"#).unwrap(), ["check"]);
+    assert_eq!(argv(r#"{"action":"config-resolve","package":"carmqtt","config":0,"choice":"keep"}"#).unwrap(), ["config-resolve", "carmqtt", "keep", "0"]);
+    assert_eq!(argv(r#"{"action":"config-resolve","package":"carmqtt","config":2,"choice":"card"}"#).unwrap(), ["config-resolve", "carmqtt", "card", "2"]);
 }
 
 #[test]
@@ -43,6 +45,8 @@ fn every_hostile_string_in_every_field_is_rejected() {
             format!(r#"{{"action":"remove","package":{s}}}"#),
             format!(r#"{{"action":"install","package":{s}}}"#),
             format!(r#"{{"action":"install","package":"extra","collection":{s}}}"#),
+            format!(r#"{{"action":"config-resolve","package":{s},"config":0,"choice":"keep"}}"#),
+            format!(r#"{{"action":"config-resolve","package":"carmqtt","config":0,"choice":{s}}}"#),
         ] {
             assert!(argv(&json).is_err(), "{json}");
         }
@@ -55,6 +59,9 @@ fn unknown_actions_extra_fields_and_wrong_targets_are_rejected() {
         r#"{"action":"exec","command":"reboot"}"#,
         r#"{"action":"restart","package":"carmqtt","args":["x"]}"#,
         r#"{"action":"rescan","x":1}"#,
+        r#"{"action":"config-resolve","package":"carmqtt","config":-1,"choice":"keep"}"#,
+        r#"{"action":"config-resolve","package":"carmqtt","config":"../x","choice":"keep"}"#,
+        r#"{"action":"config-resolve","package":"extra","config":0,"choice":"keep"}"#,
         r#"{"package":"carmqtt"}"#,
         r#"not json"#,
         r#"{"action":"restart","package":"extra"}"#,

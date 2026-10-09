@@ -90,7 +90,8 @@ pub fn log_tail(app: &App, id: &str, bytes: u64) -> Response {
     Response::new(200, "text/plain; charset=utf-8", String::from_utf8_lossy(&text).into_owned().into_bytes())
 }
 
-/// GET /api/packages/<name>/config/<n> — the file, or its example while it does not exist yet.
+/// GET /api/packages/<name>/config/<n> — the file, or its example while it does not exist yet,
+/// and the card's copy while the two are in conflict (`card`, else null).
 pub fn config_get(app: &App, name: &str, n: usize) -> Response {
     let Ok(m) = current_manifest(&app.layout, name) else {
         return Response::error(404, format!("{name} is not installed"));
@@ -115,7 +116,10 @@ pub fn config_get(app: &App, name: &str, n: usize) -> Response {
             _ => String::new(),
         }
     };
-    Response::json(200, &json!({ "path": c.path, "required": c.required, "exists": exists, "content": content, "example": c.example }))
+    // A conflict: the card's copy changed too and waits for a choice.
+    let pending = crate::config::pending_path(&app.layout, name, &c.path);
+    let card = pending.is_file().then(|| read_capped(&pending));
+    Response::json(200, &json!({ "path": c.path, "required": c.required, "exists": exists, "content": content, "example": c.example, "card": card }))
 }
 
 /// GET /api/sources — each source with the collection its cached index holds.

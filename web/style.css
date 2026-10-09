@@ -677,6 +677,39 @@ button {
   margin: 10px 0;
 }
 
+/* A config conflict: the car's and the card's copy, side by side when there is room. */
+.compare {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+@media (min-width: 700px) {
+  .compare {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* Grid items default to min-width: auto; long lines must scroll inside the box, not widen the page. */
+.compare > div {
+  min-width: 0;
+}
+
+.compare-head {
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.compare-text {
+  overflow-x: auto;
+}
+
+.compare-text .changed {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
 .field > span {
   display: block;
   margin-bottom: 4px;

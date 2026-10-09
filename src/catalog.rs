@@ -42,6 +42,8 @@ pub struct ConfigInfo {
     pub path: String,
     pub required: bool,
     pub exists: bool,
+    /// The card's copy changed too and waits for a choice (config-resolve).
+    pub conflict: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -184,6 +186,7 @@ pub fn build(layout: &Layout, unit: &UnitInfo) -> Vec<PkgView> {
                                 path: c.path.clone(),
                                 required: c.required,
                                 exists: layout.config_dir(&name).join(&c.path).is_file(),
+                                conflict: crate::config::pending_path(layout, &name, &c.path).is_file(),
                             })
                             .collect()
                     })

@@ -92,6 +92,7 @@ Added to `cli::action` so every write takes one path under the action lock:
 |---|---|---|
 | `install-file` | `<upload-id> <collection-or-->` | Install/upgrade from `/tmp/mibpkg.upload.<id>.mpk` (see Uploads) |
 | `config-set` | `<pkg> <n> <upload-id>` | Replace config file *n* of `<pkg>` with the uploaded text, then request a restart of its services |
+| `config-resolve` | `<pkg> keep\|card [config]` | Settle a config conflict (card and car copy both changed): keep the car's copy, or use the card's and request a restart |
 | `source-add` | `<source>` | Add an online source, then run an online check |
 | `source-remove` | `<source>` | Remove or disable an online source, drop its cache |
 | `web-settings` | `<id>` | Save `web.toml` from a server-written JSON file |
@@ -191,7 +192,7 @@ host), `404`, `409` busy, `413` too large, `503` too many connections. Static fi
 | `GET /api/status` | Unit, mibpkg version, supervisor state, online-check line, DISABLE flag, running job id, update count, web URLs |
 | `GET /api/packages` | One merged list. Per name: `installed` (version, collection, previous, services with state, uses_scripts, missing required config, last result) and `available` (per collection: version, origin card/online, size, description, compatible). The browser filters it for search. |
 | `GET /api/logs/<id>?bytes=N` | Tail of `mibpkg`, `mibpkg.web` or `<pkg>.<service>` (id must be a known log) |
-| `GET /api/packages/<name>/config/<n>` | `{path, exists, required, content, example}` for manifest config *n* |
+| `GET /api/packages/<name>/config/<n>` | `{path, exists, required, content, example, card}` for manifest config *n*; `card` is the card's copy while in conflict, else null |
 | `GET /api/sources` | Effective sources with origin (default/settings/web), enabled, last fetch result |
 | `GET /api/settings` | `{enabled, port, listen, pin_set, urls, interfaces_up}` (never the PIN) |
 | `GET /api/jobs/<id>?since=N` | `{lines, next, done, ok, result}` |
@@ -200,7 +201,7 @@ host), `404`, `409` busy, `413` too large, `503` too many connections. Static fi
 
 | Endpoint | Does |
 |---|---|
-| `POST /api/actions` `{action, package?, collection?, purge?}` | `rescan`, `check`, `update-all`, `install`, `rollback`, `restart`, `remove` → `202 {job}` or `409` |
+| `POST /api/actions` `{action, package?, collection?, purge?, config?, choice?}` | `rescan`, `check`, `update-all`, `install`, `rollback`, `restart`, `remove`, `config-resolve` (`config` number, `choice` keep/card) → `202 {job}` or `409` |
 | `POST /api/uploads` (octet-stream) | Save and inspect a `.mpk` → upload summary (see Uploads) |
 | `POST /api/uploads/<id>/install` `{collection}` | `install-file` job; `collection` ignored for upgrades |
 | `DELETE /api/uploads/<id>` | Discard |

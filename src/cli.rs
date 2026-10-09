@@ -27,6 +27,8 @@ const USAGE: &str = "usage:
   mibpkg [--root DIR] [--no-supervisor] <command>
     supervise | status | list | install <pkg> [collection] | remove <pkg> [--purge]
     rollback <pkg> | restart <pkg> | rescan | update-all | gem <action> [args..]
+    config-resolve <pkg> keep|card [config]
+    (install, rescan and update-all take --config=keep|card to settle config conflicts)
     online-check | sntp [host:port] | web
     gem install-file <pkg> <id> <collection|-> | gem config-set <pkg> <n> <id>
     gem source-add <source> | gem source-remove <source> | gem web-settings <id> | gem web-reset | gem web-restart
@@ -53,6 +55,13 @@ pub fn run(args: &[String]) -> Result<i32> {
             return Ok(2);
         }
     };
+    // Like dpkg's --force-confold/confnew: settles a config changed both on the card and on the car.
+    let mut config_choice = None;
+    if matches!(cmd.as_str(), "install" | "rescan" | "update-all") {
+        if let Some(i) = rest.iter().position(|a| a.starts_with("--config=")) {
+            config_choice = Some(config::Choice::parse(&rest.remove(i)["--config=".len()..])?);
+        }
+    }
     let args = &rest[1..];
     match cmd.as_str() {
         "build" => return host_build(args),
@@ -72,6 +81,7 @@ pub fn run(args: &[String]) -> Result<i32> {
         // clock offset file this reads.
         ctx.fetcher = Box::new(crate::fetch::CurlFetcher::for_unit(&ctx.layout, crate::clock::read_offset(&ctx.layout)));
     }
+    ctx.config_choice = config_choice;
     let ctx = ctx;
     // The shims append every action's output to /tmp/mibpkg.log (RAM): keep it bounded.
     let _ = fsutil::cap_file(&ctx.layout.run("log"), supervisor::LOG_CAP);
@@ -135,7 +145,7 @@ pub fn run(args: &[String]) -> Result<i32> {
             print_list(&ctx)?;
             Ok(0)
         }
-        "install" | "remove" | "rollback" | "restart" | "rescan" | "update-all" => {
+        "install" | "remove" | "rollback" | "restart" | "rescan" | "update-all" | "config-resolve" => {
             // One lock across the action, the screens and the result: a second action changes nothing.
             let _lock = Lock::acquire(&ctx.layout, ctx.sys)?;
             let r = action(&ctx, &cmd, args);
@@ -158,7 +168,7 @@ pub fn run(args: &[String]) -> Result<i32> {
             let key = match verb.as_str() {
                 // The mibpkg update shows on GEM's "mibpkg update" row.
                 "self-update" => install::SELF.to_string(),
-                "install" | "remove" | "rollback" | "restart" | "install-file" | "config-set" => {
+                "install" | "remove" | "rollback" | "restart" | "install-file" | "config-set" | "config-resolve" => {
                     args.get(1).filter(|n| crate::manifest::valid_name(n)).cloned().unwrap_or_else(|| "_".into())
                 }
                 _ => "_".into(),
@@ -290,9 +300,10 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
             let mut msgs = Vec::new();
             for name in state.packages.keys() {
                 if let Ok(m) = install::current_manifest(&ctx.layout, name) {
-                    let got = config::import(&ctx.layout, &media_roots, &m)?;
-                    if !got.is_empty() {
-                        msgs.push(format!("{name}: imported {}", got.join(", ")));
+                    let r = config::import(&ctx.layout, &media_roots, &m, ctx.config_choice)?;
+                    let text = r.summary(name);
+                    if !text.is_empty() {
+                        msgs.push(format!("{name}: {text}"));
                     }
                 }
             }
@@ -333,6 +344,33 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
             })();
             let _ = fs::remove_file(&text);
             r
+        }
+        "config-resolve" => {
+            let name = pkg_arg(args, 0)?;
+            let choice = config::Choice::parse(arg(args, 1, "keep or card")?)?;
+            let m = install::current_manifest(&ctx.layout, name)?;
+            let paths = match args.get(2) {
+                Some(which) => vec![config::find(&m, which)?.path.clone()],
+                None => config::conflicts(&ctx.layout, &m),
+            };
+            if paths.is_empty() {
+                bail!("{name} has no config conflict");
+            }
+            let mut changed = false;
+            {
+                let _rw = ctx.mounts.rw("/mnt/app")?;
+                for p in &paths {
+                    changed |= config::resolve(&ctx.layout, name, p, choice)?;
+                }
+            }
+            let what = paths.join(", ");
+            if !changed {
+                return Ok(format!("kept the current {what} for {name}"));
+            }
+            for svc in &state.packages.get(name).with_context(|| format!("{name} is not installed"))?.services {
+                control::request_restart(&ctx.layout, svc)?;
+            }
+            Ok(format!("using the card's {what} for {name}; restarting its services"))
         }
         "source-add" => {
             let source = arg(args, 0, "source")?;
