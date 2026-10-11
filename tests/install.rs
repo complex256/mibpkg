@@ -397,3 +397,13 @@ fn the_cross_collection_guard_holds_while_the_recorded_collection_is_present() {
     let e = install::install(&ctx, &mibpkg::media::roots(&f.layout), c, "demo").unwrap_err().to_string();
     assert!(e.contains("remove it before installing it from new"), "{e}");
 }
+
+#[test]
+fn an_update_from_a_new_collection_says_so() {
+    let (f, sys) = moved_setup(&["new"]);
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let colls = card_colls(&f);
+    let c = install::pick_collection(&State::load(&f.layout).unwrap(), &colls, "demo", None, &ctx.unit).unwrap();
+    let msg = install::install(&ctx, &mibpkg::media::roots(&f.layout), c, "demo").unwrap();
+    assert!(msg.contains("now from collection new (was old)"), "{msg}");
+}

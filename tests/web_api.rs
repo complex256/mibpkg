@@ -178,3 +178,13 @@ fn sources_lists_what_could_be_enabled() {
     assert_eq!(v["list"]["skipped"][0], "entry 2: name must be 1-60 characters");
     assert_eq!(v["sources"][0]["error"], "HTTP 404");
 }
+
+#[test]
+fn sources_shows_why_card_entries_were_skipped() {
+    let (f, _) = setup();
+    fs::create_dir_all(f.sd().join("mibpkg")).unwrap();
+    fs::write(f.sd().join("mibpkg/sources.toml"), "[[source]]\nname = \"Plain\"\nsource = \"http://x.org/index.json\"\n").unwrap();
+    let app = App::new(f.layout.clone(), Box::new(|| None));
+    let (_, v) = body(api::sources(&app));
+    assert!(v["card_skipped"][0].as_str().unwrap().contains("sources.toml"), "{v}");
+}

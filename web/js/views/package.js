@@ -94,7 +94,7 @@ function header(p, act) {
   let chooser = null;
 
   if (inst && p.update) {
-    main = h('button', { class: 'pill primary', type: 'button', onclick: () => act({ action: 'install', package: p.name, collection: p.update_from }) }, `Update to ${p.update}`);
+    main = h('button', { class: 'pill primary', type: 'button', onclick: () => act({ action: 'install', package: p.name, collection: p.update_from }) }, p.update_from === inst.collection ? `Update to ${p.update}` : `Update to ${p.update} from ${p.update_from}`);
   } else if (inst && p.moved_choices && p.moved_choices.length) {
     // The package's collection is gone and several offer it: one button per collection.
     main = h('div', { style: 'display:flex;flex-direction:column;gap:6px' },

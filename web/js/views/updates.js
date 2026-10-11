@@ -57,7 +57,7 @@ export async function render() {
       pending.length ? h('button', { class: 'pill primary', type: 'button', onclick: () => run({ action: 'update-all' }) }, 'Update all') : null,
     ),
     pending.length
-      ? pending.map((p) => packageRow(p, { subtitle: `${p.installed.version} → ${p.update}` }))
+      ? pending.map((p) => packageRow(p, { subtitle: `${p.installed.version} → ${p.update}${p.update_from !== p.installed.collection ? ` · now from ${p.update_from}` : ''}` }))
       : h('div', { class: 'empty' }, 'Everything is up to date.'),
     h('div', { class: 'section-head' }, h('h2', {}, 'Up to date')),
     current.length ? current.map((p) => packageRow(p, { subtitle: p.installed.version })) : h('div', { class: 'empty' }, 'Nothing installed yet.'),

@@ -13,7 +13,7 @@ import { jobView, redrawSoon } from '../jobs.js';
 const ORIGIN = { default: 'built in', settings: 'settings.toml', added: 'added here', list: 'community list', card: 'SD card' };
 
 export async function render() {
-  const { sources, available, list } = await api('GET', '/api/sources');
+  const { sources, available, list, card_skipped: cardSkipped } = await api('GET', '/api/sources');
   const jobArea = h('div', {});
 
   async function change(method, source) {
@@ -70,6 +70,7 @@ export async function render() {
     offered.length ? h('ul', { class: 'menu' }, offered) : h('p', { class: 'muted' }, 'Nothing new from the community list or the SD card.'),
     h('p', { class: 'muted' }, listNote),
     list.skipped.length ? h('details', {}, h('summary', {}, `${list.skipped.length} list entries skipped`), h('ul', {}, list.skipped.map((s) => h('li', {}, s)))) : null,
+    cardSkipped.length ? h('details', {}, h('summary', { class: 'error' }, `${cardSkipped.length} SD card entries skipped`), h('ul', {}, cardSkipped.map((s) => h('li', {}, s)))) : null,
     h('label', { class: 'field', style: 'margin-top:20px' }, h('span', {}, 'Add a source (github:owner/repo or an https://…/index.json address)'), input),
     add,
     jobArea,

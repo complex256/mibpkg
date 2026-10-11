@@ -267,3 +267,36 @@ fn the_committed_source_list_is_valid() {
     assert!(p.skipped.is_empty(), "{:?}", p.skipped);
     assert!(p.entries.iter().any(|e| e.source == mibpkg::online::DEFAULT_SOURCE));
 }
+
+#[test]
+fn a_new_version_that_keep_would_drop_is_refused() {
+    let f = common::fixture();
+    let gh = FakeGh::default();
+    let a = common::pkg_src(f.root(), "demo", "1.0.0", "sleep 30", "");
+    let b = common::pkg_src(f.root(), "demo", "2.0.0", "sleep 30", "");
+    let mut o = opts(&f, vec![a, b], "v1");
+    o.keep = 1;
+    o.publish = true;
+    let e = publish::release(&o, &MemoryFetcher::default(), &gh).unwrap_err().to_string();
+    assert!(e.contains("demo 1.0.0") && e.contains("--keep"), "{e}");
+    assert!(gh.created.borrow().is_empty());
+}
+
+#[test]
+fn an_older_version_added_after_a_newer_one_counts_correctly() {
+    let f = common::fixture();
+    let m = MemoryFetcher::default();
+    let gh = FakeGh::default();
+    let b = common::pkg_src(f.root(), "demo", "2.0.0", "sleep 30", "");
+    serve(&m, &publish::release(&opts(&f, vec![b], "v1"), &m, &gh).unwrap().index);
+    let a = common::pkg_src(&f.root().join("hotfix"), "demo", "1.0.1", "sleep 30", "");
+    let r = publish::release(&opts(&f, vec![a], "v2"), &m, &gh).unwrap();
+    assert_eq!((r.added.len(), r.kept), (1, 1));
+}
+
+#[test]
+fn a_tag_that_looks_like_an_option_is_refused() {
+    let f = common::fixture();
+    let e = publish::release(&opts(&f, vec![], "--draft"), &MemoryFetcher::default(), &FakeGh::default()).unwrap_err().to_string();
+    assert!(e.contains("tag"), "{e}");
+}

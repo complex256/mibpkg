@@ -61,14 +61,14 @@ fn available_excludes_enabled_sources_and_prefers_card_labels() {
     fs::create_dir_all(f.sd().join("mibpkg")).unwrap();
     fs::write(f.sd().join("mibpkg/sources.toml"), "[[source]]\nname = \"Alice (card)\"\nsource = \"github:alice/mib-tools\"\n\n[[source]]\nname = \"Bob\"\nsource = \"github:bob/x\"\n").unwrap();
     let list = sourcelist::parse_list(LIST.as_bytes()).unwrap().entries;
-    let a = sourcelist::available(&f.layout, &list);
+    let a = sourcelist::available(&f.layout, &list, &sourcelist::card_sources(&f.layout).entries);
     // The default source is already enabled: not available.
     assert!(a.iter().all(|x| x.source != online::DEFAULT_SOURCE), "{a:?}");
     let alice = a.iter().find(|x| x.source == "github:alice/mib-tools").unwrap();
     assert_eq!((alice.name.as_str(), alice.origin), ("Alice (card)", "card"));
     assert!(a.iter().any(|x| x.source == "github:bob/x" && x.origin == "card"));
     online::add_source(&f.layout, "github:bob/x").unwrap();
-    assert!(sourcelist::available(&f.layout, &list).iter().all(|x| x.source != "github:bob/x"));
+    assert!(sourcelist::available(&f.layout, &list, &sourcelist::card_sources(&f.layout).entries).iter().all(|x| x.source != "github:bob/x"));
 }
 
 use mibpkg::ctx::Ctx;
@@ -152,4 +152,16 @@ fn an_empty_online_list_setting_turns_the_list_off() {
     let layout = mibpkg::paths::Layout::load(f.root()).unwrap();
     let m = list_fetcher();
     assert!(sourcelist::fetch_list(&layout, &m, None).is_none());
+}
+
+#[test]
+fn an_oversized_card_sources_toml_is_refused_unread() {
+    let f = common::fixture();
+    fs::create_dir_all(f.sd().join("mibpkg")).unwrap();
+    let mut big = String::from("[[source]]\nname = \"alice\"\nsource = \"github:alice/mib-tools\"\n");
+    big.push_str(&"#".repeat(mibpkg::fetch::MAX_INDEX as usize + 1));
+    fs::write(f.sd().join("mibpkg/sources.toml"), big).unwrap();
+    let p = sourcelist::card_sources(&f.layout);
+    assert!(p.entries.is_empty());
+    assert!(p.skipped[0].contains("too large"), "{:?}", p.skipped);
 }

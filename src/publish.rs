@@ -138,7 +138,7 @@ fn stage(inputs: &[PathBuf], out: &Path) -> Result<Vec<PathBuf>> {
 
 pub fn release(o: &ReleaseOpts, fetcher: &dyn Fetcher, publisher: &dyn Publisher) -> Result<ReleaseReport> {
     latest_index_url(&o.repo)?; // validates owner/repo
-    if o.tag.is_empty() || !o.tag.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)) {
+    if o.tag.starts_with('-') || o.tag.is_empty() || !o.tag.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)) {
         bail!("tag {:?}: use letters, digits, '.', '_' and '-'", o.tag);
     }
     let prev = previous(fetcher, &o.repo)?;
@@ -212,6 +212,10 @@ pub fn release(o: &ReleaseOpts, fetcher: &dyn Fetcher, publisher: &dyn Publisher
                 dropped.push(format!("{} {}", e.name, e.version));
             }
         }
+    }
+    // A version given now but already outside the newest `keep` would be uploaded and never listed.
+    if let Some(d) = dropped.iter().find(|d| added.contains(d)) {
+        bail!("{d} is older than the newest {} version(s) kept; raise --keep or leave it out", o.keep.max(1));
     }
     packages.sort_by(|a, b| a.name.cmp(&b.name).then(cmp_versions(&a.version, &b.version)));
     let index = Index { format: FORMAT, collection: CollectionMeta { id, name }, packages, signatures: vec![] };

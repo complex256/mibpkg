@@ -148,13 +148,15 @@ pub fn sources(app: &App) -> Response {
         })
         .collect();
     let list = crate::sourcelist::load_cache(layout);
-    let available = crate::sourcelist::available(layout, list.as_ref().map(|l| l.entries.as_slice()).unwrap_or(&[]));
+    let card = crate::sourcelist::card_sources(layout);
+    let available = crate::sourcelist::available(layout, list.as_ref().map(|l| l.entries.as_slice()).unwrap_or(&[]), &card.entries);
     let url = crate::sourcelist::list_url(&layout.settings.online_list).ok().flatten();
     Response::json(
         200,
         &json!({
             "sources": sources,
             "available": available,
+            "card_skipped": card.skipped,
             "list": {
                 "url": url,
                 "fetched_at": list.as_ref().map(|l| l.fetched_at),

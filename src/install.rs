@@ -311,6 +311,10 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
         Some(v) => format!("updated {name} {v} -> {}", version),
         None => format!("installed {name} {}", version),
     };
+    if let Some(p) = previous.as_ref().filter(|p| p.collection != coll_id) {
+        // The package moved: say so, it now comes from another publisher's collection.
+        msg.push_str(&format!("; now from collection {coll_id} (was {})", p.collection));
+    }
     let migrated = legacy::migrate(ctx, name);
     if migrated.is_err() {
         // The new version is committed: start it even if moving the old install aside failed.

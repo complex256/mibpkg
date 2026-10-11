@@ -87,6 +87,11 @@ pub fn card_sources(layout: &Layout) -> Parsed {
     let mut all = Parsed::default();
     for root in crate::media::roots(layout) {
         let f = root.join("mibpkg/sources.toml");
+        let Ok(meta) = fs::metadata(&f) else { continue };
+        if meta.len() > MAX_INDEX {
+            all.skipped.push(format!("{}: too large ({} bytes, at most {MAX_INDEX})", f.display(), meta.len()));
+            continue;
+        }
         let Ok(text) = fs::read_to_string(&f) else { continue };
         match parse_card(&text) {
             Ok(p) => {
@@ -110,9 +115,10 @@ pub struct Available {
 
 /// Sources that could be enabled: card entries first (a card can label a source the list also
 /// has), then list entries; without sources already in the effective list (enabled or not).
-pub fn available(layout: &Layout, list: &[ListEntry]) -> Vec<Available> {
+/// `card` is `card_sources(layout).entries` (the caller also shows its skipped reasons).
+pub fn available(layout: &Layout, list: &[ListEntry], card: &[ListEntry]) -> Vec<Available> {
     let known: Vec<String> = crate::online::effective_sources(layout).into_iter().map(|e| e.source).collect();
-    let card = card_sources(layout).entries;
+    let card = card.to_vec();
     let mut out: Vec<Available> = Vec::new();
     let tagged = card.into_iter().map(|e| (e, "card")).chain(list.iter().cloned().map(|e| (e, "list")));
     for (e, origin) in tagged {
