@@ -182,6 +182,21 @@ pub struct CurlFetcher {
 const UNIT_LIB: &str = "/mnt/app/armle/usr/lib";
 
 impl CurlFetcher {
+    /// The publisher's computer: system libcurl and its CA store, real clock.
+    pub fn for_host() -> CurlFetcher {
+        let lib = if cfg!(target_os = "macos") { "/usr/lib/libcurl.4.dylib" } else { "libcurl.so.4" };
+        CurlFetcher {
+            lib: lib.into(),
+            preload: vec![],
+            ca_bundle: None,
+            clock_offset: None,
+            timeout_secs: 30,
+            allow_http: false,
+            clock_file: None,
+            time_servers: vec![],
+        }
+    }
+
     pub fn for_unit(layout: &Layout, clock_offset: Option<i64>) -> CurlFetcher {
         let l = |n: &str| format!("{UNIT_LIB}/{n}");
         CurlFetcher {

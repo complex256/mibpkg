@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 const USAGE: &str = "usage:
   mibpkg build <src-dir> <out-dir>
   mibpkg index <collection-dir> --id ID --name NAME [--flat]
+  mibpkg release <pkg-dir|file.mpk>... --repo OWNER/REPO --tag TAG [--id ID --name NAME [--new-id]] [--keep N] [--out DIR] [--asset FILE]... [--publish]
   mibpkg [--root DIR] [--no-supervisor] <command>
     supervise | status | list | install <pkg> [collection] | remove <pkg> [--purge]
     rollback <pkg> | restart <pkg> | rescan | update-all | gem <action> [args..]
@@ -66,6 +67,7 @@ pub fn run(args: &[String]) -> Result<i32> {
     match cmd.as_str() {
         "build" => return host_build(args),
         "index" => return host_index(args),
+        "release" => return host_release(args),
         "help" | "--help" | "-h" => {
             crate::say!("{USAGE}");
             return Ok(0);
@@ -576,6 +578,58 @@ fn host_build(args: &[String]) -> Result<i32> {
     let out = out_dir.join(format!("{}-{}.mpk", m.package.name, m.package.version));
     archive::pack(src, &out)?;
     crate::say!("{}", out.display());
+    Ok(0)
+}
+
+fn host_release(args: &[String]) -> Result<i32> {
+    let mut o = crate::publish::ReleaseOpts {
+        inputs: vec![],
+        repo: String::new(),
+        tag: String::new(),
+        id: None,
+        name: None,
+        new_id: false,
+        keep: 3,
+        out: PathBuf::new(),
+        assets: vec![],
+        publish: false,
+    };
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let mut val = |what: &str| it.next().cloned().with_context(|| format!("{a} needs {what}"));
+        match a.as_str() {
+            "--repo" => o.repo = val("owner/repo")?,
+            "--tag" => o.tag = val("a tag")?,
+            "--id" => o.id = Some(val("a collection id")?),
+            "--name" => o.name = Some(val("a name")?),
+            "--new-id" => o.new_id = true,
+            "--keep" => o.keep = val("a number")?.parse().context("--keep needs a number")?,
+            "--out" => o.out = PathBuf::from(val("a directory")?),
+            "--asset" => o.assets.push(PathBuf::from(val("a file")?)),
+            "--publish" => o.publish = true,
+            s if s.starts_with("--") => bail!("unexpected option {s}"),
+            s => o.inputs.push(PathBuf::from(s)),
+        }
+    }
+    if o.repo.is_empty() || o.tag.is_empty() {
+        bail!("release needs --repo <owner/repo> and --tag <tag>");
+    }
+    if o.out.as_os_str().is_empty() {
+        o.out = PathBuf::from(format!("out/release-{}", o.tag));
+    }
+    let fetcher = crate::fetch::CurlFetcher::for_host();
+    let r = crate::publish::release(&o, &fetcher, &crate::publish::Gh)?;
+    crate::say!("{}", r.summary);
+    crate::say!("files in {}", o.out.display());
+    if o.publish {
+        let url = crate::online::index_url(&format!("github:{}", o.repo))?;
+        let want = fs::read(o.out.join("index.json"))?;
+        if crate::publish::wait_live(&fetcher, &url, &want, Duration::from_secs(60), Duration::from_secs(5)) {
+            crate::say!("published: cars with github:{} see it on their next check", o.repo);
+        } else {
+            crate::say!("published, but GitHub still serves the old index after 60 s; cars see the new one within minutes");
+        }
+    }
     Ok(0)
 }
 

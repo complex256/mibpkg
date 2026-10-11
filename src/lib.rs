@@ -46,5 +46,6 @@ pub mod fetch;
 pub mod online;
 pub mod sourcelist;
 pub mod catalog;
+pub mod publish;
 pub mod firewall;
 pub mod web;
