@@ -196,9 +196,18 @@ fn fetch_one(fetcher: &dyn Fetcher, source: &str) -> Result<Cached> {
 }
 
 fn store_one(ctx: &Ctx, cached: &Cached) -> Result<()> {
+    let path = cache_path(&ctx.layout, &cached.index.collection.id);
+    // One enabled source per collection id: without signatures this is what stops one source
+    // from replacing another's packages. The cache records which source owns the id.
+    let owner = fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str::<Cached>(&t).ok()).map(|c| c.source);
+    if let Some(owner) = owner {
+        let owner_enabled = effective_sources(&ctx.layout).iter().any(|e| e.enabled && e.source == owner);
+        if owner != cached.source && owner_enabled {
+            bail!("collection {} is already provided by {owner}", cached.index.collection.id);
+        }
+    }
     let mut text = serde_json::to_string_pretty(cached)?;
     text.push('\n');
-    let path = cache_path(&ctx.layout, &cached.index.collection.id);
     if fs::read_to_string(&path).ok().as_deref() != Some(text.as_str()) {
         let _rw = ctx.mounts.rw("/mnt/app")?;
         atomic_write(&path, text.as_bytes())?;

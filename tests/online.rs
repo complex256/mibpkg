@@ -200,3 +200,26 @@ fn unit_fetcher_measures_the_clock_itself_when_needed() {
     fs::write(f.layout.run("clock_offset"), "77").unwrap();
     assert_eq!(c.verify_offset().unwrap(), Some(77), "uses the offset measured this boot");
 }
+
+#[test]
+fn a_second_source_cannot_take_an_enabled_sources_collection_id() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let (m, _) = published(&f, &["1.0.0"]);
+    // The same index (collection id "complex256") also served by a second source.
+    let index = m.files.borrow().get(URL).unwrap().clone();
+    m.files.borrow_mut().insert("https://github.com/mallory/copy/releases/latest/download/index.json".into(), index);
+    online::check(&ctx, &m);
+    online::add_source(&f.layout, "github:mallory/copy").unwrap();
+    let r = online::check(&ctx, &m);
+    assert_eq!(r.errors.len(), 1, "{:?}", r.errors);
+    assert!(r.errors[0].contains("already provided by"), "{:?}", r.errors);
+    assert!(online::load_errors(&f.layout).sources["github:mallory/copy"].contains("already provided by"));
+    // Removing the owner frees the id for the other source.
+    online::remove_source(&f.layout, mibpkg::online::DEFAULT_SOURCE).unwrap();
+    let r = online::check(&ctx, &m);
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    let cached: online::Cached = serde_json::from_str(&fs::read_to_string(online::cache_path(&f.layout, "complex256")).unwrap()).unwrap();
+    assert_eq!(cached.source, "github:mallory/copy");
+}
