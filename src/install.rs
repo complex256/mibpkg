@@ -58,6 +58,22 @@ pub fn cleanup_stale(layout: &Layout) -> Result<()> {
     Ok(())
 }
 
+/// Collections an installed package takes updates from: its recorded collection while any card
+/// or online source has it; otherwise (the package moved) every present collection offering the
+/// name. Packages installed from an uploaded file never take updates.
+pub fn update_sources(recorded: &str, name: &str, colls: &[Collection]) -> Vec<String> {
+    if recorded == crate::index::RESERVED_COLLECTION {
+        return Vec::new();
+    }
+    if colls.iter().any(|c| c.id() == recorded) {
+        return vec![recorded.to_string()];
+    }
+    let mut ids: Vec<String> = colls.iter().filter(|c| c.latest(name).is_some()).map(|c| c.id().to_string()).collect();
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
 pub fn pick_collection<'c>(
     state: &State,
     colls: &'c [Collection],
@@ -83,6 +99,15 @@ pub fn pick_collection<'c>(
         bail!("{name} was installed from an uploaded file; remove it first to install it from a collection");
     }
     if let Some(want) = want {
+        if id.is_none() {
+            // No explicit choice: the recorded collection, or where the package moved to.
+            let ids = update_sources(&want, name, colls);
+            return match ids.len() {
+                0 => bail!("collection {want} is not on any card or online"),
+                1 => best_of(&ids[0]).with_context(|| format!("collection {} is not on any card or online", ids[0])),
+                _ => bail!("{name}: collection {want} is gone and several collections offer it ({}); choose one", ids.join(", ")),
+            };
+        }
         return best_of(&want).with_context(|| format!("collection {want} is not on any card or online"));
     }
     let mut ids: Vec<&str> = colls.iter().filter(|c| c.latest(name).is_some()).map(|c| c.id()).collect();
@@ -141,7 +166,8 @@ pub fn install(ctx: &Ctx, media: &[PathBuf], coll: &Collection, name: &str) -> R
     let state = State::load(layout)?;
     let previous = state.packages.get(name).cloned();
     if let Some(p) = &previous {
-        if p.collection != coll_id {
+        let recorded_present = crate::catalog::collections(layout).iter().any(|c| c.id() == p.collection);
+        if p.collection != coll_id && recorded_present {
             bail!("{name} is installed from collection {}; remove it before installing it from {coll_id}", p.collection);
         }
         match cmp_versions(&entry.version, &p.version) {
@@ -364,10 +390,14 @@ pub fn install_file(
 pub fn updates_available(state: &State, colls: &[Collection], unit: &crate::unit::UnitInfo) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for (name, inst) in &state.packages {
+        let ids = update_sources(&inst.collection, name, colls);
+        if ids.len() != 1 {
+            continue; // nothing to update from, or a choice only the user can make
+        }
         // Card and online copies of the same collection: the newest compatible version counts.
         let best = colls
             .iter()
-            .filter(|c| c.id() == inst.collection)
+            .filter(|c| c.id() == ids[0])
             .filter_map(|c| c.latest_compatible(name, unit))
             .max_by(|a, b| cmp_versions(&a.version, &b.version));
         if let Some(e) = best {

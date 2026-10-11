@@ -330,3 +330,70 @@ fn a_self_update_hands_the_supervisor_restart_to_launch_sh() {
     mibpkg::control::selfupdate_done(&f.layout);
     assert!(!mibpkg::control::supervisor_start_deferred(&f.layout));
 }
+
+fn card_colls(f: &common::Fixture) -> Vec<mibpkg::index::Collection> {
+    mibpkg::media::loaded(&mibpkg::media::scan(&f.layout))
+}
+
+/// demo 1.0.0 installed from collection "old"; then the card only has `ids` offering 1.1.0.
+fn moved_setup(ids: &[&str]) -> (common::Fixture, RecordingSys) {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let v1 = common::pkg_src(f.root(), "demo", "1.0.0", "sleep 30", "");
+    let old = common::collection(&f.sd(), "old", &[v1]);
+    {
+        let ctx = Ctx::new(f.layout.clone(), &sys);
+        let colls = card_colls(&f);
+        let c = install::pick_collection(&State::default(), &colls, "demo", Some("old"), &ctx.unit).unwrap();
+        install::install(&ctx, &mibpkg::media::roots(&f.layout), c, "demo").unwrap();
+    }
+    std::fs::remove_dir_all(old).unwrap();
+    let v2 = common::pkg_src(f.root(), "demo", "1.1.0", "sleep 30", "");
+    for id in ids {
+        common::collection(&f.sd(), id, &[v2.clone()]);
+    }
+    (f, sys)
+}
+
+#[test]
+fn a_package_whose_collection_is_gone_updates_from_the_one_that_has_it() {
+    let (f, sys) = moved_setup(&["new"]);
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let state = State::load(&f.layout).unwrap();
+    let colls = card_colls(&f);
+    assert_eq!(install::update_sources("old", "demo", &colls), vec!["new".to_string()]);
+    assert_eq!(install::updates_available(&state, &colls, &ctx.unit), vec![("demo".into(), "1.1.0".into())]);
+    let c = install::pick_collection(&state, &colls, "demo", None, &ctx.unit).unwrap();
+    assert_eq!(c.id(), "new");
+    install::install(&ctx, &mibpkg::media::roots(&f.layout), c, "demo").unwrap();
+    assert_eq!(State::load(&f.layout).unwrap().packages["demo"].collection, "new");
+}
+
+#[test]
+fn several_new_homes_need_a_choice() {
+    let (f, sys) = moved_setup(&["new-a", "new-b"]);
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let state = State::load(&f.layout).unwrap();
+    let colls = card_colls(&f);
+    assert!(install::updates_available(&state, &colls, &ctx.unit).is_empty());
+    let e = install::pick_collection(&state, &colls, "demo", None, &ctx.unit).unwrap_err().to_string();
+    assert!(e.contains("new-a") && e.contains("new-b"), "{e}");
+    let c = install::pick_collection(&state, &colls, "demo", Some("new-b"), &ctx.unit).unwrap();
+    install::install(&ctx, &mibpkg::media::roots(&f.layout), c, "demo").unwrap();
+    assert_eq!(State::load(&f.layout).unwrap().packages["demo"].collection, "new-b");
+}
+
+#[test]
+fn the_cross_collection_guard_holds_while_the_recorded_collection_is_present() {
+    let (f, sys) = moved_setup(&["new"]);
+    // Put "old" back (still offering 1.0.0): it is present again, so "new" is refused.
+    let v1 = common::pkg_src(f.root(), "demo", "1.0.0", "sleep 30", "");
+    common::collection(&f.sd(), "old", &[v1]);
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let state = State::load(&f.layout).unwrap();
+    let colls = card_colls(&f);
+    assert_eq!(install::update_sources("old", "demo", &colls), vec!["old".to_string()]);
+    let c = install::pick_collection(&state, &colls, "demo", Some("new"), &ctx.unit).unwrap();
+    let e = install::install(&ctx, &mibpkg::media::roots(&f.layout), c, "demo").unwrap_err().to_string();
+    assert!(e.contains("remove it before installing it from new"), "{e}");
+}

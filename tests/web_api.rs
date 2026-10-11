@@ -133,3 +133,24 @@ fn sources_and_settings_never_leak_the_pin() {
     let (_, v) = body(api::sources(&app));
     assert_eq!(v[0]["source"], mibpkg::online::DEFAULT_SOURCE);
 }
+
+#[test]
+fn moved_packages_name_where_their_update_comes_from() {
+    let f = common::fixture();
+    let sys = mibpkg::sys::RecordingSys::default();
+    let v1 = common::pkg_src(f.root(), "demo", "1.0.0", "sleep 30", "");
+    let old = common::collection(&f.sd(), "old", &[v1]);
+    {
+        let ctx = Ctx::new(f.layout.clone(), &sys);
+        let colls = mibpkg::media::loaded(&mibpkg::media::scan(&f.layout));
+        install::install(&ctx, &mibpkg::media::roots(&f.layout), &colls[0], "demo").unwrap();
+    }
+    fs::remove_dir_all(old).unwrap();
+    let v2 = common::pkg_src(f.root(), "demo", "1.1.0", "sleep 30", "");
+    common::collection(&f.sd(), "new", &[v2]);
+    let app = App::new(f.layout.clone(), Box::new(|| None));
+    let (_, v) = body(api::packages(&app));
+    let demo = v.as_array().unwrap().iter().find(|p| p["name"] == "demo").unwrap();
+    assert_eq!(demo["update"], "1.1.0");
+    assert_eq!(demo["update_from"], "new");
+}

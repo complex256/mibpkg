@@ -46,7 +46,7 @@ function pillFor(p) {
     return {
       label: 'Update',
       primary: true,
-      act: () => run({ action: 'install', package: p.name, collection: p.installed.collection }, p.name),
+      act: () => run({ action: 'install', package: p.name, collection: p.update_from }, p.name),
     };
   }
   if (p.installed) {

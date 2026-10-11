@@ -66,6 +66,16 @@ pub struct PkgView {
     pub available: Vec<Avail>,
     /// Newer compatible version in the package's own collection.
     pub update: Option<String>,
+    /// The collection `update` comes from (the recorded one, or where the package moved).
+    pub update_from: Option<String>,
+    /// The recorded collection is gone and several offer something newer: the user picks one.
+    pub moved_choices: Vec<MovedChoice>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MovedChoice {
+    pub collection: String,
+    pub version: String,
 }
 
 /// Parsed indexes, keyed by file, valid while the file's size and modification time are unchanged.
@@ -156,6 +166,7 @@ pub fn build(layout: &Layout, unit: &UnitInfo) -> Vec<PkgView> {
         }
     }
 
+    let colls: Vec<Collection> = srcs.iter().map(|(c, _)| c.clone()).collect();
     let mut names: Vec<String> = offered.keys().cloned().collect();
     names.extend(state.packages.keys().cloned());
     names.sort();
@@ -202,21 +213,34 @@ pub fn build(layout: &Layout, unit: &UnitInfo) -> Vec<PkgView> {
                     configs,
                 }
             });
-            let update = installed.as_ref().and_then(|i| {
+            let newer_in = |id: &str, inst: &Inst| {
                 available
                     .iter()
-                    .filter(|a| a.collection == i.collection && a.compatible)
+                    .filter(|a| a.collection == id && a.compatible)
                     .map(|a| a.version.clone())
                     .max_by(|a, b| cmp_versions(a, b))
-                    .filter(|v| cmp_versions(v, &i.version) == Ordering::Greater)
-            });
+                    .filter(|v| cmp_versions(v, &inst.version) == Ordering::Greater)
+            };
+            let ids = installed.as_ref().map(|i| crate::install::update_sources(&i.collection, &name, &colls)).unwrap_or_default();
+            let (update, update_from, moved_choices) = match (installed.as_ref(), ids.len()) {
+                (Some(i), 1) => {
+                    let v = newer_in(&ids[0], i);
+                    let from = v.as_ref().map(|_| ids[0].clone());
+                    (v, from, Vec::new())
+                }
+                (Some(i), n) if n > 1 => {
+                    let choices = ids.iter().filter_map(|id| newer_in(id, i).map(|version| MovedChoice { collection: id.clone(), version })).collect();
+                    (None, None, choices)
+                }
+                _ => (None, None, Vec::new()),
+            };
             let description = available
                 .iter()
                 .map(|a| a.description.clone())
                 .find(|d| !d.is_empty())
                 .or_else(|| manifest.as_ref().map(|m| m.package.description.clone()))
                 .unwrap_or_default();
-            PkgView { name, description, installed, available, update }
+            PkgView { name, description, installed, available, update, update_from, moved_choices }
         })
         .collect()
 }
