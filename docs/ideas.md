@@ -112,7 +112,9 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
     official collection online, GEM Check for updates -> Update over the internet.
   - [next] M2 signatures + trust on first use: signed index.json, key pinned on enable, "key changed"
     refusal + Trust new key; SD copy must verify when its id is pinned. Build with M4's signing half.
-  - [later] M3 sources: community source list (tap to enable), SD sources.toml, mibpkg_online screen
+  - [designing 2026-10-11, unsigned] M3 sources + M4 publisher tooling: spec
+    docs/superpowers/specs/2026-10-11-online-sources-publishing-design.md (signatures/M2 deferred).
+  - [was] M3 sources: community source list (tap to enable), SD sources.toml, mibpkg_online screen
     (now also a web UI page).
   - [later] M4 publisher tooling: keygen --github, automatic signing, `mibpkg release` (carries old versions
     forward), `mibpkg verify`, key-rotation guard, GitHub Action, community list repo + CI.
@@ -176,6 +178,8 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
   when the recorded collection is not on any card or online, offer updates from the one collection that has
   the package (and record the new id on install). Until then: `mibpkg install <pkg> <new-id>` over ssh.
 - [later] Contribution/signing model for third-party authors (spec: online-updates M2/M4).
+- [before going public, user 2026-10-11] First-time install: how a new user gets mibpkg onto their car
+  (today: M.I.B. "Run Custom Script" SD bootstrap). Needs its own design before the repo goes public.
 
 ## Review minors (deferred from the v1 final review, 2026-09-26)
 - [done 2026-09-27, robustness pass] all v1 review minors: fsync staged startup.sh; boot.d write-then-prune;
