@@ -122,18 +122,16 @@ pub fn config_get(app: &App, name: &str, n: usize) -> Response {
     Response::json(200, &json!({ "path": c.path, "required": c.required, "exists": exists, "content": content, "example": c.example, "card": card }))
 }
 
-/// GET /api/sources — each source with the collection its cached index holds.
+/// GET /api/sources — enabled sources (with the collection their cached index holds and the last
+/// check's error), sources that could be enabled (community list, SD card), and the list status.
 pub fn sources(app: &App) -> Response {
-    let cached = crate::online::collections(&app.layout);
-    let caches: Vec<crate::online::Cached> = fs::read_dir(app.layout.state_dir().join("online"))
-        .map(|rd| {
-            rd.filter_map(|e| e.ok())
-                .filter_map(|e| fs::read_to_string(e.path()).ok())
-                .filter_map(|t| serde_json::from_str(&t).ok())
-                .collect()
-        })
+    let layout = &app.layout;
+    let cached = crate::online::collections(layout);
+    let caches: Vec<crate::online::Cached> = fs::read_dir(layout.state_dir().join("online"))
+        .map(|rd| rd.filter_map(|e| e.ok()).filter_map(|e| fs::read_to_string(e.path()).ok()).filter_map(|t| serde_json::from_str(&t).ok()).collect())
         .unwrap_or_default();
-    let list: Vec<_> = crate::online::effective_sources(&app.layout)
+    let errors = crate::online::load_errors(layout);
+    let sources: Vec<_> = crate::online::effective_sources(layout)
         .into_iter()
         .map(|s| {
             let c = caches.iter().find(|c| c.source == s.source);
@@ -145,10 +143,26 @@ pub fn sources(app: &App) -> Response {
                 "collection": c.map(|c| c.index.collection.id.clone()),
                 "collection_name": c.map(|c| c.index.collection.name.clone()),
                 "packages": packages,
+                "error": errors.sources.get(&s.source),
             })
         })
         .collect();
-    Response::json(200, &list)
+    let list = crate::sourcelist::load_cache(layout);
+    let available = crate::sourcelist::available(layout, list.as_ref().map(|l| l.entries.as_slice()).unwrap_or(&[]));
+    let url = crate::sourcelist::list_url(&layout.settings.online_list).ok().flatten();
+    Response::json(
+        200,
+        &json!({
+            "sources": sources,
+            "available": available,
+            "list": {
+                "url": url,
+                "fetched_at": list.as_ref().map(|l| l.fetched_at),
+                "error": errors.list,
+                "skipped": list.as_ref().map(|l| l.skipped.clone()).unwrap_or_default(),
+            },
+        }),
+    )
 }
 
 /// GET /api/settings — never includes the PIN hash.

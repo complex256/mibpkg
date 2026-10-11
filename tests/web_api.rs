@@ -131,7 +131,7 @@ fn sources_and_settings_never_leak_the_pin() {
     assert_eq!(v["pin_set"], true);
     assert_eq!(v["listen"][0], "hotspot");
     let (_, v) = body(api::sources(&app));
-    assert_eq!(v[0]["source"], mibpkg::online::DEFAULT_SOURCE);
+    assert_eq!(v["sources"][0]["source"], mibpkg::online::DEFAULT_SOURCE);
 }
 
 #[test]
@@ -153,4 +153,28 @@ fn moved_packages_name_where_their_update_comes_from() {
     let demo = v.as_array().unwrap().iter().find(|p| p["name"] == "demo").unwrap();
     assert_eq!(demo["update"], "1.1.0");
     assert_eq!(demo["update_from"], "new");
+}
+
+#[test]
+fn sources_lists_what_could_be_enabled() {
+    let (f, _) = setup();
+    fs::create_dir_all(f.sd().join("mibpkg")).unwrap();
+    fs::write(f.sd().join("mibpkg/sources.toml"), "[[source]]\nname = \"Alice\"\nsource = \"github:alice/mib-tools\"\n").unwrap();
+    let cache = mibpkg::sourcelist::ListCache {
+        fetched_at: 1_800_000_000,
+        url: "https://github.com/complex256/mibpkg-packages/releases/latest/download/sources.json".into(),
+        entries: vec![mibpkg::sourcelist::ListEntry { name: "Bob".into(), description: "tools".into(), source: "github:bob/x".into() }],
+        skipped: vec!["entry 2: name must be 1-60 characters".into()],
+    };
+    mibpkg::sourcelist::store_cache(&f.layout, &cache).unwrap();
+    fs::write(f.layout.run("online-errors.json"), r#"{"sources":{"github:complex256/mibpkg-packages":"HTTP 404"},"list":null}"#).unwrap();
+    let app = App::new(f.layout.clone(), Box::new(|| None));
+    let (_, v) = body(api::sources(&app));
+    let avail = v["available"].as_array().unwrap();
+    assert_eq!(avail.len(), 2, "{v}");
+    assert_eq!(avail[0]["origin"], "card");
+    assert_eq!(avail[1]["source"], "github:bob/x");
+    assert_eq!(v["list"]["fetched_at"], 1_800_000_000u64);
+    assert_eq!(v["list"]["skipped"][0], "entry 2: name must be 1-60 characters");
+    assert_eq!(v["sources"][0]["error"], "HTTP 404");
 }
