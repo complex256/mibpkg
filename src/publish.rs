@@ -257,3 +257,93 @@ pub fn wait_live(fetcher: &dyn Fetcher, url: &str, want: &[u8], timeout: Duratio
         std::thread::sleep(every);
     }
 }
+
+#[derive(Debug, Default)]
+pub struct VerifyReport {
+    pub checked: usize,
+    pub problems: Vec<String>,
+    pub notes: Vec<String>,
+}
+
+/// Check a source (github:… / https://…index.json), a local index.json, or a release output dir
+/// the way a car would. Err only when no index can be read at all.
+pub fn verify(target: &str, latest_only: bool, unit: Option<&crate::unit::UnitInfo>, fetcher: &dyn Fetcher) -> Result<VerifyReport> {
+    let path = Path::new(target);
+    let (bytes, base, local) = if path.exists() {
+        let file = if path.is_dir() { path.join("index.json") } else { path.to_path_buf() };
+        let dir = file.parent().map(Path::to_path_buf).unwrap_or_default();
+        (fs::read(&file).with_context(|| format!("reading {}", file.display()))?, "https://local.invalid/".to_string(), Some(dir))
+    } else {
+        let url = crate::online::index_url(target)?;
+        (fetcher.get(&url, MAX_INDEX)?, crate::online::base_of(&url), None)
+    };
+    let mut r = VerifyReport::default();
+    let index: Index = serde_json::from_slice(&bytes).context("not a valid index.json")?;
+    let coll = match Collection::from_online(index, &base) {
+        Ok(c) => c,
+        Err(e) => {
+            r.problems.push(format!("index: {e:#}"));
+            return Ok(r);
+        }
+    };
+    let mut entries: Vec<&IndexEntry> = coll.index.packages.iter().collect();
+    if latest_only {
+        entries.retain(|e| coll.latest(&e.name).map_or(false, |l| l.version == e.version));
+    }
+    // One temp file per call: verify can run on several threads of one process (tests).
+    static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = std::env::temp_dir().join(format!("mibpkg-verify-{}-{n}.mpk", std::process::id()));
+    for e in entries {
+        r.checked += 1;
+        let what = format!("{} {}", e.name, e.version);
+        if let Some(u) = unit {
+            if !e.compat.matches(u) {
+                r.notes.push(format!("{what}: not for {}", u.unit.as_deref().unwrap_or("this unit")));
+            }
+        }
+        let basename = e.file.rsplit('/').next().unwrap_or(&e.file);
+        let got = match &local {
+            Some(dir) if dir.join(basename).is_file() => fs::read(dir.join(basename)).map_err(anyhow::Error::from),
+            _ => match coll.location(e) {
+                crate::index::Location::Remote(url) => fetcher.get(&url, crate::fetch::MAX_PACKAGE),
+                crate::index::Location::Local(p) => fs::read(&p).map_err(anyhow::Error::from),
+            },
+        };
+        let bytes = match got {
+            Ok(b) => b,
+            Err(err) => {
+                r.problems.push(format!("{what}: {err:#}"));
+                continue;
+            }
+        };
+        if let Err(err) = fs::write(&tmp, &bytes) {
+            r.problems.push(format!("{what}: writing a temp file: {err}"));
+            continue;
+        }
+        let (sha, size) = match sha256_file(&tmp) {
+            Ok(x) => x,
+            Err(err) => {
+                r.problems.push(format!("{what}: {err:#}"));
+                continue;
+            }
+        };
+        if size != e.size || sha != e.sha256 {
+            r.problems.push(format!("{what}: size/sha256 do not match the index (got {size} bytes, sha256 {sha})"));
+            continue;
+        }
+        match Package::read(&tmp) {
+            Err(err) => r.problems.push(format!("{what}: not a valid package: {err:#}")),
+            Ok(p) => {
+                let m = &p.manifest;
+                if m.package.name != e.name || m.package.version != e.version {
+                    r.problems.push(format!("{what}: the file holds {} {}", m.package.name, m.package.version));
+                } else if m.uses_scripts() != e.uses_scripts {
+                    r.problems.push(format!("{what}: uses_scripts is {} in the index but {} in the package", e.uses_scripts, m.uses_scripts()));
+                }
+            }
+        }
+    }
+    let _ = fs::remove_file(&tmp);
+    Ok(r)
+}

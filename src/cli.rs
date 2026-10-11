@@ -25,6 +25,7 @@ const USAGE: &str = "usage:
   mibpkg build <src-dir> <out-dir>
   mibpkg index <collection-dir> --id ID --name NAME [--flat]
   mibpkg release <pkg-dir|file.mpk>... --repo OWNER/REPO --tag TAG [--id ID --name NAME [--new-id]] [--keep N] [--out DIR] [--asset FILE]... [--publish]
+  mibpkg verify <github:owner/repo|index.json|release-dir> [--latest] [--unit MHI2Q]
   mibpkg [--root DIR] [--no-supervisor] <command>
     supervise | status | list | install <pkg> [collection] | remove <pkg> [--purge]
     rollback <pkg> | restart <pkg> | rescan | update-all | gem <action> [args..]
@@ -68,6 +69,7 @@ pub fn run(args: &[String]) -> Result<i32> {
         "build" => return host_build(args),
         "index" => return host_index(args),
         "release" => return host_release(args),
+        "verify" => return host_verify(args),
         "help" | "--help" | "-h" => {
             crate::say!("{USAGE}");
             return Ok(0);
@@ -631,6 +633,31 @@ fn host_release(args: &[String]) -> Result<i32> {
         }
     }
     Ok(0)
+}
+
+fn host_verify(args: &[String]) -> Result<i32> {
+    let mut target = None;
+    let mut latest = false;
+    let mut unit = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--latest" => latest = true,
+            "--unit" => unit = Some(crate::unit::UnitInfo { unit: Some(it.next().context("--unit needs a unit, e.g. MHI2Q")?.to_uppercase()), firmware: None }),
+            s if s.starts_with("--") => bail!("unexpected option {s}"),
+            s => target = Some(s.to_string()),
+        }
+    }
+    let target = target.context("verify needs a source (github:owner/repo), an index.json, or a release directory")?;
+    let r = crate::publish::verify(&target, latest, unit.as_ref(), &crate::fetch::CurlFetcher::for_host())?;
+    for n in &r.notes {
+        crate::say!("note: {n}");
+    }
+    for p in &r.problems {
+        crate::say!("problem: {p}");
+    }
+    crate::say!("{} package(s) checked, {} problem(s)", r.checked, r.problems.len());
+    Ok(if r.problems.is_empty() { 0 } else { 1 })
 }
 
 fn host_index(args: &[String]) -> Result<i32> {

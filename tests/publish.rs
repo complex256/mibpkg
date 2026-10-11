@@ -164,3 +164,85 @@ fn wait_live_sees_the_new_index() {
     assert!(publish::wait_live(&m, LATEST, b"new", d, d));
     assert!(!publish::wait_live(&m, LATEST, b"other", d, d));
 }
+
+/// A published release served by a MemoryFetcher: index + package bytes at their URLs.
+fn published_release(f: &common::Fixture, versions: &[&str]) -> (MemoryFetcher, Index) {
+    let m = MemoryFetcher::default();
+    let gh = FakeGh::default();
+    let mut index = None;
+    for (i, v) in versions.iter().enumerate() {
+        let src = common::pkg_src(f.root(), "demo", v, "sleep 30", "");
+        let tag = format!("v{i}");
+        let o = opts(f, vec![src], &tag);
+        let r = publish::release(&o, &m, &gh).unwrap();
+        for p in &r.files {
+            let n = p.file_name().unwrap().to_string_lossy().to_string();
+            if n.ends_with(".mpk") {
+                m.files.borrow_mut().insert(publish::download_url(REPO, &tag, &n), fs::read(p).unwrap());
+            }
+        }
+        serve(&m, &r.index);
+        index = Some(r.index);
+    }
+    (m, index.unwrap())
+}
+
+#[test]
+fn verify_passes_a_good_source() {
+    let f = common::fixture();
+    let (m, _) = published_release(&f, &["1.0.0", "1.1.0"]);
+    let r = publish::verify("github:alice/tools", false, None, &m).unwrap();
+    assert!(r.problems.is_empty(), "{:?}", r.problems);
+    assert_eq!(r.checked, 2);
+    assert_eq!(publish::verify("github:alice/tools", true, None, &m).unwrap().checked, 1);
+}
+
+#[test]
+fn verify_reports_every_problem() {
+    let f = common::fixture();
+    let (m, mut idx) = published_release(&f, &["1.0.0", "1.1.0"]);
+    idx.packages[0].sha256 = "0".repeat(64); // 1.0.0: wrong hash
+    idx.packages[1].version = "1.2.0".into(); // 1.1.0's file claims 1.2.0
+    serve(&m, &idx);
+    let r = publish::verify("github:alice/tools", false, None, &m).unwrap();
+    assert_eq!(r.problems.len(), 2, "{:?}", r.problems);
+    assert!(r.problems.iter().any(|p| p.contains("sha256")), "{:?}", r.problems);
+    assert!(r.problems.iter().any(|p| p.contains("holds demo 1.1.0")), "{:?}", r.problems);
+}
+
+#[test]
+fn verify_reports_unreachable_files_and_bad_indexes() {
+    let f = common::fixture();
+    let (m, idx) = published_release(&f, &["1.0.0"]);
+    m.files.borrow_mut().retain(|k, _| k.ends_with("index.json"));
+    let r = publish::verify("github:alice/tools", false, None, &m).unwrap();
+    assert!(r.problems[0].contains("404"), "{:?}", r.problems);
+    let mut bad = idx.clone();
+    bad.packages[0].file = "http://insecure/demo-1.0.0.mpk".into();
+    serve(&m, &bad);
+    assert!(publish::verify("github:alice/tools", false, None, &m).unwrap().problems[0].contains("https"));
+    assert!(publish::verify("github:nobody/none", false, None, &m).is_err());
+}
+
+#[test]
+fn verify_checks_a_local_release_dir_before_publishing() {
+    let f = common::fixture();
+    let src = common::pkg_src(f.root(), "demo", "1.0.0", "sleep 30", "");
+    let o = opts(&f, vec![src], "v1");
+    publish::release(&o, &MemoryFetcher::default(), &FakeGh::default()).unwrap();
+    let r = publish::verify(o.out.to_str().unwrap(), false, None, &MemoryFetcher::default()).unwrap();
+    assert!(r.problems.is_empty(), "{:?}", r.problems);
+    assert_eq!(r.checked, 1);
+}
+
+#[test]
+fn verify_notes_entries_another_unit_cannot_use() {
+    let f = common::fixture();
+    let src = common::pkg_src(f.root(), "demo", "1.0.0", "sleep 30", "[compat]\nunits = [\"MHI2\"]\n");
+    let o = opts(&f, vec![src], "v1");
+    publish::release(&o, &MemoryFetcher::default(), &FakeGh::default()).unwrap();
+    let unit = mibpkg::unit::UnitInfo { unit: Some("MHI2Q".into()), firmware: None };
+    let r = publish::verify(o.out.to_str().unwrap(), false, Some(&unit), &MemoryFetcher::default()).unwrap();
+    assert!(r.problems.is_empty());
+    assert!(r.notes[0].contains("not for MHI2Q"), "{:?}", r.notes);
+}
