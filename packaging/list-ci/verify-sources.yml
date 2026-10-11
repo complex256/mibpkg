@@ -1,0 +1,19 @@
+# On a pull request that changes sources.json: run `mibpkg verify --latest` on every entry.
+name: verify sources
+on:
+  pull_request:
+    paths: ['sources.json']
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download --repo complex256/mibpkg --pattern 'mibpkg-host-linux-x86_64' --output /tmp/mibpkg
+          chmod +x /tmp/mibpkg
+          for s in $(jq -r '.sources[].source' sources.json); do
+            echo "== $s"; /tmp/mibpkg verify "$s" --latest
+          done

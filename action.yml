@@ -1,0 +1,25 @@
+# Publishes a mibpkg release from a package repository. Used by the workflow `mibpkg new` writes.
+# Requires the mibpkg repository to be public (it downloads the Linux host binary from there).
+name: mibpkg release
+description: Build mibpkg packages and publish them as a GitHub release cars can update from
+inputs:
+  packages:
+    description: Package directories or .mpk files, space separated
+    default: .
+  tag:
+    description: Release tag (default the pushed tag)
+    default: ${{ github.ref_name }}
+  args:
+    description: Extra arguments for mibpkg release (e.g. --id, --name, --keep)
+    default: ''
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        gh release download --repo complex256/mibpkg --pattern 'mibpkg-host-linux-x86_64' --output /tmp/mibpkg
+        chmod +x /tmp/mibpkg
+        /tmp/mibpkg release ${{ inputs.packages }} --repo "${{ github.repository }}" --tag "${{ inputs.tag }}" ${{ inputs.args }} --publish

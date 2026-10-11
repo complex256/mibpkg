@@ -1,0 +1,17 @@
+# Attaches the Linux x86_64 host mibpkg (release/verify/new/build/index) to each mibpkg release.
+name: host binary
+on:
+  release:
+    types: [published]
+permissions:
+  contents: write
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo build --release
+      - run: cp target/release/mibpkg mibpkg-host-linux-x86_64
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" mibpkg-host-linux-x86_64 --clobber

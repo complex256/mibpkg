@@ -26,6 +26,7 @@ const USAGE: &str = "usage:
   mibpkg index <collection-dir> --id ID --name NAME [--flat]
   mibpkg release <pkg-dir|file.mpk>... --repo OWNER/REPO --tag TAG [--id ID --name NAME [--new-id]] [--keep N] [--out DIR] [--asset FILE]... [--publish]
   mibpkg verify <github:owner/repo|index.json|release-dir> [--latest] [--unit MHI2Q]
+  mibpkg new <name> [--dir DIR]
   mibpkg [--root DIR] [--no-supervisor] <command>
     supervise | status | list | install <pkg> [collection] | remove <pkg> [--purge]
     rollback <pkg> | restart <pkg> | rescan | update-all | gem <action> [args..]
@@ -70,6 +71,7 @@ pub fn run(args: &[String]) -> Result<i32> {
         "index" => return host_index(args),
         "release" => return host_release(args),
         "verify" => return host_verify(args),
+        "new" => return host_new(args),
         "help" | "--help" | "-h" => {
             crate::say!("{USAGE}");
             return Ok(0);
@@ -658,6 +660,23 @@ fn host_verify(args: &[String]) -> Result<i32> {
     }
     crate::say!("{} package(s) checked, {} problem(s)", r.checked, r.problems.len());
     Ok(if r.problems.is_empty() { 0 } else { 1 })
+}
+
+fn host_new(args: &[String]) -> Result<i32> {
+    let name = arg(args, 0, "package name")?;
+    let mut dir = PathBuf::from(name);
+    let mut it = args[1..].iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--dir" => dir = PathBuf::from(it.next().context("--dir needs a directory")?),
+            other => bail!("unexpected argument {other:?}"),
+        }
+    }
+    for f in crate::scaffold::new_package(&dir, name)? {
+        crate::say!("{}", f.display());
+    }
+    crate::say!("next: put your program at {}/bin/{name}, then `mibpkg release` (see README.md)", dir.display());
+    Ok(0)
 }
 
 fn host_index(args: &[String]) -> Result<i32> {
