@@ -461,7 +461,7 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
 }
 
 /// Fetch the online indexes (configured sources) and report; never fails the caller.
-type Fetched = Vec<(String, Result<crate::online::Cached>)>;
+type Fetched = crate::online::Fetched;
 
 /// Fetches every online source; needs no lock. Err is the finished status line.
 fn online_fetch(ctx: &Ctx) -> std::result::Result<Fetched, String> {

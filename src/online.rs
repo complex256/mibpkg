@@ -168,6 +168,8 @@ pub struct Report {
     pub checked: usize,
     pub errors: Vec<String>,
     pub updates: Vec<(String, String)>,
+    /// The community list could not be fetched (the check itself still counts as done).
+    pub list_error: Option<String>,
 }
 
 impl Report {
@@ -176,6 +178,9 @@ impl Report {
         let mut s = format!("{when}, {} update{}", self.updates.len(), if self.updates.len() == 1 { "" } else { "s" });
         if !self.errors.is_empty() {
             s.push_str(&format!("; {}", self.errors.join("; ")));
+        }
+        if let Some(e) = &self.list_error {
+            s.push_str(&format!("; list: {e}"));
         }
         s
     }
@@ -201,28 +206,65 @@ fn store_one(ctx: &Ctx, cached: &Cached) -> Result<()> {
     Ok(())
 }
 
-/// Every configured source's index, fetched and validated. Touches nothing on the unit, so it
-/// runs without the action lock (network I/O can take minutes).
-pub fn fetch_all(ctx: &Ctx, fetcher: &dyn Fetcher) -> Vec<(String, Result<Cached>)> {
-    effective_sources(&ctx.layout)
+/// What the network part of a check got: each enabled source's index, and the list when due.
+pub struct Fetched {
+    pub indexes: Vec<(String, Result<Cached>)>,
+    pub list: Option<Result<crate::sourcelist::ListCache>>,
+}
+
+/// Problems from the last check, for the Sources screen (RAM: /tmp/mibpkg.online-errors.json).
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct OnlineErrors {
+    pub sources: std::collections::BTreeMap<String, String>,
+    pub list: Option<String>,
+}
+
+pub fn load_errors(layout: &Layout) -> OnlineErrors {
+    fs::read_to_string(layout.run("online-errors.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+}
+
+/// Every enabled source's index and the list when due, fetched and validated. Touches nothing
+/// on the unit, so it runs without the action lock (network I/O can take minutes).
+pub fn fetch_all(ctx: &Ctx, fetcher: &dyn Fetcher) -> Fetched {
+    let indexes = effective_sources(&ctx.layout)
         .into_iter()
         .filter(|e| e.enabled)
         .map(|e| {
             let got = fetch_one(fetcher, &e.source);
             (e.source, got)
         })
-        .collect()
+        .collect();
+    let list = crate::sourcelist::fetch_list(&ctx.layout, fetcher, crate::sourcelist::real_now(&ctx.layout));
+    Fetched { indexes, list }
 }
 
-/// Caches what `fetch_all` got (failed sources keep their previous cache) and reports updates.
-/// Run under the action lock.
-pub fn store(ctx: &Ctx, fetched: Vec<(String, Result<Cached>)>) -> Report {
+/// Caches what `fetch_all` got (failed sources keep their previous cache), records problems for
+/// the Sources screen and reports updates. Run under the action lock.
+pub fn store(ctx: &Ctx, fetched: Fetched) -> Report {
     let mut r = Report::default();
-    for (source, got) in fetched {
+    let mut errs = OnlineErrors::default();
+    for (source, got) in fetched.indexes {
         match got.and_then(|c| store_one(ctx, &c)) {
             Ok(()) => r.checked += 1,
-            Err(e) => r.errors.push(format!("{source}: {e:#}")),
+            Err(e) => {
+                errs.sources.insert(source.clone(), format!("{e:#}"));
+                r.errors.push(format!("{source}: {e:#}"));
+            }
         }
+    }
+    match fetched.list {
+        Some(Ok(list)) => {
+            let stored = ctx.mounts.rw("/mnt/app").and_then(|_rw| crate::sourcelist::store_cache(&ctx.layout, &list));
+            if let Err(e) = stored {
+                r.list_error = Some(format!("{e:#}"));
+            }
+        }
+        Some(Err(e)) => r.list_error = Some(format!("{e:#}")),
+        None => {}
+    }
+    errs.list = r.list_error.clone();
+    if let Ok(text) = serde_json::to_vec(&errs) {
+        let _ = atomic_write(&ctx.layout.run("online-errors.json"), &text);
     }
     if let Ok(state) = State::load(&ctx.layout) {
         let mut colls = crate::media::loaded(&crate::media::scan(&ctx.layout));

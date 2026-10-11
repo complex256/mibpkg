@@ -21,6 +21,8 @@ pub struct Settings {
     pub conditions: std::collections::BTreeMap<String, String>,
     /// Online sources checked for updates (M1: the official collection).
     pub online_sources: Vec<String>,
+    /// The community source list (sources.json): github:<owner>/<repo> or an https URL; "" = off.
+    pub online_list: String,
 }
 
 impl Default for Settings {
@@ -35,6 +37,7 @@ impl Default for Settings {
             unit: None,
             conditions: Default::default(),
             online_sources: vec![crate::online::DEFAULT_SOURCE.to_string()],
+            online_list: crate::sourcelist::DEFAULT_LIST.to_string(),
         }
     }
 }

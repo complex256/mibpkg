@@ -4,7 +4,9 @@
 use crate::paths::Layout;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
+use crate::fetch::{Fetcher, MAX_INDEX};
 use std::fs;
+use std::path::PathBuf;
 
 pub const LIST_FORMAT: u64 = 1;
 const MAX_NAME: usize = 60;
@@ -120,4 +122,83 @@ pub fn available(layout: &Layout, list: &[ListEntry]) -> Vec<Available> {
         out.push(Available { name: e.name, description: e.description, source: e.source, origin });
     }
     out
+}
+
+pub const DEFAULT_LIST: &str = "github:complex256/mibpkg-packages";
+const FRESH_SECS: u64 = 24 * 3600;
+const Y2020: u64 = 1_577_836_800;
+
+/// Where the list is fetched from; None when the list is turned off ("").
+pub fn list_url(spec: &str) -> Result<Option<String>> {
+    if spec.is_empty() {
+        return Ok(None);
+    }
+    if spec.starts_with("github:") {
+        let idx = crate::online::index_url(spec)?;
+        return Ok(Some(format!("{}sources.json", crate::online::base_of(&idx))));
+    }
+    if spec.starts_with("https://") && spec.ends_with(".json") {
+        return Ok(Some(spec.to_string()));
+    }
+    bail!("online_list {spec:?}: expected github:<owner>/<repo>, an https://…/sources.json URL, or \"\"")
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ListCache {
+    /// Real (network-corrected) seconds when fetched.
+    pub fetched_at: u64,
+    pub url: String,
+    pub entries: Vec<ListEntry>,
+    #[serde(default)]
+    pub skipped: Vec<String>,
+}
+
+pub fn cache_path(layout: &Layout) -> PathBuf {
+    layout.state_dir().join("sources-list.json")
+}
+
+pub fn load_cache(layout: &Layout) -> Option<ListCache> {
+    serde_json::from_str(&fs::read_to_string(cache_path(layout)).ok()?).ok()
+}
+
+/// Real time: the system clock plus the SNTP offset; None while it is obviously unset (the unit
+/// boots at 1970 and has no offset until the first check).
+pub fn real_now(layout: &Layout) -> Option<u64> {
+    let sys = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_secs() as i64;
+    let now = sys + crate::clock::read_offset(layout).unwrap_or(0);
+    (now >= Y2020 as i64).then_some(now as u64)
+}
+
+fn due(cache: Option<&ListCache>, url: &str, now: Option<u64>) -> bool {
+    match (cache, now) {
+        (Some(c), Some(now)) => c.url != url || c.fetched_at > now || now - c.fetched_at >= FRESH_SECS,
+        _ => true,
+    }
+}
+
+/// The list when it is due (missing, from another URL, older than 24 h, or real time unknown);
+/// None when the list is off or the cache is fresh. Touches nothing on the unit.
+pub fn fetch_list(layout: &Layout, fetcher: &dyn Fetcher, now: Option<u64>) -> Option<Result<ListCache>> {
+    let url = match list_url(&layout.settings.online_list) {
+        Ok(Some(u)) => u,
+        Ok(None) => return None,
+        Err(e) => return Some(Err(e)),
+    };
+    if !due(load_cache(layout).as_ref(), &url, now) {
+        return None;
+    }
+    Some((|| {
+        let bytes = fetcher.get(&url, MAX_INDEX)?;
+        let p = parse_list(&bytes).with_context(|| url.clone())?;
+        Ok(ListCache { fetched_at: now.unwrap_or(0), url: url.clone(), entries: p.entries, skipped: p.skipped })
+    })())
+}
+
+/// Caller holds /mnt/app rw (or knows nothing changed).
+pub fn store_cache(layout: &Layout, c: &ListCache) -> Result<()> {
+    let mut text = serde_json::to_string_pretty(c)?;
+    text.push('\n');
+    fs::create_dir_all(layout.state_dir())?;
+    crate::fsutil::atomic_write(&cache_path(layout), text.as_bytes())?;
+    Ok(())
 }

@@ -70,3 +70,86 @@ fn available_excludes_enabled_sources_and_prefers_card_labels() {
     online::add_source(&f.layout, "github:bob/x").unwrap();
     assert!(sourcelist::available(&f.layout, &list).iter().all(|x| x.source != "github:bob/x"));
 }
+
+use mibpkg::ctx::Ctx;
+use mibpkg::fetch::MemoryFetcher;
+use mibpkg::sys::RecordingSys;
+
+const LIST_URL: &str = "https://github.com/complex256/mibpkg-packages/releases/latest/download/sources.json";
+
+#[test]
+fn list_urls() {
+    assert_eq!(sourcelist::list_url("github:o/r").unwrap().unwrap(), "https://github.com/o/r/releases/latest/download/sources.json");
+    assert_eq!(sourcelist::list_url("https://x.org/s/sources.json").unwrap().unwrap(), "https://x.org/s/sources.json");
+    assert_eq!(sourcelist::list_url("").unwrap(), None);
+    assert!(sourcelist::list_url("http://x.org/sources.json").is_err());
+}
+
+fn list_fetcher() -> MemoryFetcher {
+    let m = MemoryFetcher::default();
+    m.files.borrow_mut().insert(LIST_URL.into(), LIST.as_bytes().to_vec());
+    m
+}
+
+#[test]
+fn the_check_fetches_and_caches_the_list() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let m = list_fetcher();
+    let r = online::check(&ctx, &m);
+    assert_eq!(r.list_error, None);
+    let c = sourcelist::load_cache(&f.layout).unwrap();
+    assert_eq!(c.entries.len(), 2);
+    assert_eq!(c.url, LIST_URL);
+    // Fresh (fetched just now with a real host clock): not fetched again.
+    let before = m.calls.borrow().iter().filter(|u| u.as_str() == LIST_URL).count();
+    online::check(&ctx, &m);
+    assert_eq!(m.calls.borrow().iter().filter(|u| u.as_str() == LIST_URL).count(), before);
+}
+
+#[test]
+fn a_stale_or_future_cache_is_refetched() {
+    let f = common::fixture();
+    let now = sourcelist::real_now(&f.layout).expect("host clock is real");
+    let m = list_fetcher();
+    for fetched_at in [now - 25 * 3600, now + 3600] {
+        let c = sourcelist::ListCache { fetched_at, url: LIST_URL.into(), entries: vec![], skipped: vec![] };
+        fs::create_dir_all(f.layout.state_dir()).unwrap();
+        fs::write(sourcelist::cache_path(&f.layout), serde_json::to_string(&c).unwrap()).unwrap();
+        assert!(sourcelist::fetch_list(&f.layout, &m, Some(now)).is_some(), "fetched_at {fetched_at}");
+    }
+    // Unknown real time (unit at boot, no offset yet): always fetched.
+    let c = sourcelist::ListCache { fetched_at: now, url: LIST_URL.into(), entries: vec![], skipped: vec![] };
+    fs::write(sourcelist::cache_path(&f.layout), serde_json::to_string(&c).unwrap()).unwrap();
+    assert!(sourcelist::fetch_list(&f.layout, &m, None).is_some());
+    assert!(sourcelist::fetch_list(&f.layout, &m, Some(now)).is_none(), "fresh cache is used");
+}
+
+#[test]
+fn a_failed_list_fetch_keeps_the_cache_and_does_not_fail_the_check() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    online::check(&ctx, &list_fetcher());
+    let old = sourcelist::load_cache(&f.layout).unwrap();
+    // Force a refetch against a server that no longer has the list.
+    let mut stale = old.clone();
+    stale.fetched_at = 0;
+    fs::write(sourcelist::cache_path(&f.layout), serde_json::to_string(&stale).unwrap()).unwrap();
+    let r = online::check(&ctx, &MemoryFetcher::default());
+    assert!(r.list_error.as_deref().unwrap().contains("404"), "{:?}", r.list_error);
+    assert_eq!(sourcelist::load_cache(&f.layout).unwrap().entries, old.entries);
+    assert!(r.summary(100).contains("list:"), "{}", r.summary(100));
+    assert!(online::load_errors(&f.layout).list.unwrap().contains("404"));
+}
+
+#[test]
+fn an_empty_online_list_setting_turns_the_list_off() {
+    let f = common::fixture();
+    fs::create_dir_all(f.layout.home()).unwrap();
+    fs::write(f.layout.home().join("settings.toml"), "online_list = \"\"\n").unwrap();
+    let layout = mibpkg::paths::Layout::load(f.root()).unwrap();
+    let m = list_fetcher();
+    assert!(sourcelist::fetch_list(&layout, &m, None).is_none());
+}
