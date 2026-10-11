@@ -300,3 +300,13 @@ fn a_tag_that_looks_like_an_option_is_refused() {
     let e = publish::release(&opts(&f, vec![], "--draft"), &MemoryFetcher::default(), &FakeGh::default()).unwrap_err().to_string();
     assert!(e.contains("tag"), "{e}");
 }
+
+#[test]
+fn verify_checks_an_sd_card_collection() {
+    let f = common::fixture();
+    let src = common::pkg_src(f.root(), "demo", "1.0.0", "sleep 30", "");
+    let dir = common::collection(&f.sd(), "complex256-demo", &[src]);
+    let r = publish::verify(dir.to_str().unwrap(), false, None, &MemoryFetcher::default()).unwrap();
+    assert!(r.problems.is_empty(), "{:?}", r.problems);
+    assert_eq!(r.checked, 1);
+}

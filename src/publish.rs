@@ -306,9 +306,15 @@ pub fn verify(target: &str, latest_only: bool, unit: Option<&crate::unit::UnitIn
                 r.notes.push(format!("{what}: not for {}", u.unit.as_deref().unwrap_or("this unit")));
             }
         }
+        // Local: a release output dir holds the file by its basename; an SD card collection by its
+        // relative path (packages/<file>.mpk).
         let basename = e.file.rsplit('/').next().unwrap_or(&e.file);
-        let got = match &local {
-            Some(dir) if dir.join(basename).is_file() => fs::read(dir.join(basename)).map_err(anyhow::Error::from),
+        let local_file = local.as_ref().and_then(|dir| {
+            let rel = (!e.file.contains("://")).then(|| dir.join(&e.file));
+            rel.into_iter().chain([dir.join(basename)]).find(|p| p.is_file())
+        });
+        let got = match &local_file {
+            Some(p) => fs::read(p).map_err(anyhow::Error::from),
             _ => match coll.location(e) {
                 crate::index::Location::Remote(url) => fetcher.get(&url, crate::fetch::MAX_PACKAGE),
                 crate::index::Location::Local(p) => fs::read(&p).map_err(anyhow::Error::from),
