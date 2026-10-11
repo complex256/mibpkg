@@ -1,0 +1,10 @@
+{
+  "format": 1,
+  "sources": [
+    {
+      "name": "mibpkg",
+      "description": "The package manager itself (official collection)",
+      "source": "github:complex256/mibpkg-packages"
+    }
+  ]
+}

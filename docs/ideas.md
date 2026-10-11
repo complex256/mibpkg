@@ -112,7 +112,7 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
     official collection online, GEM Check for updates -> Update over the internet.
   - [next] M2 signatures + trust on first use: signed index.json, key pinned on enable, "key changed"
     refusal + Trust new key; SD copy must verify when its id is pinned. Build with M4's signing half.
-  - [designing 2026-10-11, unsigned] M3 sources + M4 publisher tooling: spec
+  - [built 2026-10-11, mibpkg 0.6.0; verify on the car] M3 sources + M4 publisher tooling: spec
     docs/superpowers/specs/2026-10-11-online-sources-publishing-design.md (signatures/M2 deferred).
   - [was] M3 sources: community source list (tap to enable), SD sources.toml, mibpkg_online screen
     (now also a web UI page).
@@ -173,10 +173,10 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
   `complex256-mibpkg`, already used from release v1 on); change DEFAULT_SOURCE to `github:complex256/mibpkg` in that release and publish it
   once more via mibpkg-packages so 0.3.0 cars move over; then retire mibpkg-packages (or rename it to the
   community source list). carmqtt becomes its own source only when the owner decides to publish it.
-  Gap to solve first: carmqtt on the car records collection `complex256`; once it lives in its own source
-  (`complex256-carmqtt`), GEM offers updates only from the recorded collection. Needs a "package moved" rule:
-  when the recorded collection is not on any card or online, offer updates from the one collection that has
-  the package (and record the new id on install). Until then: `mibpkg install <pkg> <new-id>` over ssh.
+  The "package moved" rule this needed is built (0.6.0): when the recorded collection is on no card and
+  no online source, updates come from the one collection that has the package (several = the user picks).
+  Spec 2026-10-11 supersedes "retire mibpkg-packages": it stays as the community source list repo.
+- Switch on: action.yml, .github/workflows/host-release.yml, packaging/list-ci/verify-sources.yml (copy into mibpkg-packages).
 - [later] Contribution/signing model for third-party authors (spec: online-updates M2/M4).
 - [before going public, user 2026-10-11] First-time install: how a new user gets mibpkg onto their car
   (today: M.I.B. "Run Custom Script" SD bootstrap). Needs its own design before the repo goes public.

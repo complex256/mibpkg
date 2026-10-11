@@ -259,3 +259,11 @@ fn new_scaffolds_a_package_that_builds() {
     assert!(mibpkg::scaffold::new_package(&dir, "mytool").unwrap_err().to_string().contains("not empty"));
     assert!(mibpkg::scaffold::new_package(&f.root().join("x"), "Bad_Name").is_err());
 }
+
+#[test]
+fn the_committed_source_list_is_valid() {
+    let text = fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/packaging/sources.json")).unwrap();
+    let p = mibpkg::sourcelist::parse_list(&text).unwrap();
+    assert!(p.skipped.is_empty(), "{:?}", p.skipped);
+    assert!(p.entries.iter().any(|e| e.source == mibpkg::online::DEFAULT_SOURCE));
+}
