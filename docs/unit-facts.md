@@ -105,3 +105,18 @@ Screenshots (dark mode, 390x844): docs/screenshots/.
 - A web action while GEM runs one (and the reverse): both show busy, nothing breaks.
 - DISABLE card: the web server does not start either.
 - Tailscale: the page loads from a laptop on the tailnet.
+
+## Standalone SWDL installer (2026-10-14)
+mibpkg ships its own SWDL card: `metainfo2.txt` (skip* flags, FinalScript hook) + thin hashed
+`shell/install.sh` → lands payload → `mibpkg bootstrap` (C backbone) → `enable-gem` + `gem-patch
+apply` (B2, best-effort). New commands: `mibpkg enable-gem|disable-gem`, `mibpkg gem-patch
+<apply|status|revert> --from DIR`, host `mibpkg gem-patch build --stock --patched`, host `mibpkg
+swdl-card <out> --payload DIR [--seed DIR] --version V`, and `mibpkg verify <card-dir>`.
+- `enable-gem` writes persistence key 3221356557 ns0 = "1" then commit key 1 ns0 = "0" via stock
+  `pc` (path a). UNVERIFIED on car — spike S1/S2 pending: does `pc`'s string set reach the
+  byte-typed block-5F key, or is an own writer (path b) needed? Does a from-scratch metainfo2 get
+  listed/run with no MIBonk files, and is FinalScriptChecksum enforced?
+- Seed collection lands at `mibpkg/collections/seed/` (media::scan convention), installed once on
+  first boot (marker `state/seeded`).
+- CI smoke-gate to wire at go-public: `mibpkg swdl-card … && mibpkg verify out/card`. No dormant
+  test workflow exists today (only host-release.yml); not added to the live release plumbing.

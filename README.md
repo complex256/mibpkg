@@ -14,6 +14,24 @@ watches the installed services.
 4. Open the web interface (below) to install, update, remove, restart and roll back.
    GEM -> mibpkg shows its address and has the recovery buttons.
 
+### Install from the engineering menu (no M.I.B.)
+
+mibpkg can also install itself directly from the Red/Engineering menu's SW-Update flow, with
+no M.I.B. on the unit. Build a card and write it to a FAT32 SD:
+
+```
+mibpkg swdl-card out/card --payload <dir with mibpkg, launch.sh, gem.sh, ca.pem> --version X.Y
+# optional: --seed <collection-dir> to auto-install a package set on first boot
+mibpkg verify out/card        # checks the manifest hash, payload and patches.toml
+```
+
+Write `out/card` to the SD, insert in **SD1**, then Red/Engineering menu -> SW Update -> select the
+SD -> "mibpkg installer vX.Y" -> START. The unit reboots a few times and comes up with mibpkg
+running; open the web interface (below). On units whose stock GEM renders it, the in-car
+`mibpkg` picker also appears — this part is best-effort (it enables the engineering menu and, where
+a matching jar patch ships, patches the GEM jar); if it can't, the install still completes and the
+web interface is the primary interface.
+
 ### Web interface
 
 mibpkg also serves an app-store-style page from the car, with everything GEM offers plus
