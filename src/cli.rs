@@ -6,6 +6,7 @@ use crate::fsutil;
 use crate::ctx::Ctx;
 use crate::gem;
 use crate::gem_enable;
+use crate::gempatch;
 use crate::hook;
 use crate::index::{build_index, write_index, Collection};
 use crate::install;
@@ -36,7 +37,7 @@ const USAGE: &str = "usage:
     online-check | sntp [host:port] | web
     gem install-file <pkg> <id> <collection|-> | gem config-set <pkg> <n> <id>
     gem source-add <source> | gem source-remove <source> | gem web-settings <id> | gem web-reset | gem web-restart
-    bootstrap | enable-gem | disable-gem | uninstall-self";
+    bootstrap | enable-gem | disable-gem | gem-patch <apply|status|revert> [--from DIR] | uninstall-self";
 
 pub fn run(args: &[String]) -> Result<i32> {
     let mut root = PathBuf::from("/");
@@ -203,6 +204,20 @@ pub fn run(args: &[String]) -> Result<i32> {
             let changed = hook::install_hook(&ctx)?;
             after(&ctx);
             crate::say!("{}", if changed { "boot hook installed" } else { "boot hook already present" });
+            Ok(0)
+        }
+        "gem-patch" => {
+            let _lock = Lock::acquire(&ctx.layout, ctx.sys)?;
+            let sub = arg(args, 0, "apply|status|revert")?;
+            let from = args.iter().position(|a| a == "--from").map(|i| PathBuf::from(&args[i + 1]));
+            let _rw = ctx.mounts.rw("/mnt/app")?;
+            let msg = match sub {
+                "apply" => gempatch::apply(&ctx.layout, &from.context("gem-patch apply needs --from <dir>")?)?,
+                "status" => format!("{:?}", gempatch::status(&ctx.layout, &from.context("gem-patch status needs --from <dir>")?)?),
+                "revert" => gempatch::revert(&ctx.layout)?,
+                other => bail!("gem-patch: unknown subcommand {other:?}"),
+            };
+            crate::say!("{msg}");
             Ok(0)
         }
         "enable-gem" => {
