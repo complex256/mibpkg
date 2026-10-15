@@ -19,7 +19,9 @@ pub fn build_card(out: &Path, payload: &Path, seed: Option<&Path>, version: &str
     fs::write(out.join("metainfo2.txt"), metainfo(version, &hash))?;
     copy_tree(payload, &out.join("mibpkg/payload")).context("copying payload")?;
     if let Some(s) = seed {
-        copy_tree(s, &out.join("mibpkg/collection")).context("copying seed collection")?;
+        // Land the seed where the supervisor's media scan looks (mibpkg/collections/<id>),
+        // so first-boot install finds it; the subdir name is not significant to the scan.
+        copy_tree(s, &out.join("mibpkg/collections/seed")).context("copying seed collection")?;
     }
     fs::write(out.join("_Swdlautorun.txt"), "")?; // autostart marker, disabled by default
     Ok(())

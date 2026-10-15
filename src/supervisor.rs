@@ -99,8 +99,9 @@ impl CappedLog {
 use crate::bootd::{self, BootEntry};
 use crate::conditions::{self, fmt_secs, RealView, SystemView, TickCache};
 use crate::control;
+use crate::ctx::Ctx;
 use crate::fsutil::{atomic_write, copy_atomic};
-use crate::install::{current_dir, current_version};
+use crate::install::{self, current_dir, current_version};
 use crate::manifest::{resolve, Restart};
 use crate::media;
 use crate::paths::Layout;
@@ -645,6 +646,31 @@ fn reap_orphans(layout: &Layout, sys: &dyn Sys, grace: Duration) {
 }
 
 /// The supervisor main loop (`mibpkg supervise`).
+/// Install every package in a card's seed collection(s) exactly once, on first boot.
+/// Guarded by a `seeded` marker so it never re-installs. Reuses the normal SD-collection
+/// install path; best-effort per package (a failure is logged, not fatal to boot).
+pub fn seed_once(ctx: &Ctx, media: &[PathBuf]) -> Result<()> {
+    let marker = ctx.layout.state_dir().join("seeded");
+    if marker.exists() {
+        return Ok(());
+    }
+    let scan = media::scan(&ctx.layout);
+    for coll in media::loaded(&scan) {
+        let mut names: Vec<String> = coll.index.packages.iter().map(|e| e.name.clone()).collect();
+        names.sort();
+        names.dedup();
+        for name in names {
+            match install::install(ctx, media, &coll, &name) {
+                Ok(m) => println!("mibpkg: seed {name}: {m}"),
+                Err(e) => println!("mibpkg: seed {name}: FAILED {e:#}"),
+            }
+        }
+    }
+    fs::create_dir_all(ctx.layout.state_dir())?;
+    atomic_write(&marker, b"")?;
+    Ok(())
+}
+
 pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
     if let Some(pid) = control::supervisor_pid(layout, sys) {
         if pid != std::process::id() {
@@ -665,6 +691,14 @@ pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
         status::write(layout, &Status { updated: now_secs(), pid: std::process::id(), disabled: true, version: Some(env!("CARGO_PKG_VERSION").to_string()), ..Default::default() })?;
         let _ = fs::remove_file(layout.run("pid"));
         return Ok(());
+    }
+    // First boot only: install any seed collection the install card carried. Best-effort;
+    // a failure here must not stop the supervisor from starting the rest.
+    {
+        let ctx = Ctx::new(layout.clone(), sys);
+        if let Err(e) = seed_once(&ctx, &media::roots(layout)) {
+            println!("mibpkg: seed install skipped: {e:#}");
+        }
     }
     let mut sup = Supervisor::new(layout, sys, timing.clone());
     sup.reload();
