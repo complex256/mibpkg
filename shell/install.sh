@@ -39,7 +39,7 @@ mount -ur /mnt/app
 cp "$HOME_DIR/bin/mibpkg" /tmp/mibpkg.new && chmod 755 /tmp/mibpkg.new && mv /tmp/mibpkg.new /tmp/mibpkg \
     || { echo "[mibpkg-install] staging mibpkg failed"; exit 1; }
 
-# C backbone: the only step whose failure aborts the install (no SWDLScript.Result touched).
+# C backbone: the only step whose failure aborts the install (we exit without marking success).
 if /tmp/mibpkg bootstrap; then
     echo "[mibpkg-install] bootstrap ok"
 else
