@@ -117,6 +117,10 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
     Released as complex256/mibpkg-packages v3 (with sources.json). Results: docs/unit-facts.md.
   - [later] Web Updates row: "now from <collection>" is cut off at phone width (390 px); wrap it or
     show it on its own line.
+  - [before going public] Web logins are lost when mibpkg updates itself (sessions live in memory), so
+    the PIN is asked again right after a self-update (seen on the car 2026-10-14).
+  - [later] tests/web_server.rs `the_url_file_reports_when_the_addresses_change` fails now and then
+    under a full parallel `cargo test` (passes alone, on main too); make it less timing-sensitive.
   - [was] M3 sources: community source list (tap to enable), SD sources.toml, mibpkg_online screen
     (now also a web UI page).
   - [later] M4 publisher tooling: keygen --github, automatic signing, `mibpkg release` (carries old versions
