@@ -7,6 +7,7 @@ use crate::ctx::Ctx;
 use crate::gem;
 use crate::gem_enable;
 use crate::gempatch;
+use crate::swdl;
 use crate::hook;
 use crate::index::{build_index, write_index, Collection};
 use crate::install;
@@ -37,7 +38,7 @@ const USAGE: &str = "usage:
     online-check | sntp [host:port] | web
     gem install-file <pkg> <id> <collection|-> | gem config-set <pkg> <n> <id>
     gem source-add <source> | gem source-remove <source> | gem web-settings <id> | gem web-reset | gem web-restart
-    bootstrap | enable-gem | disable-gem | gem-patch <apply|status|revert> [--from DIR] | uninstall-self";
+    bootstrap | enable-gem | disable-gem | gem-patch <apply|status|revert> [--from DIR] | uninstall-self\n  mibpkg swdl-card <out-dir> --payload DIR [--seed DIR] --version V\n  mibpkg gem-patch build --stock JAR --patched JAR [--out DIR]";
 
 pub fn run(args: &[String]) -> Result<i32> {
     let mut root = PathBuf::from("/");
@@ -76,6 +77,7 @@ pub fn run(args: &[String]) -> Result<i32> {
         "new" => return host_new(args),
         // gem-patch build is a host command; apply/status/revert are on-unit actions below.
         "gem-patch" if args.first().map(|s| s.as_str()) == Some("build") => return host_gem_patch_build(&args[1..]),
+        "swdl-card" => return host_swdl_card(args),
         "help" | "--help" | "-h" => {
             crate::say!("{USAGE}");
             return Ok(0);
@@ -692,6 +694,25 @@ fn host_verify(args: &[String]) -> Result<i32> {
     }
     crate::say!("{} package(s) checked, {} problem(s)", r.checked, r.problems.len());
     Ok(if r.problems.is_empty() { 0 } else { 1 })
+}
+
+fn host_swdl_card(args: &[String]) -> Result<i32> {
+    let out = PathBuf::from(arg(args, 0, "output dir")?);
+    let (mut payload, mut seed, mut version) = (None, None, None);
+    let mut it = args[1..].iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--payload" => payload = Some(PathBuf::from(it.next().context("--payload needs a dir")?)),
+            "--seed" => seed = Some(PathBuf::from(it.next().context("--seed needs a dir")?)),
+            "--version" => version = Some(it.next().context("--version needs a value")?.clone()),
+            s => bail!("unexpected argument {s:?}"),
+        }
+    }
+    let payload = payload.context("--payload <dir> required")?;
+    let version = version.context("--version <v> required")?;
+    swdl::build_card(&out, &payload, seed.as_deref(), &version)?;
+    crate::say!("{}", out.display());
+    Ok(0)
 }
 
 fn host_gem_patch_build(args: &[String]) -> Result<i32> {

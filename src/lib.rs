@@ -21,6 +21,7 @@ pub mod sha1;
 pub mod delta;
 pub mod gem_enable;
 pub mod gempatch;
+pub mod swdl;
 pub mod fsutil;
 pub mod paths;
 pub mod manifest;
