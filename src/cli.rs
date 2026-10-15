@@ -684,7 +684,16 @@ fn host_verify(args: &[String]) -> Result<i32> {
             s => target = Some(s.to_string()),
         }
     }
-    let target = target.context("verify needs a source (github:owner/repo), an index.json, or a release directory")?;
+    let target = target.context("verify needs a source (github:owner/repo), an index.json, a release directory, or an SWDL card directory")?;
+    // An SWDL card directory (has metainfo2.txt) is checked by the card validator, not the collection one.
+    if Path::new(&target).join("metainfo2.txt").is_file() {
+        let probs = swdl::verify_card(Path::new(&target))?;
+        for p in &probs {
+            crate::say!("problem: {p}");
+        }
+        crate::say!("SWDL card checked, {} problem(s)", probs.len());
+        return Ok(if probs.is_empty() { 0 } else { 1 });
+    }
     let r = crate::publish::verify(&target, latest, unit.as_ref(), &crate::fetch::CurlFetcher::for_host())?;
     for n in &r.notes {
         crate::say!("note: {n}");
@@ -711,7 +720,14 @@ fn host_swdl_card(args: &[String]) -> Result<i32> {
     let payload = payload.context("--payload <dir> required")?;
     let version = version.context("--version <v> required")?;
     swdl::build_card(&out, &payload, seed.as_deref(), &version)?;
+    let probs = swdl::verify_card(&out)?;
+    for p in &probs {
+        crate::say!("problem: {p}");
+    }
     crate::say!("{}", out.display());
+    if !probs.is_empty() {
+        bail!("swdl-card produced {} problem(s); see above", probs.len());
+    }
     Ok(0)
 }
 

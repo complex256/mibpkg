@@ -25,6 +25,40 @@ pub fn build_card(out: &Path, payload: &Path, seed: Option<&Path>, version: &str
     Ok(())
 }
 
+/// Validate a built card the way a car's SWDL would care about: the manifest exists, its
+/// FinalScriptChecksum matches the install.sh bytes, the payload is present, and every
+/// patches.toml `file =` is on the card. Returns the problems (empty = ok).
+pub fn verify_card(dir: &Path) -> Result<Vec<String>> {
+    let mut p = Vec::new();
+    let meta = fs::read_to_string(dir.join("metainfo2.txt")).context("reading metainfo2.txt")?;
+    match fs::read(dir.join("mibpkg/final/install.sh")) {
+        Ok(b) => {
+            let want = sha1_hex(&b);
+            if !meta.contains(&format!("FinalScriptChecksum = \"{want}\"")) {
+                p.push(format!("FinalScriptChecksum hash does not match install.sh (expected {want})"));
+            }
+        }
+        Err(_) => p.push("missing mibpkg/final/install.sh".into()),
+    }
+    for f in ["mibpkg", "launch.sh", "gem.sh"] {
+        if !dir.join("mibpkg/payload").join(f).exists() {
+            p.push(format!("missing payload file {f}"));
+        }
+    }
+    let gp = dir.join("mibpkg/payload/gem-patch");
+    let toml = gp.join("patches.toml");
+    if toml.exists() {
+        for line in fs::read_to_string(&toml)?.lines() {
+            if let Some(f) = line.trim().strip_prefix("file = ").map(|s| s.trim_matches('"')) {
+                if !gp.join(f).exists() {
+                    p.push(format!("patches.toml references missing {f}"));
+                }
+            }
+        }
+    }
+    Ok(p)
+}
+
 fn metainfo(version: &str, hash: &str) -> String {
     format!(
         "[common]\n\
