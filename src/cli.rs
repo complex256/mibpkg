@@ -74,6 +74,8 @@ pub fn run(args: &[String]) -> Result<i32> {
         "release" => return host_release(args),
         "verify" => return host_verify(args),
         "new" => return host_new(args),
+        // gem-patch build is a host command; apply/status/revert are on-unit actions below.
+        "gem-patch" if args.first().map(|s| s.as_str()) == Some("build") => return host_gem_patch_build(&args[1..]),
         "help" | "--help" | "-h" => {
             crate::say!("{USAGE}");
             return Ok(0);
@@ -690,6 +692,35 @@ fn host_verify(args: &[String]) -> Result<i32> {
     }
     crate::say!("{} package(s) checked, {} problem(s)", r.checked, r.problems.len());
     Ok(if r.problems.is_empty() { 0 } else { 1 })
+}
+
+fn host_gem_patch_build(args: &[String]) -> Result<i32> {
+    let (mut stock, mut patched, mut out) = (None, None, PathBuf::from("out/gem-patch"));
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--stock" => stock = Some(PathBuf::from(it.next().context("--stock needs a jar")?)),
+            "--patched" => patched = Some(PathBuf::from(it.next().context("--patched needs a jar")?)),
+            "--out" => out = PathBuf::from(it.next().context("--out needs a dir")?),
+            s => bail!("unexpected argument {s:?}"),
+        }
+    }
+    let stock = stock.context("--stock <jar> required")?;
+    let patched = patched.context("--patched <jar> required")?;
+    fs::create_dir_all(&out)?;
+    let (so, po) = (fs::read(&stock)?, fs::read(&patched)?);
+    let stock_sha = crate::sha1::sha1_hex(&so);
+    fs::write(out.join(format!("{stock_sha}.patch")), crate::delta::encode(&so, &po))?;
+    let entry = format!(
+        "[[patch]]\nstock_sha1 = \"{stock_sha}\"\nfile = \"{stock_sha}.patch\"\nresult_sha1 = \"{}\"\n\n",
+        crate::sha1::sha1_hex(&po)
+    );
+    let toml = out.join("patches.toml");
+    let mut cur = fs::read_to_string(&toml).unwrap_or_default();
+    cur.push_str(&entry);
+    fs::write(&toml, cur)?;
+    crate::say!("{}", out.join(format!("{stock_sha}.patch")).display());
+    Ok(0)
 }
 
 fn host_new(args: &[String]) -> Result<i32> {
