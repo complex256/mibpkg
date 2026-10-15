@@ -222,6 +222,12 @@ New small module; reuses the backup/undo registry `bootstrap` already uses for t
 - Signatures on the SWDL package (tracked with the broader signatures deferral).
 - Replacing the M.I.B. bootstrap path for existing M.I.B. users — `shell/custom.sh` stays for them;
   the SWDL card is the independent alternative, not a forced migration.
+- **Card builder webpage (fast-follow, separate work).** A static page hosted on GitHub Pages where
+  a user checkbox-selects packages and gets a ready-to-write zip — the SWDL card with a seed
+  `collection/` built from their selection. Rides on `mibpkg swdl-card` + the seed-collection
+  mechanism this spec defines (so this spec must keep the card layout stable and the seed collection
+  in the standard `index.json` format), but the page itself is its own spec/plan. Captured in
+  `docs/ideas.md`.
 
 ## Open questions (resolved by the spikes, not before the plan)
 

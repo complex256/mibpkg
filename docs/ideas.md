@@ -222,3 +222,13 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
 - Online status row: stale text after a failed check; raw curl errors shown to the user.
 - Prune state/online/<id>.json for sources no longer configured.
 - [done 0.3.1] USAGE lists neither `online-check` nor `sntp`.
+
+## SWDL standalone installer (2026-10-14)
+Spec: docs/superpowers/specs/2026-10-14-swdl-installer-design.md (approved, branch design/swdl-installer).
+- [v1] Own metainfo2.txt + thin hash-registered final-script; mibpkg's own SWDL package, no M.I.B. files.
+- [v1] C backbone (bootstrap + supervisor + web UI) always installs; B2 (enable-gem + gem-patch binary
+  jar diff) best-effort, degrades to C. New subcommands: enable-gem/disable-gem, gem-patch; host swdl-card.
+- [spike] S1 SWDL mechanics on car; S2 B2 in-car (enable path a/b/c + patched old jar renders .esd).
+- [fast-follow] Card builder webpage on GitHub Pages: user checkbox-enables packages, page builds a
+  ready-to-write zip (SWDL card + seed collection from their selection). Own spec/plan; rides
+  `mibpkg swdl-card` + seed collection. Keep card layout + index.json format stable for it.
