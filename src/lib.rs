@@ -17,6 +17,7 @@ macro_rules! warn {
     }};
 }
 
+pub mod sha1;
 pub mod fsutil;
 pub mod paths;
 pub mod manifest;
