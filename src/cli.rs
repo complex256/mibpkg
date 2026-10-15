@@ -213,7 +213,10 @@ pub fn run(args: &[String]) -> Result<i32> {
         "gem-patch" => {
             let _lock = Lock::acquire(&ctx.layout, ctx.sys)?;
             let sub = arg(args, 0, "apply|status|revert")?;
-            let from = args.iter().position(|a| a == "--from").map(|i| PathBuf::from(&args[i + 1]));
+            let from = match args.iter().position(|a| a == "--from") {
+                Some(i) => Some(PathBuf::from(args.get(i + 1).context("--from needs a directory")?)),
+                None => None,
+            };
             let _rw = ctx.mounts.rw("/mnt/app")?;
             let msg = match sub {
                 "apply" => gempatch::apply(&ctx.layout, &from.context("gem-patch apply needs --from <dir>")?)?,
@@ -748,14 +751,17 @@ fn host_gem_patch_build(args: &[String]) -> Result<i32> {
     let (so, po) = (fs::read(&stock)?, fs::read(&patched)?);
     let stock_sha = crate::sha1::sha1_hex(&so);
     fs::write(out.join(format!("{stock_sha}.patch")), crate::delta::encode(&so, &po))?;
-    let entry = format!(
-        "[[patch]]\nstock_sha1 = \"{stock_sha}\"\nfile = \"{stock_sha}.patch\"\nresult_sha1 = \"{}\"\n\n",
-        crate::sha1::sha1_hex(&po)
-    );
+    // Upsert by stock_sha1: rebuilding the same stock jar (e.g. a revised patched jar) must
+    // replace its entry, not leave a stale result_sha1 first that would make apply bail.
     let toml = out.join("patches.toml");
-    let mut cur = fs::read_to_string(&toml).unwrap_or_default();
-    cur.push_str(&entry);
-    fs::write(&toml, cur)?;
+    let mut pats: crate::gempatch::Patches =
+        toml::from_str(&fs::read_to_string(&toml).unwrap_or_default()).context("parsing patches.toml")?;
+    pats.upsert(crate::gempatch::PatchEntry {
+        stock_sha1: stock_sha.clone(),
+        file: format!("{stock_sha}.patch"),
+        result_sha1: crate::sha1::sha1_hex(&po),
+    });
+    fs::write(&toml, pats.to_toml())?;
     crate::say!("{}", out.join(format!("{stock_sha}.patch")).display());
     Ok(0)
 }

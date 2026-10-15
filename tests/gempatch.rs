@@ -78,3 +78,33 @@ fn status_reports_no_jar() {
     fs::write(d.join("patches.toml"), "").unwrap();
     assert!(matches!(gempatch::status(&f.layout, &d).unwrap(), Status::NoJar));
 }
+
+#[test]
+fn apply_preserves_jar_mode() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = common::fixture();
+    let (stock, patched) = (b"STOCK v1".as_ref(), b"PATCHED v1".as_ref());
+    let jar = seed_jar(&f, stock);
+    fs::set_permissions(&jar, fs::Permissions::from_mode(0o640)).unwrap();
+    let d = patch_dir(&f, stock, patched);
+    gempatch::apply(&f.layout, &d).unwrap();
+    let mode = fs::metadata(&jar).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o640, "jar mode not preserved across patch");
+}
+
+#[test]
+fn apply_refreshes_a_stale_backup() {
+    let f = common::fixture();
+    let (stock, patched) = (b"STOCK v2 current".as_ref(), b"PATCHED v2".as_ref());
+    seed_jar(&f, stock);
+    // A backup from an earlier (different) firmware already sits in the registry.
+    let bdir = f.layout.state_dir().join("backups");
+    fs::create_dir_all(&bdir).unwrap();
+    let bpath = mibpkg::backups::backup_path(&f.layout, "/mnt/app/eso/hmi/lsd/jars/AppDevelopment.jar");
+    fs::write(&bpath, b"STALE OLD FIRMWARE JAR").unwrap();
+    let d = patch_dir(&f, stock, patched);
+    gempatch::apply(&f.layout, &d).unwrap();
+    // revert must restore the CURRENT stock jar, not the stale one.
+    gempatch::revert(&f.layout).unwrap();
+    assert_eq!(fs::read(f.root().join("mnt/app/eso/hmi/lsd/jars/AppDevelopment.jar")).unwrap(), stock);
+}

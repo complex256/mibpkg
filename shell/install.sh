@@ -14,11 +14,26 @@ D=$SD/mibpkg
 
 echo "[mibpkg-install] starting for HW $HW from $SD"
 
-# GEM/MMX work happens on the MMX side. When run on RCC (no local lsd dir but mmx has one),
-# forward once to MMX; on MMX the test is false, so there is no loop.
+# Clear any stale success marker from an earlier run in this (RAM) boot, so it can only
+# mean "this run succeeded".
+rm -f /tmp/SWDLScript.Result
+
+# GEM/MMX work happens on the MMX side (that is where /mnt/app lives). When run on RCC
+# (no local lsd dir but mmx has one), run the install on MMX and CAPTURE its exit — do not
+# `exec`, or this RCC shell is replaced and the RCC-side SWDLScript.Result would never be
+# touched, making SWDL report failure. On MMX the test below is false, so there is no loop.
+# S1-pending: confirm on-car that MMX sees the SD at "$D" (it may need a /net/rcc prefix).
 if [ ! -d /mnt/app/eso/hmi/lsd ] && [ -d /net/mmx/mnt/app/eso/hmi/lsd ]; then
-    echo "[mibpkg-install] forwarding to mmx"
-    exec on -f mmx /bin/sh "$D/final/install.sh" "$@"
+    echo "[mibpkg-install] running install on mmx"
+    on -f mmx /bin/sh "$D/final/install.sh" "$@"
+    rc=$?
+    if [ $rc -eq 0 ]; then
+        touch /tmp/SWDLScript.Result
+        echo "[mibpkg-install] done (via mmx)"
+    else
+        echo "[mibpkg-install] mmx install FAILED (rc=$rc)"
+    fi
+    exit $rc
 fi
 
 HOME_DIR=/mnt/app/root/mibpkg

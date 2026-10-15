@@ -8,8 +8,9 @@ use crate::fsutil;
 use crate::paths::Layout;
 use crate::sha1::{sha1_file, sha1_hex};
 use anyhow::{bail, Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 /// Candidate stock jars, unit-absolute, in detection order (first that exists wins).
@@ -19,14 +20,14 @@ const JAR_CANDIDATES: &[&str] = &[
     "/mnt/app/eso/hmi/lsd/jars/lsd.jar",
 ];
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PatchEntry {
     pub stock_sha1: String,
     pub file: String,
     pub result_sha1: String,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 pub struct Patches {
     #[serde(default, rename = "patch")]
     entries: Vec<PatchEntry>,
@@ -39,6 +40,16 @@ impl Patches {
     }
     pub fn get(&self, stock_sha1: &str) -> Option<&PatchEntry> {
         self.entries.iter().find(|e| e.stock_sha1 == stock_sha1)
+    }
+    /// Insert or replace the entry for a stock jar, so a rebuild never leaves a stale one.
+    pub fn upsert(&mut self, entry: PatchEntry) {
+        match self.entries.iter_mut().find(|e| e.stock_sha1 == entry.stock_sha1) {
+            Some(e) => *e = entry,
+            None => self.entries.push(entry),
+        }
+    }
+    pub fn to_toml(&self) -> String {
+        toml::to_string(self).unwrap_or_default()
     }
 }
 
@@ -89,10 +100,16 @@ pub fn apply(layout: &Layout, patch_dir: &Path) -> Result<String> {
     if sha1_hex(&new) != entry.result_sha1 {
         bail!("gem-patch: result sha1 mismatch; stock jar left in place");
     }
+    let mode = fs::metadata(&jar)?.permissions().mode() & 0o7777;
+    // Refresh a stale backup: a firmware update can change the stock jar after an earlier
+    // backup, and backup_once never overwrites, so revert would otherwise restore the wrong jar.
+    let bpath = backups::backup_path(layout, abs);
+    if bpath.exists() && sha1_file(&bpath).ok().as_deref() != Some(stock_sha1.as_str()) {
+        let _ = fs::remove_file(&bpath);
+    }
     backups::backup_once(layout, abs)?; // once-only stock backup for revert
-    let tmp = fsutil::tmp_sibling(&jar);
-    fs::write(&tmp, &new)?;
-    fsutil::rename(&tmp, &jar)?; // atomic swap
+    fsutil::atomic_write(&jar, &new)?; // fsync + atomic rename, so a power cut can't truncate the jar
+    fsutil::set_mode(&jar, mode)?; // keep the stock jar's permissions
     Ok(format!("patched GEM jar {stock_sha1} -> {}", entry.result_sha1))
 }
 

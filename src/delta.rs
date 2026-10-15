@@ -43,14 +43,17 @@ pub fn apply(old: &[u8], patch: &[u8]) -> Result<Vec<u8>> {
     if hex20(&sha1_hex(old)) != base[..] {
         bail!("delta: base hash mismatch (wrong jar)");
     }
-    let out_len = u64_le(&mut r)? as usize;
-    let mut out = Vec::with_capacity(out_len);
+    // out_len is patch-controlled: never trust it for allocation. Reject what cannot fit in
+    // usize (the 32-bit armle target truncates a u64 `as usize`), and cap the reservation.
+    let out_len = usize::try_from(u64_le(&mut r)?).map_err(|_| anyhow::anyhow!("delta: output length too large"))?;
+    const CAP: usize = 256 * 1024 * 1024;
+    let mut out = Vec::with_capacity(out_len.min(CAP));
     while !r.is_empty() {
         match r[0] {
             0x01 => {
                 r = &r[1..];
-                let off = u64_le(&mut r)? as usize;
-                let len = u64_le(&mut r)? as usize;
+                let off = usize::try_from(u64_le(&mut r)?).map_err(|_| anyhow::anyhow!("delta: copy offset too large"))?;
+                let len = usize::try_from(u64_le(&mut r)?).map_err(|_| anyhow::anyhow!("delta: copy length too large"))?;
                 let end = off
                     .checked_add(len)
                     .filter(|e| *e <= old.len())
@@ -59,10 +62,14 @@ pub fn apply(old: &[u8], patch: &[u8]) -> Result<Vec<u8>> {
             }
             0x02 => {
                 r = &r[1..];
-                let len = u64_le(&mut r)? as usize;
+                let len = usize::try_from(u64_le(&mut r)?).map_err(|_| anyhow::anyhow!("delta: insert length too large"))?;
                 out.extend_from_slice(take(&mut r, len)?);
             }
             b => bail!("delta: bad op {b:#x}"),
+        }
+        // Stop the moment an op pushes past the declared length: never grow unbounded.
+        if out.len() > out_len {
+            bail!("delta: output longer than declared length");
         }
     }
     if out.len() != out_len {
