@@ -85,6 +85,18 @@ Facts the code depends on, with how and when they were verified.
 | Self-update race (fixed 0.5.2) | the `gem` child that installed a new mibpkg ran its "make sure a supervisor runs" step in the gap between the old supervisor exiting and launch.sh starting the new one, starting a supervisor from its own OLD binary; launch.sh's new one then exited ("already running"). The web server still reported the new version (started fresh from /tmp/mibpkg). Now a fresh `/tmp/mibpkg.selfupdate.pending` defers that step to launch.sh, and `mibpkg status` shows the supervisor's own version | 0.5.0 -> 0.5.1 on the unit, 2026-10-07 |
 | Job output via a /tmp file | a reader following a growing /tmp (shmem) file written by another process lost the first 5-6 bytes (also with reopen + absolute seek); job output uses pipes instead | web job logs, 2026-10-05 |
 
+## Sources and publishing (2026-10-14, MHI2Q, mibpkg 0.5.3 -> 0.6.0)
+| Fact | Value | Verified |
+|---|---|---|
+| Online self-update | web Updates -> mibpkg 0.5.3 -> 0.6.0 from release v3 of complex256/mibpkg-packages; `mibpkg list` shows `mibpkg 0.6.0 [complex256-mibpkg]` | web UI + ssh, 2026-10-14 |
+| Web sessions after self-update | the restart drops every web login (sessions live in memory); the PIN is asked again | web UI, 2026-10-14 |
+| Community list | Sources screen shows the list fetched with the right wall-clock time; the official source is listed under Enabled ("built in", 2 packages) | web UI, 2026-10-14 |
+| Card sources.toml | `mibpkg/sources.toml` entry "card test" appears under Available with the SD card label right after the update (no Rescan needed) | web UI, 2026-10-14 |
+| Package moved | carmqtt installed from `complex256` with the card offering it only under `complex256-carmqtt`: Updates row "0.2.2 -> 0.2.3 · now from …", package button "Update to 0.2.3 from complex256-carmqtt"; the install said "now from collection complex256-carmqtt (was complex256)"; `mibpkg list` then shows `carmqtt 0.2.3 [complex256-carmqtt]`; carmqtt restarted and connected to MQTT on the first attempt | web UI + ssh + /tmp/carmqtt.log, 2026-10-14 |
+| carmqtt log | carmqtt writes its own `/tmp/carmqtt.log` (config `[log] file`); `/tmp/mibpkg.carmqtt.carmqtt.log` (its stdout/stderr) stays empty | ssh, 2026-10-14 |
+
+Screenshots (dark mode, 390x844): docs/screenshots/.
+
 ## Pending on-car checks (web interface, mibpkg 0.4.0)
 - A phone on the hotspot reaches `http://10.255.1.1/`.
 - `mibpkg web` idle and busy memory/CPU.

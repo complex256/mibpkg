@@ -112,8 +112,11 @@ GEM install with carmqtt migration, reboot autostart, DISABLE card. Deferred rev
     official collection online, GEM Check for updates -> Update over the internet.
   - [next] M2 signatures + trust on first use: signed index.json, key pinned on enable, "key changed"
     refusal + Trust new key; SD copy must verify when its id is pinned. Build with M4's signing half.
-  - [built 2026-10-11, mibpkg 0.6.0; verify on the car] M3 sources + M4 publisher tooling: spec
+  - [done 2026-10-14, mibpkg 0.6.0, verified on the car] M3 sources + M4 publisher tooling: spec
     docs/superpowers/specs/2026-10-11-online-sources-publishing-design.md (signatures/M2 deferred).
+    Released as complex256/mibpkg-packages v3 (with sources.json). Results: docs/unit-facts.md.
+  - [later] Web Updates row: "now from <collection>" is cut off at phone width (390 px); wrap it or
+    show it on its own line.
   - [was] M3 sources: community source list (tap to enable), SD sources.toml, mibpkg_online screen
     (now also a web UI page).
   - [later] M4 publisher tooling: keygen --github, automatic signing, `mibpkg release` (carries old versions
