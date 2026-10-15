@@ -19,6 +19,7 @@ macro_rules! warn {
 
 pub mod sha1;
 pub mod delta;
+pub mod gem_enable;
 pub mod fsutil;
 pub mod paths;
 pub mod manifest;

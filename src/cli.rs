@@ -5,6 +5,7 @@ use crate::control;
 use crate::fsutil;
 use crate::ctx::Ctx;
 use crate::gem;
+use crate::gem_enable;
 use crate::hook;
 use crate::index::{build_index, write_index, Collection};
 use crate::install;
@@ -35,7 +36,7 @@ const USAGE: &str = "usage:
     online-check | sntp [host:port] | web
     gem install-file <pkg> <id> <collection|-> | gem config-set <pkg> <n> <id>
     gem source-add <source> | gem source-remove <source> | gem web-settings <id> | gem web-reset | gem web-restart
-    bootstrap | uninstall-self";
+    bootstrap | enable-gem | disable-gem | uninstall-self";
 
 pub fn run(args: &[String]) -> Result<i32> {
     let mut root = PathBuf::from("/");
@@ -202,6 +203,20 @@ pub fn run(args: &[String]) -> Result<i32> {
             let changed = hook::install_hook(&ctx)?;
             after(&ctx);
             crate::say!("{}", if changed { "boot hook installed" } else { "boot hook already present" });
+            Ok(0)
+        }
+        "enable-gem" => {
+            let _lock = Lock::acquire(&ctx.layout, ctx.sys)?;
+            gem_enable::enable(ctx.sys)?;
+            after(&ctx);
+            crate::say!("GEM enabled");
+            Ok(0)
+        }
+        "disable-gem" => {
+            let _lock = Lock::acquire(&ctx.layout, ctx.sys)?;
+            gem_enable::disable(ctx.sys)?;
+            after(&ctx);
+            crate::say!("GEM disabled");
             Ok(0)
         }
         "uninstall-self" => {
