@@ -35,3 +35,11 @@ fn forward_captures_exit_and_clears_stale_marker() {
     // A stale success marker from an earlier run in the same (RAM) boot must be cleared first.
     assert!(src.contains("rm -f /tmp/SWDLScript.Result"), "stale Result marker not cleared at start");
 }
+
+#[test]
+fn install_sh_suppresses_the_most_popup() {
+    let src = mibpkg::swdl::INSTALL_SH;
+    assert!(src.contains("skipMostPopup.txt"), "install.sh does not suppress the MOST popup");
+    // placed on the MMX side where efs-persist is reachable as /net/rcc/mnt/efs-persist.
+    assert!(src.contains("/net/rcc/mnt/efs-persist"));
+}

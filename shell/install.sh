@@ -66,6 +66,16 @@ fi
 /tmp/mibpkg enable-gem || echo "[mibpkg-install] enable-gem skipped"
 /tmp/mibpkg gem-patch apply --from "$D/payload/gem-patch" || echo "[mibpkg-install] gem-patch skipped"
 
+# Suppress the "MOST unstable" popup on units without a live MOST bus (bench, some cars),
+# the way M.I.B. does. Best-effort; efs-persist is on the RCC side.
+for ep in /net/rcc/mnt/efs-persist /mnt/efs-persist; do
+    if [ -d "$ep/SWDL" ]; then
+        mount -uw "$ep" 2>/dev/null
+        touch "$ep/SWDL/skipMostPopup.txt" 2>/dev/null && echo "[mibpkg-install] MOST popup suppressed ($ep)"
+        break
+    fi
+done
+
 # Stop insert-and-go from looping: disable the autostart trigger on the card.
 if [ -f "$SD/Swdlautorun.txt" ]; then
     mv -f "$SD/Swdlautorun.txt" "$SD/_Swdlautorun.txt" && echo "[mibpkg-install] autostart disabled"
