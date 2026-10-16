@@ -16,7 +16,14 @@ pub fn build_card(out: &Path, payload: &Path, seed: Option<&Path>, version: &str
     fs::create_dir_all(&final_dir)?;
     fs::write(final_dir.join("install.sh"), INSTALL_SH)?;
     let hash = sha1_hex(INSTALL_SH.as_bytes());
-    fs::write(out.join("metainfo2.txt"), metainfo(version, &hash, signed_header))?;
+    // SWDL only offers a group that has a real file to copy. Write a small marker and describe
+    // it as the group's one File entry (mirrors how a stock update lists itself).
+    let marker = format!("mibpkg installer v{version}\n");
+    let vdir = out.join("mibpkg/version");
+    fs::create_dir_all(&vdir)?;
+    fs::write(vdir.join("MARKER"), &marker)?;
+    let marker_sha = sha1_hex(marker.as_bytes());
+    fs::write(out.join("metainfo2.txt"), metainfo(version, &hash, signed_header, &marker_sha, marker.len()))?;
     copy_tree(payload, &out.join("mibpkg/payload")).context("copying payload")?;
     if let Some(s) = seed {
         // Land the seed where the supervisor's media scan looks (mibpkg/collections/<id>),
@@ -61,7 +68,7 @@ pub fn verify_card(dir: &Path) -> Result<Vec<String>> {
     Ok(p)
 }
 
-fn metainfo(version: &str, hash: &str, signed_header: Option<&str>) -> String {
+fn metainfo(version: &str, hash: &str, signed_header: Option<&str>, marker_sha: &str, marker_len: usize) -> String {
     // SWDL validates the signature of the FIRST signed document, then our second [common]
     // (with the skip flags + FinalScript) is the operative install. Without a genuine
     // Audi-signed header prepended, the signature check rejects the card.
@@ -69,6 +76,9 @@ fn metainfo(version: &str, hash: &str, signed_header: Option<&str>) -> String {
         Some(h) => format!("{}\n\n", h.trim_end()),
         None => String::new(),
     };
+    // The version/0/default/File entry's Source "../../MARKER" resolves (logically, from
+    // mibpkg/version/0/default/) to mibpkg/version/MARKER on the card. This one real file is
+    // what makes SWDL offer the group as an installable update and enable START.
     format!(
         "{prefix}[common]\n\
 vendor = \"complex256\"\n\
@@ -88,7 +98,18 @@ FinalScriptName = \"mibpkg install\"\n\n\
 [mibpkg]\n\
 VendorInfo = \"complex256\"\n\
 DeviceDescription = \"mibpkg installer\"\n\
-DownloadGroup = \"mibpkg\"\n"
+DownloadGroup = \"mibpkg\"\n\n\
+[mibpkg\\version\\0\\default\\File]\n\
+checkUpdate = \"true\"\n\
+CheckSumSize = \"524288\"\n\
+CheckSum = \"{marker_sha}\"\n\
+FileSize = \"{marker_len}\"\n\
+Version = \"1\"\n\
+Source = \"../../MARKER\"\n\
+Destination = \"/HBpersistence/SWDL/Log/service/mibpkg\"\n\
+DisplayName = \"mibpkg installer\"\n\
+DeleteDestinationDirBeforeCopy = \"false\"\n\
+UpdateOnlyExisting = \"false\"\n"
     )
 }
 

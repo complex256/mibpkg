@@ -64,3 +64,36 @@ fn signed_header_is_prepended_before_our_block() {
     let script = std::fs::read(out.join("mibpkg/final/install.sh")).unwrap();
     assert!(meta.contains(&format!("FinalScriptChecksum = \"{}\"", mibpkg::sha1::sha1_hex(&script))));
 }
+
+#[test]
+fn download_group_has_a_real_file_entry_so_swdl_lists_it() {
+    let d = tempfile::tempdir().unwrap();
+    let payload = d.path().join("payload");
+    std::fs::create_dir_all(&payload).unwrap();
+    for f in ["mibpkg", "launch.sh", "gem.sh", "ca.pem"] {
+        std::fs::write(payload.join(f), b"x").unwrap();
+    }
+    let out = d.path().join("card");
+    let code = mibpkg::cli::run(&[
+        "swdl-card".into(),
+        out.display().to_string(),
+        "--payload".into(),
+        payload.display().to_string(),
+        "--version".into(),
+        "1.0".into(),
+    ])
+    .unwrap();
+    assert_eq!(code, 0);
+    // The marker file the File entry copies must exist at version/MARKER.
+    let marker = out.join("mibpkg/version/MARKER");
+    assert!(marker.exists(), "marker file missing");
+    let meta = std::fs::read_to_string(out.join("metainfo2.txt")).unwrap();
+    // A real version/0/default/File entry (what makes SWDL offer the update).
+    assert!(meta.contains("[mibpkg\\version\\0\\default\\File]"), "no File entry:\n{meta}");
+    let msha = mibpkg::sha1::sha1_file(&marker).unwrap();
+    let mlen = std::fs::metadata(&marker).unwrap().len();
+    assert!(meta.contains(&format!("CheckSum = \"{msha}\"")), "File CheckSum missing/wrong");
+    assert!(meta.contains(&format!("FileSize = \"{mlen}\"")), "File FileSize missing/wrong");
+    assert!(meta.contains("Source = \"../../MARKER\""));
+    assert!(meta.contains("Destination = \"/HBpersistence/SWDL/Log/service/mibpkg\""));
+}
