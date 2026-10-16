@@ -9,16 +9,17 @@ use anyhow::Result;
 pub const GEM_DEV_KEY: u32 = 3221356557;
 pub const COMMIT_KEY: u32 = 1;
 
-fn set(sys: &dyn Sys, value: &str) -> Result<()> {
-    sys.persist_write(0, GEM_DEV_KEY, value)?;
-    sys.persist_write(0, COMMIT_KEY, "0")?; // store changes to persistence
+fn set(sys: &dyn Sys, value: u8) -> Result<()> {
+    // The flag is a BYTE (ns0 key 3221356557); a string write hangs pc (verified on-car).
+    sys.persist_write_byte(0, GEM_DEV_KEY, value)?;
+    sys.persist_write_byte(0, COMMIT_KEY, 0)?; // store changes to persistence
     Ok(())
 }
 
 pub fn enable(sys: &dyn Sys) -> Result<()> {
-    set(sys, "1")
+    set(sys, 1)
 }
 
 pub fn disable(sys: &dyn Sys) -> Result<()> {
-    set(sys, "0")
+    set(sys, 0)
 }

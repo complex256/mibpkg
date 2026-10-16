@@ -19,6 +19,9 @@ pub trait Sys {
     fn free_bytes(&self, path: &Path) -> Option<u64>;
     /// Store a string in the unit's persistence (read live by GEM `per` rows).
     fn persist_write(&self, ns: u32, key: u32, value: &str) -> Result<()>;
+    /// Store a single byte in the unit's persistence (`pc b:ns:key`). The GEM dev-mode flag is a
+    /// byte; writing it as a string hangs pc on a type mismatch (found on-car 2026-10-16).
+    fn persist_write_byte(&self, ns: u32, key: u32, value: u8) -> Result<()>;
 }
 
 /// Run `cmd args` with a deadline, stdin closed: (exited successfully, stdout+stderr).
@@ -67,6 +70,23 @@ pub const PC: &str = "/eso/bin/apps/pc";
 
 pub struct RealSys {
     pub mounts: bool,
+}
+
+impl RealSys {
+    /// `pc <ty>:<ns>:<key> <value>` with IPL_CONFIG_DIR set. `ty` is 's' (string) or 'b' (byte).
+    fn pc_write(&self, ty: char, ns: u32, key: u32, value: &str) -> Result<()> {
+        if !self.mounts {
+            return Ok(()); // not on the unit (tests / --root): there is no persistence service
+        }
+        let env = [("IPL_CONFIG_DIR".to_string(), "/etc/eso/production".to_string())];
+        let args = [format!("{ty}:{ns}:{key}"), value.to_string()];
+        let (ok, out) = run_limited(Path::new(PC), &args, &env, Duration::from_secs(5)).map_err(anyhow::Error::msg)?;
+        // pc prints "[PersistenceClient::...] error: ..." on failure.
+        if !ok || out.contains("error") {
+            bail!("pc {ty}:{ns}:{key}: {}", out.trim());
+        }
+        Ok(())
+    }
 }
 
 fn quiet_status(cmd: &mut Command) -> bool {
@@ -134,17 +154,11 @@ impl Sys for RealSys {
     }
 
     fn persist_write(&self, ns: u32, key: u32, value: &str) -> Result<()> {
-        if !self.mounts {
-            return Ok(()); // not on the unit (tests / --root): there is no persistence service
-        }
-        let env = [("IPL_CONFIG_DIR".to_string(), "/etc/eso/production".to_string())];
-        let args = [format!("s:{ns}:{key}"), value.to_string()];
-        let (ok, out) = run_limited(Path::new(PC), &args, &env, Duration::from_secs(5)).map_err(anyhow::Error::msg)?;
-        // pc prints "[PersistenceClient::...] error: ..." on failure.
-        if !ok || out.contains("error") {
-            bail!("pc s:{ns}:{key}: {}", out.trim());
-        }
-        Ok(())
+        self.pc_write('s', ns, key, &value.to_string())
+    }
+
+    fn persist_write_byte(&self, ns: u32, key: u32, value: u8) -> Result<()> {
+        self.pc_write('b', ns, key, &value.to_string())
     }
 
     fn free_bytes(&self, path: &Path) -> Option<u64> {
@@ -165,6 +179,7 @@ pub struct RecordingSys {
     pub syntax_bad: Cell<bool>,
     pub free: Cell<Option<u64>>,
     pub persisted: RefCell<Vec<(u32, u32, String)>>,
+    pub persisted_bytes: RefCell<Vec<(u32, u32, u8)>>,
     pub fail_persist: Cell<bool>,
 }
 
@@ -197,6 +212,13 @@ impl Sys for RecordingSys {
         self.persisted.borrow_mut().push((ns, key, value.to_string()));
         if self.fail_persist.get() {
             bail!("pc s:{ns}:{key}: error: result == TIMEOUT");
+        }
+        Ok(())
+    }
+    fn persist_write_byte(&self, ns: u32, key: u32, value: u8) -> Result<()> {
+        self.persisted_bytes.borrow_mut().push((ns, key, value));
+        if self.fail_persist.get() {
+            bail!("pc b:{ns}:{key}: error: result == TIMEOUT");
         }
         Ok(())
     }

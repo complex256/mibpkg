@@ -1,20 +1,25 @@
 use mibpkg::gem_enable::{enable, disable, GEM_DEV_KEY, COMMIT_KEY};
 use mibpkg::sys::RecordingSys;
 
+// The GEM dev-mode flag (ns0 key 3221356557) is a BYTE: it must be written with pc's byte
+// type, not as a string (a string write hangs pc on a type mismatch — found on-car 2026-10-16).
+
 #[test]
-fn enable_writes_dev_flag_then_commit() {
+fn enable_writes_dev_byte_then_commit() {
     let sys = RecordingSys::default();
     enable(&sys).unwrap();
-    let w = sys.persisted.borrow().clone();
-    assert_eq!(w, vec![(0, GEM_DEV_KEY, "1".into()), (0, COMMIT_KEY, "0".into())]);
+    let w = sys.persisted_bytes.borrow().clone();
+    assert_eq!(w, vec![(0, GEM_DEV_KEY, 1u8), (0, COMMIT_KEY, 0u8)]);
+    // and never as a string
+    assert!(sys.persisted.borrow().is_empty(), "GEM flag must not be written as a string");
 }
 
 #[test]
-fn disable_writes_zero_then_commit() {
+fn disable_writes_zero_byte_then_commit() {
     let sys = RecordingSys::default();
     disable(&sys).unwrap();
-    let w = sys.persisted.borrow().clone();
-    assert_eq!(w, vec![(0, GEM_DEV_KEY, "0".into()), (0, COMMIT_KEY, "0".into())]);
+    let w = sys.persisted_bytes.borrow().clone();
+    assert_eq!(w, vec![(0, GEM_DEV_KEY, 0u8), (0, COMMIT_KEY, 0u8)]);
 }
 
 #[test]
