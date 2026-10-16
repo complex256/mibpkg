@@ -232,3 +232,22 @@ Spec: docs/superpowers/specs/2026-10-14-swdl-installer-design.md (approved, bran
 - [fast-follow] Card builder webpage on GitHub Pages: user checkbox-enables packages, page builds a
   ready-to-write zip (SWDL card + seed collection from their selection). Own spec/plan; rides
   `mibpkg swdl-card` + seed collection. Keep card layout + index.json format stable for it.
+
+## SWDL installer — on-car findings (2026-10-16, bench MHI2Q root@10.20.0.23)
+S1 + S2 VALIDATED end-to-end on real hardware: signed-header card listed as "mibpkg [Y]",
+START ran install.sh, RCC->MMX forward worked ("done (via mmx)"), bootstrap + boot hook +
+supervisor + web + seed package (mibpkg 0.6.0 [complex256-mibpkg]) all installed; GEM screen
+installed; enable-gem works post-boot (0.33s). GEM tile renders with the dev AppDevelopment.jar
+(no jar patch needed). Fixed+committed: enable-gem byte write (115c007), --signed-header + version
+File entry (f1c3227, 5fe5dbe).
+Follow-ups (not yet done):
+- [bug] enable-gem TIMES OUT during the SWDL final-script window (pc busy mid-session); works fine
+  post-boot. Also run enable-gem at first supervised boot (supervisor), not only in install.sh.
+- [bench] installer should touch /mnt/efs-persist/SWDL/skipMostPopup.txt and clear SWDL pending
+  state (update.txt*, FileCopyInfo/*, Log/service/*) like M.I.B.'s cswdl.sh, so a wheel-less /
+  MOST-less bench boots clean. Also saw "SWDL: trying to fix wrong MMIState" self-heal reset cycle
+  after removing update.txt — needs one extra reset to settle. Real car with a wheel is unaffected.
+- [bug] seed `seeded` marker not written (state/seeded absent) though the seed package installed;
+  seed_once re-runs each boot (idempotent but wasteful). Check atomic_write of the marker on /mnt/app.
+- [?] web listen=["any"] did not expose the UI on mlan0 (10.20.0.23); still hotspot-only. Check how
+  the web server chooses interfaces + pf firewall for "any".
