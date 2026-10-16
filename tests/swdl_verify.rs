@@ -9,7 +9,7 @@ fn good_card() -> (tempfile::TempDir, PathBuf) {
         fs::write(payload.join(f), b"x").unwrap();
     }
     let out = d.path().join("card");
-    mibpkg::swdl::build_card(&out, &payload, None, "1.0").unwrap();
+    mibpkg::swdl::build_card(&out, &payload, None, "1.0", None).unwrap();
     (d, out)
 }
 

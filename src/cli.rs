@@ -710,19 +710,24 @@ fn host_verify(args: &[String]) -> Result<i32> {
 
 fn host_swdl_card(args: &[String]) -> Result<i32> {
     let out = PathBuf::from(arg(args, 0, "output dir")?);
-    let (mut payload, mut seed, mut version) = (None, None, None);
+    let (mut payload, mut seed, mut version, mut header) = (None, None, None, None);
     let mut it = args[1..].iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--payload" => payload = Some(PathBuf::from(it.next().context("--payload needs a dir")?)),
             "--seed" => seed = Some(PathBuf::from(it.next().context("--seed needs a dir")?)),
             "--version" => version = Some(it.next().context("--version needs a value")?.clone()),
+            "--signed-header" => header = Some(PathBuf::from(it.next().context("--signed-header needs a file")?)),
             s => bail!("unexpected argument {s:?}"),
         }
     }
     let payload = payload.context("--payload <dir> required")?;
     let version = version.context("--version <v> required")?;
-    swdl::build_card(&out, &payload, seed.as_deref(), &version)?;
+    let header_text = match &header {
+        Some(p) => Some(fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?),
+        None => None,
+    };
+    swdl::build_card(&out, &payload, seed.as_deref(), &version, header_text.as_deref())?;
     let probs = swdl::verify_card(&out)?;
     for p in &probs {
         crate::say!("problem: {p}");

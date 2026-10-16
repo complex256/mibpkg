@@ -11,12 +11,12 @@ pub const INSTALL_SH: &str = include_str!("../shell/install.sh");
 
 /// Build a card tree at `out`: metainfo2.txt, the install.sh final-script, the boot
 /// payload, an optional seed collection, and a disabled autostart marker.
-pub fn build_card(out: &Path, payload: &Path, seed: Option<&Path>, version: &str) -> Result<()> {
+pub fn build_card(out: &Path, payload: &Path, seed: Option<&Path>, version: &str, signed_header: Option<&str>) -> Result<()> {
     let final_dir = out.join("mibpkg/final");
     fs::create_dir_all(&final_dir)?;
     fs::write(final_dir.join("install.sh"), INSTALL_SH)?;
     let hash = sha1_hex(INSTALL_SH.as_bytes());
-    fs::write(out.join("metainfo2.txt"), metainfo(version, &hash))?;
+    fs::write(out.join("metainfo2.txt"), metainfo(version, &hash, signed_header))?;
     copy_tree(payload, &out.join("mibpkg/payload")).context("copying payload")?;
     if let Some(s) = seed {
         // Land the seed where the supervisor's media scan looks (mibpkg/collections/<id>),
@@ -61,9 +61,16 @@ pub fn verify_card(dir: &Path) -> Result<Vec<String>> {
     Ok(p)
 }
 
-fn metainfo(version: &str, hash: &str) -> String {
+fn metainfo(version: &str, hash: &str, signed_header: Option<&str>) -> String {
+    // SWDL validates the signature of the FIRST signed document, then our second [common]
+    // (with the skip flags + FinalScript) is the operative install. Without a genuine
+    // Audi-signed header prepended, the signature check rejects the card.
+    let prefix = match signed_header {
+        Some(h) => format!("{}\n\n", h.trim_end()),
+        None => String::new(),
+    };
     format!(
-        "[common]\n\
+        "{prefix}[common]\n\
 vendor = \"complex256\"\n\
 release = \"mibpkg installer v{version}\"\n\
 skipCheckSignatureAndVariant = \"true\"\n\
