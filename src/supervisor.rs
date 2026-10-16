@@ -666,6 +666,24 @@ pub fn seed_once(ctx: &Ctx, media: &[PathBuf]) -> Result<()> {
             }
         }
     }
+    // /mnt/app is read-only again after the installs; take our own rw mount for the marker.
+    let _rw = ctx.mounts.rw("/mnt/app")?;
+    fs::create_dir_all(ctx.layout.state_dir())?;
+    atomic_write(&marker, b"")?;
+    Ok(())
+}
+
+/// Enable the GEM dev-mode flag once, on the first supervised boot. The install.sh call runs
+/// inside the SWDL session where `pc` is busy and times out, so GEM is often still off after an
+/// SWDL install; this retries it when persistence is reliably up. Marker-guarded so a later
+/// `disable-gem` is not undone on the next boot.
+pub fn gem_once(ctx: &Ctx) -> Result<()> {
+    let marker = ctx.layout.state_dir().join("gem-enabled");
+    if marker.exists() {
+        return Ok(());
+    }
+    let _rw = ctx.mounts.rw("/mnt/app")?;
+    crate::gem_enable::enable(ctx.sys)?; // on failure: no marker, so it retries next boot
     fs::create_dir_all(ctx.layout.state_dir())?;
     atomic_write(&marker, b"")?;
     Ok(())
@@ -698,6 +716,10 @@ pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
         let ctx = Ctx::new(layout.clone(), sys);
         if let Err(e) = seed_once(&ctx, &media::roots(layout)) {
             println!("mibpkg: seed install skipped: {e:#}");
+        }
+        // Retry the GEM enable that the SWDL-time install.sh call could not complete.
+        if let Err(e) = gem_once(&ctx) {
+            println!("mibpkg: gem enable skipped: {e:#}");
         }
     }
     let mut sup = Supervisor::new(layout, sys, timing.clone());
