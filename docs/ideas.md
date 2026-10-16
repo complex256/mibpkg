@@ -251,3 +251,15 @@ Follow-ups (not yet done):
   seed_once re-runs each boot (idempotent but wasteful). Check atomic_write of the marker on /mnt/app.
 - [?] web listen=["any"] did not expose the UI on mlan0 (10.20.0.23); still hotspot-only. Check how
   the web server chooses interfaces + pf firewall for "any".
+
+## Fix #4 root cause (2026-10-16): web listen="any" + pf firewall
+Root-caused, NOT a reload bug: the web server binds 0.0.0.0 and `Allowed::permits` returns true for
+`any`, and a full supervisor restart does re-read web.toml — but the pf firewall (src/firewall.rs)
+opens the port ONLY on the hotspot ($wlan_if). With listen=any the app accepts other interfaces,
+but pf drops their SYNs (Mac curl to 10.20.0.23:80 = HTTP 000). Loopback is always permitted and
+unfiltered, so a tunnel works: `ssh -L 8080:127.0.0.1:80 root@10.20.0.23` -> http://localhost:8080
+(verified HTTP 200, <title>mibpkg</title>).
+DECISION NEEDED (security): should listen="any" punch the pf pass rule on the client wifi (mlan0)
+and other non-SIM interfaces too, while NEVER the SIM link (ecm0/ppp0)? firewall::rule is $wlan_if
+-scoped and firewall::wanted already treats "any" like hotspot. Not coded — needs explicit intent.
+Bench use: the ssh -L tunnel, no product change.
