@@ -1,64 +1,108 @@
 # mibpkg
 
-Package manager for MIB2 High head units (MHI2 / MHI2Q, QNX 6.5). Install, update and remove
-software from an SD card using the green engineering menu (GEM); a supervisor starts and
-watches the installed services.
+**An app store for your MIB2 High head unit.** Install, update, remove and roll back software on
+an Audi/VW MIB2 (MHI2 / MHI2Q, QNX 6.5) from a phone-friendly web page served by the car — or from
+the in-car engineering menu. A built-in supervisor starts your software at boot and keeps it
+running.
 
-## For users
+<p align="center">
+  <img src="docs/screenshots/discover.png" width="300" alt="mibpkg Discover screen">
+</p>
 
-1. Unzip `mibpkg-sd-<version>.zip` onto the M.I.B. SD card (FAT32).
-2. If a package needs a config file (e.g. carmqtt), put it on the card at
-   `mibpkg/config/<package>/<file>` (an example ships in the package). Changes made later in
-   the web interface are kept: a card file is only imported again once you change it on the card.
-3. GEM -> M.I.B. -> Advanced Settings -> Run Custom Script. This installs mibpkg once.
-4. Open the web interface (below) to install, update, remove, restart and roll back.
-   GEM -> mibpkg shows its address and has the recovery buttons.
+- **No PC at the car.** Everything runs on the unit; you drive it from your phone's browser.
+- **One SD card, two ways to install** — the Red/Engineering menu (no M.I.B. required) *or* M.I.B.
+  "Run Custom Script".
+- **Offline-first**, with optional online updates for cars that have internet.
+- **Safe by design** — atomic installs with backups, one-tap rollback, a DISABLE card, and a web
+  interface locked to the car's hotspot and Tailscale by default.
 
-### Install from the engineering menu (no M.I.B.)
+New here? **[Follow the step-by-step install guide → INSTALL.md](INSTALL.md)**
 
-mibpkg can also install itself directly from the Red/Engineering menu's SW-Update flow, with
-no M.I.B. on the unit. Build a card and write it to a FAT32 SD:
+## What it looks like
 
-```
-mibpkg swdl-card out/card --payload <dir with mibpkg, launch.sh, gem.sh, ca.pem> --version X.Y
-# optional: --seed <collection-dir> to auto-install a package set on first boot
-mibpkg verify out/card        # checks the manifest hash, payload and patches.toml
-```
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshots/discover.png" width="230" alt="Discover"><br><b>Discover</b><br>Browse what's on the card and online.</td>
+    <td align="center"><img src="docs/screenshots/updates.png" width="230" alt="Updates"><br><b>Updates</b><br>One tap to update everything.</td>
+    <td align="center"><img src="docs/screenshots/more.png" width="230" alt="More"><br><b>More</b><br>Logs, sources, settings, health.</td>
+  </tr>
+</table>
 
-Write `out/card` to the SD, insert in **SD1**, then Red/Engineering menu -> SW Update -> select the
-SD -> "mibpkg installer vX.Y" -> START. The unit reboots a few times and comes up with mibpkg
-running; open the web interface (below). On units whose stock GEM renders it, the in-car
-`mibpkg` picker also appears — this part is best-effort (it enables the engineering menu and, where
-a matching jar patch ships, patches the GEM jar); if it can't, the install still completes and the
-web interface is the primary interface.
+## Features
 
-### Web interface
+- **App-store web interface** served from the car — search, install, update, remove, restart and
+  roll back, all from your phone.
+- **Install a `.mpk` straight from your phone**, or from the SD card, or from an online source.
+- **Online sources** — add a community package repo by `github:owner/repo`; the car checks for
+  updates when it has internet.
+- **Boot supervisor** — your packages start at boot, in the right order (a package can wait for the
+  network, Tailscale, the HMI, or a file), and get restarted if they die.
+- **Multiple install methods from one card** — the engineering-menu SWDL flow and M.I.B. "Run
+  Custom Script", built by a single command.
+- **Recoverable** — once-only backups of every stock file it touches, one-tap rollback, a `DISABLE`
+  card that stops everything, and GEM recovery buttons for a forgotten PIN or broken settings.
 
-mibpkg also serves an app-store-style page from the car, with everything GEM offers plus
-installing a `.mpk` from your phone, logs, config files and online sources.
+## Install
+
+mibpkg ships as a single SD-card image (`mibpkg-sd-<version>.zip`) that installs **either** way:
+
+1. **Engineering menu (no M.I.B. needed)** — unzip onto a FAT32 (MBR) SD, insert in **SD1**, then
+   **Red/Engineering menu → SW Update → "mibpkg installer" → START.** The unit reboots and comes up
+   running mibpkg.
+2. **M.I.B. "Run Custom Script"** — unzip onto your M.I.B. SD, then **GEM → M.I.B. → Advanced
+   Settings → Run Custom Script.**
+
+Either way, open **GEM → mibpkg** (or the web interface below) when it's done.
+
+➡️ **The full, illustrated, novice-friendly walkthrough is in [INSTALL.md](INSTALL.md).**
+
+## The web interface
+
+mibpkg serves an app-store-style page from the car with everything the in-car menu offers plus
+installing a `.mpk` from your phone, live logs, config files and online sources.
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshots/installed.png" width="230" alt="Installed"><br><b>Installed</b> — what's running, at a glance.</td>
+    <td align="center"><img src="docs/screenshots/sources.png" width="230" alt="Sources"><br><b>Sources</b> — add a community package repo.</td>
+  </tr>
+</table>
 
 1. Join the car's Wi-Fi hotspot (or reach the car over Tailscale).
-2. GEM -> mibpkg shows the address, e.g. `http://10.255.1.1`.
-3. Open it in the phone's browser.
+2. **GEM → mibpkg** shows the address, e.g. `http://10.255.1.1`.
+3. Open it in your phone's browser.
 
-By default it answers only on the hotspot and Tailscale (never the SIM data link); Web settings
-can change that and set a PIN. Forgot the PIN? GEM -> mibpkg -> Remove PIN. Locked out
-another way? GEM -> mibpkg -> Reset web settings.
+By default it answers only on the hotspot and Tailscale (never the SIM data link); **Web settings**
+can change that and set a PIN. Forgot the PIN? **GEM → mibpkg → Remove PIN.** Locked out another
+way? **GEM → mibpkg → Reset web settings.**
 
-Emergency stop: create an empty file `mibpkg/DISABLE` on the card and reboot; no package
+**Emergency stop:** create an empty file `mibpkg/DISABLE` on the card and reboot — no package
 services start while it is present.
 
 ## For developers
 
 - `cargo test` — host tests (all unit paths are mapped under a temp root).
 - `scripts/build.sh` — cross-build for the unit (Docker, `qnx65-armv7-toolchain:8.5-rust`).
+- `scripts/bundle.sh [--signed-header FILE] [extra.mpk ...]` — build the SD card image
+  (`out/sd/`, `out/mibpkg-sd-<version>.zip`) with the official collection. One card installs via
+  both the engineering menu and M.I.B.; pass a genuine signed metainfo2 header to make the
+  engineering-menu entry accepted (see below).
+- `mibpkg swdl-card <out> --payload DIR [--seed DIR] --version V [--signed-header FILE] [--no-mib]`
+  — assemble the card directly. `--no-mib` emits a pure SWDL card.
 - `mibpkg build <src-dir> <out-dir>` — build a `.mpk` from a directory with `manifest.toml`.
 - `mibpkg index <collection-dir> --id ID --name NAME` — write `index.json`.
-- `scripts/bundle.sh [extra.mpk ...]` — SD bundle with the official collection.
+- `mibpkg verify <card-dir | github:owner/repo | index.json>` — check a card or a collection the
+  way the car would.
 - `scripts/web-fixture.sh <dir>` — a fake unit root for working on the web interface on a Mac
   (`web/` is plain HTML/CSS/JS, no build step; `MIBPKG_WEB_DIR=web` serves it from disk).
-- `node --test web/tests/*.test.mjs` — front-end unit tests (Node's built-in runner, nothing to install).
+- `node --test web/tests/*.test.mjs` — front-end unit tests (Node's built-in runner).
+
+**The signed header:** the engineering-menu (SWDL) flow requires a genuine, Audi-signed `metainfo2`
+header prepended to the card's manifest — the signatures can't be forged, so mibpkg does not ship
+one. Supply your own (from a real update you own) at build time with `--signed-header`; it is never
+committed. Without it the M.I.B. path still works. See [INSTALL.md](INSTALL.md) for details.
 
 Design: `docs/superpowers/specs/2026-09-26-mibpkg-design.md`; web interface:
-`docs/superpowers/specs/2026-10-05-web-interface-design.md`. Backlog: `docs/ideas.md`.
+`docs/superpowers/specs/2026-10-05-web-interface-design.md`; SWDL installer:
+`docs/superpowers/specs/2026-10-14-swdl-installer-design.md`. Backlog: `docs/ideas.md`.
 Verified unit facts: `docs/unit-facts.md`.
