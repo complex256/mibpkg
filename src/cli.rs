@@ -38,7 +38,7 @@ const USAGE: &str = "usage:
     online-check | sntp [host:port] | web
     gem install-file <pkg> <id> <collection|-> | gem config-set <pkg> <n> <id>
     gem source-add <source> | gem source-remove <source> | gem web-settings <id> | gem web-reset | gem web-restart
-    bootstrap | enable-gem | disable-gem | gem-patch <apply|status|revert> [--from DIR] | uninstall-self\n  mibpkg swdl-card <out-dir> --payload DIR [--seed DIR] --version V\n  mibpkg gem-patch build --stock JAR --patched JAR [--out DIR]";
+    bootstrap | enable-gem | disable-gem | gem-patch <apply|status|revert> [--from DIR] | uninstall-self\n  mibpkg swdl-card <out-dir> --payload DIR [--seed DIR] --version V [--signed-header FILE] [--no-mib]\n  mibpkg gem-patch build --stock JAR --patched JAR [--out DIR]";
 
 pub fn run(args: &[String]) -> Result<i32> {
     let mut root = PathBuf::from("/");
@@ -711,6 +711,7 @@ fn host_verify(args: &[String]) -> Result<i32> {
 fn host_swdl_card(args: &[String]) -> Result<i32> {
     let out = PathBuf::from(arg(args, 0, "output dir")?);
     let (mut payload, mut seed, mut version, mut header) = (None, None, None, None);
+    let mut with_mib = true; // one card installs via the Red menu and M.I.B. by default
     let mut it = args[1..].iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -718,6 +719,7 @@ fn host_swdl_card(args: &[String]) -> Result<i32> {
             "--seed" => seed = Some(PathBuf::from(it.next().context("--seed needs a dir")?)),
             "--version" => version = Some(it.next().context("--version needs a value")?.clone()),
             "--signed-header" => header = Some(PathBuf::from(it.next().context("--signed-header needs a file")?)),
+            "--no-mib" => with_mib = false,
             s => bail!("unexpected argument {s:?}"),
         }
     }
@@ -727,7 +729,7 @@ fn host_swdl_card(args: &[String]) -> Result<i32> {
         Some(p) => Some(fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?),
         None => None,
     };
-    swdl::build_card(&out, &payload, seed.as_deref(), &version, header_text.as_deref())?;
+    swdl::build_card(&out, &payload, seed.as_deref(), &version, header_text.as_deref(), with_mib)?;
     let probs = swdl::verify_card(&out)?;
     for p in &probs {
         crate::say!("problem: {p}");

@@ -8,10 +8,13 @@ use std::fs;
 use std::path::Path;
 
 pub const INSTALL_SH: &str = include_str!("../shell/install.sh");
+pub const CUSTOM_SH: &str = include_str!("../shell/custom.sh");
+pub const COMMAND_SH: &str = include_str!("../shell/command.sh");
 
 /// Build a card tree at `out`: metainfo2.txt, the install.sh final-script, the boot
-/// payload, an optional seed collection, and a disabled autostart marker.
-pub fn build_card(out: &Path, payload: &Path, seed: Option<&Path>, version: &str, signed_header: Option<&str>) -> Result<()> {
+/// payload, an optional seed collection, and a disabled autostart marker. When `with_mib`,
+/// also lay down the M.I.B. "Run Custom Script" entry (/mod) so one card installs either way.
+pub fn build_card(out: &Path, payload: &Path, seed: Option<&Path>, version: &str, signed_header: Option<&str>, with_mib: bool) -> Result<()> {
     let final_dir = out.join("mibpkg/final");
     fs::create_dir_all(&final_dir)?;
     fs::write(final_dir.join("install.sh"), INSTALL_SH)?;
@@ -31,6 +34,15 @@ pub fn build_card(out: &Path, payload: &Path, seed: Option<&Path>, version: &str
         copy_tree(s, &out.join("mibpkg/collections/seed")).context("copying seed collection")?;
     }
     fs::write(out.join("_Swdlautorun.txt"), "")?; // autostart marker, disabled by default
+    if with_mib {
+        // M.I.B. "Run Custom Script" entry: /mod/custom.sh (+ the command.sh compat shim) and a
+        // copy of the payload it lands. The seed collection at mibpkg/collections/ is shared.
+        let mod_dir = out.join("mod");
+        fs::create_dir_all(&mod_dir)?;
+        fs::write(mod_dir.join("custom.sh"), CUSTOM_SH)?;
+        fs::write(mod_dir.join("command.sh"), COMMAND_SH)?;
+        copy_tree(payload, &mod_dir.join("mibpkg")).context("copying M.I.B. payload")?;
+    }
     Ok(())
 }
 
@@ -53,6 +65,10 @@ pub fn verify_card(dir: &Path) -> Result<Vec<String>> {
         if !dir.join("mibpkg/payload").join(f).exists() {
             p.push(format!("missing payload file {f}"));
         }
+    }
+    // If the M.I.B. entry is present, its payload must be too.
+    if dir.join("mod/custom.sh").exists() && !dir.join("mod/mibpkg/mibpkg").exists() {
+        p.push("mod/custom.sh present but mod/mibpkg/mibpkg is missing".into());
     }
     let gp = dir.join("mibpkg/payload/gem-patch");
     let toml = gp.join("patches.toml");

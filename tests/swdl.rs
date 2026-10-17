@@ -97,3 +97,49 @@ fn download_group_has_a_real_file_entry_so_swdl_lists_it() {
     assert!(meta.contains("Source = \"../../MARKER\""));
     assert!(meta.contains("Destination = \"/HBpersistence/SWDL/Log/service/mibpkg\""));
 }
+
+fn mib_payload(d: &std::path::Path) -> std::path::PathBuf {
+    let p = d.join("payload");
+    std::fs::create_dir_all(&p).unwrap();
+    for f in ["mibpkg", "launch.sh", "gem.sh", "ca.pem"] {
+        std::fs::write(p.join(f), b"x").unwrap();
+    }
+    p
+}
+
+#[test]
+fn with_mib_is_the_default_and_emits_both_entry_points() {
+    let d = tempfile::tempdir().unwrap();
+    let payload = mib_payload(d.path());
+    let out = d.path().join("card");
+    let code = mibpkg::cli::run(&[
+        "swdl-card".into(), out.display().to_string(),
+        "--payload".into(), payload.display().to_string(),
+        "--version".into(), "1.0".into(),
+    ]).unwrap();
+    assert_eq!(code, 0);
+    // SWDL entry still present
+    assert!(out.join("metainfo2.txt").exists());
+    assert!(out.join("mibpkg/final/install.sh").exists());
+    assert!(out.join("mibpkg/payload/mibpkg").exists());
+    // M.I.B. entry present by default
+    assert!(out.join("mod/custom.sh").exists(), "no mod/custom.sh");
+    assert!(out.join("mod/command.sh").exists(), "no mod/command.sh");
+    assert!(out.join("mod/mibpkg/mibpkg").exists(), "no mod/mibpkg payload");
+}
+
+#[test]
+fn no_mib_flag_omits_the_mib_entry() {
+    let d = tempfile::tempdir().unwrap();
+    let payload = mib_payload(d.path());
+    let out = d.path().join("card");
+    let code = mibpkg::cli::run(&[
+        "swdl-card".into(), out.display().to_string(),
+        "--payload".into(), payload.display().to_string(),
+        "--version".into(), "1.0".into(),
+        "--no-mib".into(),
+    ]).unwrap();
+    assert_eq!(code, 0);
+    assert!(out.join("metainfo2.txt").exists());        // SWDL still there
+    assert!(!out.join("mod").exists(), "mod/ should be absent with --no-mib");
+}
