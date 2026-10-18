@@ -189,10 +189,14 @@ pub fn run(args: &[String]) -> Result<i32> {
                 Ok(m) => format!("OK: {m}"),
                 Err(e) => format!("FAILED: {e:#}"),
             };
-            if let Err(e) = record_result(&ctx, &key, &text) {
-                crate::warn!("warning: recording result: {e:#}");
+            // Uninstall removed the state, screens and (with --purge) every mibpkg file; recording
+            // a result or running after() would recreate them, so skip both for it.
+            if verb != "uninstall-self" {
+                if let Err(e) = record_result(&ctx, &key, &text) {
+                    crate::warn!("warning: recording result: {e:#}");
+                }
+                after(&ctx);
             }
-            after(&ctx);
             crate::say!("{text}");
             Ok(0)
         }
@@ -243,25 +247,9 @@ pub fn run(args: &[String]) -> Result<i32> {
         }
         "uninstall-self" => {
             let _lock = Lock::acquire(&ctx.layout, ctx.sys)?;
-            control::request_stop(&ctx.layout)?;
-            let end = Instant::now() + Duration::from_secs(15);
-            while control::supervisor_pid(&ctx.layout, ctx.sys).is_some() && Instant::now() < end {
-                std::thread::sleep(Duration::from_millis(200));
-            }
-            hook::uninstall_hook(&ctx)?;
-            // Close the web interface's hotspot port again (nothing to do if it was never opened).
-            if let Err(e) = crate::firewall::apply(&ctx, None) {
-                crate::warn!("warning: hotspot firewall: {e:#}");
-            }
-            {
-                let _rw = ctx.mounts.rw("/mnt/app")?;
-                gem::remove_screens(&ctx.layout)?;
-            }
-            let _ = fs::remove_file(ctx.layout.run("stop"));
-            crate::say!(
-                "mibpkg removed from boot and GEM; installed files remain in {} (delete by hand if wanted)",
-                ctx.layout.unit_path(&ctx.layout.home())
-            );
+            let purge = args.iter().any(|a| a == "--purge");
+            let msg = uninstall_self(&ctx, purge)?;
+            crate::say!("{msg}");
             Ok(0)
         }
         other => bail!("unknown command {other:?}\n{USAGE}"),
@@ -269,6 +257,42 @@ pub fn run(args: &[String]) -> Result<i32> {
 }
 
 /// Record the running mibpkg as installed (once), so GEM offers updates, not "Install".
+/// Remove mibpkg from boot and GEM, stopping the supervisor and closing the hotspot port. With
+/// `purge`, also restore every stock file it (or its packages) patched and delete all mibpkg files.
+/// The caller holds the action lock (the top-level verb acquires it; GEM already holds it).
+fn uninstall_self(ctx: &Ctx, purge: bool) -> Result<String> {
+    control::request_stop(&ctx.layout)?;
+    let end = Instant::now() + Duration::from_secs(15);
+    while control::supervisor_pid(&ctx.layout, ctx.sys).is_some() && Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    hook::uninstall_hook(ctx)?;
+    // Close the web interface's hotspot port again (nothing to do if it was never opened).
+    if let Err(e) = crate::firewall::apply(ctx, None) {
+        crate::warn!("warning: hotspot firewall: {e:#}");
+    }
+    {
+        let _rw = ctx.mounts.rw("/mnt/app")?;
+        gem::remove_screens(&ctx.layout)?;
+        if purge {
+            crate::backups::restore_all(&ctx.layout)?;
+            match fs::remove_dir_all(ctx.layout.home()) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+                _ => {}
+            }
+        }
+    }
+    let _ = fs::remove_file(ctx.layout.run("stop"));
+    Ok(if purge {
+        "mibpkg removed from boot and GEM; stock files restored and all mibpkg files deleted".into()
+    } else {
+        format!(
+            "mibpkg removed from boot and GEM; installed files remain in {} (delete by hand if wanted)",
+            ctx.layout.unit_path(&ctx.layout.home())
+        )
+    })
+}
+
 fn register_self(ctx: &Ctx) -> Result<()> {
     let mut st = State::load(&ctx.layout)?;
     if st.packages.contains_key(install::SELF) {
@@ -498,6 +522,12 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
             let t = online_check(ctx);
             publish_online(ctx, &t);
             Ok(t)
+        }
+        "uninstall-self" => {
+            // GEM's "Remove mibpkg" buttons. The caller (the gem arm) holds the lock and skips
+            // the usual after() so the screens/supervisor are not recreated right after removal.
+            let purge = args.iter().any(|a| a == "--purge");
+            uninstall_self(ctx, purge)
         }
         other => bail!("unknown action {other:?}"),
     }

@@ -26,3 +26,19 @@ pub fn restore(layout: &Layout, unit_abs: &str) -> Result<()> {
     copy_atomic(&src, &dst, mode & 0o7777)?;
     Ok(())
 }
+
+/// Restore every backed-up stock file to the version mibpkg saved before touching it. Used by a
+/// full uninstall (purge) so no stock file is left patched before the mibpkg files are deleted.
+pub fn restore_all(layout: &Layout) -> Result<()> {
+    let dir = layout.state_dir().join("backups");
+    let rd = match std::fs::read_dir(&dir) {
+        Ok(rd) => rd,
+        Err(_) => return Ok(()), // no backups dir = nothing to restore
+    };
+    for e in rd.filter_map(|e| e.ok()) {
+        // backup_path encodes '/' as '%'; decode it back to the unit-absolute path.
+        let unit_abs = format!("/{}", e.file_name().to_string_lossy().replace('%', "/"));
+        restore(layout, &unit_abs)?;
+    }
+    Ok(())
+}

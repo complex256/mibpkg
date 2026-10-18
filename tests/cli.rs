@@ -140,3 +140,43 @@ fn status_and_list_survive_a_closed_output_pipe() {
         assert!(status.success(), "{cmd}: {status:?}");
     }
 }
+
+#[test]
+fn uninstall_self_purge_restores_stock_and_deletes_everything() {
+    let f = common::fixture();
+    run(&args(f.root(), &["bootstrap"])).unwrap();
+    // A package patched a stock file: back it up, then change it.
+    let stock = f.root().join("mnt/app/stockfile");
+    fs::write(&stock, b"STOCK").unwrap();
+    mibpkg::backups::backup_once(&f.layout, "/mnt/app/stockfile").unwrap();
+    fs::write(&stock, b"PATCHED").unwrap();
+    assert!(f.layout.home().is_dir());
+    assert_eq!(run(&args(f.root(), &["uninstall-self", "--purge"])).unwrap(), 0);
+    assert!(!f.layout.home().exists(), "home dir should be deleted by --purge");
+    assert_eq!(fs::read_to_string(f.layout.startup_sh()).unwrap(), common::STARTUP, "startup.sh restored");
+    assert_eq!(fs::read(&stock).unwrap(), b"STOCK", "patched stock file restored from backup");
+    assert!(!f.layout.engdefs().join("mibpkg.esd").exists());
+}
+
+#[test]
+fn plain_uninstall_self_keeps_files() {
+    let f = common::fixture();
+    run(&args(f.root(), &["bootstrap"])).unwrap();
+    assert_eq!(run(&args(f.root(), &["uninstall-self"])).unwrap(), 0);
+    assert!(f.layout.home().is_dir(), "plain uninstall keeps installed files");
+}
+
+#[test]
+fn gem_uninstall_self_does_not_recreate_screens() {
+    let f = common::fixture();
+    run(&args(f.root(), &["bootstrap"])).unwrap();
+    assert!(f.layout.engdefs().join("mibpkg.esd").is_file());
+    // Via the GEM path (mibpkg gem uninstall-self): the screens must stay gone, not be recreated.
+    assert_eq!(run(&args(f.root(), &["gem", "uninstall-self"])).unwrap(), 0);
+    assert!(!f.layout.engdefs().join("mibpkg.esd").exists(), "gem uninstall recreated the screens");
+    assert!(f.layout.home().is_dir(), "plain gem uninstall keeps files");
+    // And the purge variant via GEM deletes everything.
+    run(&args(f.root(), &["bootstrap"])).unwrap();
+    assert_eq!(run(&args(f.root(), &["gem", "uninstall-self", "--purge"])).unwrap(), 0);
+    assert!(!f.layout.home().exists(), "gem uninstall --purge should delete the home dir");
+}
