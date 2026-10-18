@@ -275,6 +275,9 @@ fn uninstall_self(ctx: &Ctx, purge: bool) -> Result<String> {
         let _rw = ctx.mounts.rw("/mnt/app")?;
         gem::remove_screens(&ctx.layout)?;
         if purge {
+            // Stock-file backups live on /mnt/app (e.g. the GEM jar) AND /mnt/system (startup.sh),
+            // both read-only by default; restore_all writes to all of them, so mount system rw too.
+            let _rw_sys = ctx.mounts.rw("/mnt/system")?;
             crate::backups::restore_all(&ctx.layout)?;
             match fs::remove_dir_all(ctx.layout.home()) {
                 Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
