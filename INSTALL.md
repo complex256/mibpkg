@@ -19,9 +19,25 @@ removed, and a `DISABLE` card stops everything if anything goes wrong.
 You need:
 
 - An **Audi/VW MIB2 High** unit — model **MHI2** or **MHI2Q**. (Both are supported; you don't need
-  to tell them apart to install.)
+  to tell them apart to install. How to check below.)
 - An **SD card** (any size; 2 GB is plenty) and a computer with an SD reader.
 - The latest **`mibpkg-sd-<version>.zip`**.
+
+### Check your unit is a MIB2 High
+
+The engineering menu shows your unit's version, which starts with the model name:
+
+1. In the car, **hold the NAV/MAP and MEDIA buttons together for about 7 seconds** to open the
+   engineering menu.
+2. Choose **Version information**.
+3. Look at the **Current version** line. If it starts with **`MHI2`** — for example
+   `MHI2Q_US_AUG22_…` or `MHI2_…` — you have a MIB2 High unit and you're good to go.
+4. To leave the engineering menu, **hold NAV/MAP + MEDIA together for ~7 seconds again** (the Back
+   button does not exit it).
+
+<p align="center">
+  <img src="docs/install-images/08-version-info.jpg" width="360" alt="Engineering menu Version information: Current version MHI2Q_…">
+</p>
 
 There are two ways to install. **Method A (engineering menu)** needs no other software and is the
 recommended path for most people. **Method B (M.I.B.)** is a one-tap alternative if you already run
