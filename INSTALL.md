@@ -10,7 +10,7 @@ to install and manage software.
 removed, and a `DISABLE` card stops everything if anything goes wrong.
 
 <p align="center">
-  <img src="docs/screenshots/discover.png" width="300" alt="mibpkg Discover screen — the finished result">
+  <img src="docs/screenshots/discover.png" width="240" alt="mibpkg Discover screen — the finished result">
 </p>
 
 ---
@@ -92,13 +92,15 @@ Open the unit's engineering / Red menu and choose **Software Update** (SWDL). Se
   <img src="docs/install-images/04-sw-update.jpg" width="360" alt="SW Update media selection: SD card 1 / SD card 2 / USB">
 </p>
 
-### Step 5 — Select "mibpkg installer" and start
+### Step 5 — Start the update
 
-In the update list you'll see **`mibpkg`** marked **`[Y]`** (installable). The other rows
-(IOC, GPS, …) show `[N/A]` — that's normal.
+Choose **Standard**, then scroll to the **bottom** of the list: you'll see **`mibpkg`** marked
+**`[Y]`** (installable). The other rows (DVD, GPS, …) show `[N/A]` — that's normal. Select
+**Start update** to begin.
 
-> 📸 *[Image: the update list with "mibpkg [Y]" highlighted and "Start update" below.]*
-> `docs/install-images/05-mibpkg-listed.png`
+<p align="center">
+  <img src="docs/install-images/05-mibpkg-listed.jpg" width="360" alt="Update list: mibpkg [Y] at the bottom, Start update below">
+</p>
 
 ### Step 6 — Let it install and reboot
 
@@ -145,14 +147,14 @@ From there:
 
 <table>
   <tr>
-    <td align="center"><img src="docs/screenshots/discover.png" width="220" alt="Discover"><br><b>Discover</b> — browse and install packages.</td>
-    <td align="center"><img src="docs/screenshots/updates.png" width="220" alt="Updates"><br><b>Updates</b> — one tap to update everything.</td>
-    <td align="center"><img src="docs/screenshots/installed.png" width="220" alt="Installed"><br><b>Installed</b> — see what's running.</td>
+    <td align="center"><img src="docs/screenshots/discover.png" width="240" alt="Discover"><br><b>Discover</b> — browse and install packages.</td>
+    <td align="center"><img src="docs/screenshots/updates.png" width="240" alt="Updates"><br><b>Updates</b> — one tap to update everything.</td>
+    <td align="center"><img src="docs/screenshots/installed.png" width="240" alt="Installed"><br><b>Installed</b> — see what's running.</td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/screenshots/sources.png" width="220" alt="Sources"><br><b>Sources</b> — add a community repo.</td>
-    <td align="center"><img src="docs/screenshots/more.png" width="220" alt="More"><br><b>More</b> — install a .mpk, logs, settings, health.</td>
-    <td align="center"><img src="docs/screenshots/pin.png" width="220" alt="PIN"><br><b>PIN</b> — optionally lock the interface.</td>
+    <td align="center"><img src="docs/screenshots/sources.png" width="240" alt="Sources"><br><b>Sources</b> — add a community repo.</td>
+    <td align="center"><img src="docs/screenshots/more.png" width="240" alt="More"><br><b>More</b> — install a .mpk, logs, settings, health.</td>
+    <td align="center"><img src="docs/screenshots/pin.png" width="240" alt="PIN"><br><b>PIN</b> — optionally lock the interface.</td>
   </tr>
 </table>
 
@@ -204,9 +206,9 @@ Two easy ways, each with a confirmation:
 Several screens are already in place (captured from a live unit). The remaining ones are physical
 shots only you can take; drop each at the path shown and swap its 📸 placeholder line for an image.
 
-**Already in the guide:**
-- [x] Version information (`08-version-info.jpg`), SW Update media selection (`04-sw-update.jpg`),
-      and the Discover result shot.
+**Already in the guide** (captured from a live unit): SW Update media selection
+(`04-sw-update.jpg`), the update list with mibpkg (`05-mibpkg-listed.jpg`), Version information
+(`08-version-info.jpg`), and the Discover result shot.
 
 **Still to capture (physical):**
 - [ ] `docs/install-images/01-sd-format-mac.png` — Disk Utility **Erase** dialog: Format **MS-DOS
@@ -214,8 +216,6 @@ shots only you can take; drop each at the path shown and swap its 📸 placehold
 - [ ] `docs/install-images/02-card-contents.png` — the SD root showing `metainfo2.txt`, `mibpkg/`,
       `mod/`, `_Swdlautorun.txt`.
 - [ ] `docs/install-images/03-insert-sd1.png` — inserting the card into **SD1**.
-- [ ] `docs/install-images/05-mibpkg-listed.png` — the update list with **mibpkg [Y]** highlighted
-      and **Start update** below. *(You already captured this during testing.)*
 - [ ] `docs/install-images/06-installing.png` — the install/reboot progress screen.
 - [ ] `docs/install-images/07-mib-run-custom-script.png` — GEM → M.I.B. → Advanced Settings → Run
       Custom Script.

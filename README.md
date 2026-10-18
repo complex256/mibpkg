@@ -6,7 +6,7 @@ the in-car engineering menu. A built-in supervisor starts your software at boot 
 running.
 
 <p align="center">
-  <img src="docs/screenshots/discover.png" width="300" alt="mibpkg Discover screen">
+  <img src="docs/screenshots/discover.png" width="240" alt="mibpkg Discover screen">
 </p>
 
 - **No PC at the car.** Everything runs on the unit; you drive it from your phone's browser.
@@ -22,9 +22,9 @@ New here? **[Follow the step-by-step install guide → INSTALL.md](INSTALL.md)**
 
 <table>
   <tr>
-    <td align="center"><img src="docs/screenshots/discover.png" width="230" alt="Discover"><br><b>Discover</b><br>Browse what's on the card and online.</td>
-    <td align="center"><img src="docs/screenshots/updates.png" width="230" alt="Updates"><br><b>Updates</b><br>One tap to update everything.</td>
-    <td align="center"><img src="docs/screenshots/more.png" width="230" alt="More"><br><b>More</b><br>Logs, sources, settings, health.</td>
+    <td align="center"><img src="docs/screenshots/discover.png" width="240" alt="Discover"><br><b>Discover</b><br>Browse what's on the card and online.</td>
+    <td align="center"><img src="docs/screenshots/updates.png" width="240" alt="Updates"><br><b>Updates</b><br>One tap to update everything.</td>
+    <td align="center"><img src="docs/screenshots/more.png" width="240" alt="More"><br><b>More</b><br>Logs, sources, settings, health.</td>
   </tr>
 </table>
 
@@ -63,8 +63,8 @@ installing a `.mpk` from your phone, live logs, config files and online sources.
 
 <table>
   <tr>
-    <td align="center"><img src="docs/screenshots/installed.png" width="230" alt="Installed"><br><b>Installed</b> — what's running, at a glance.</td>
-    <td align="center"><img src="docs/screenshots/sources.png" width="230" alt="Sources"><br><b>Sources</b> — add a community package repo.</td>
+    <td align="center"><img src="docs/screenshots/installed.png" width="240" alt="Installed"><br><b>Installed</b> — what's running, at a glance.</td>
+    <td align="center"><img src="docs/screenshots/sources.png" width="240" alt="Sources"><br><b>Sources</b> — add a community package repo.</td>
   </tr>
 </table>
 
