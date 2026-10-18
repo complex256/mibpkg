@@ -37,6 +37,8 @@ The engineering menu shows your unit's version, which starts with the model name
    button does not exit it).
 
 <p align="center">
+  <img src="docs/install-images/engineering-menu.jpg" width="360" alt="Engineering menu: Update, System, Settings, Version information">
+  <br>
   <img src="docs/install-images/08-version-info.jpg" width="360" alt="Engineering menu Version information: Current version MHI2Q_…">
 </p>
 
@@ -94,9 +96,14 @@ Open the unit's engineering / Red menu and choose **Software Update** (SWDL). Se
 
 ### Step 5 — Start the update
 
-Choose **Standard**, then scroll to the **bottom** of the list: you'll see **`mibpkg`** marked
-**`[Y]`** (installable). The other rows (DVD, GPS, …) show `[N/A]` — that's normal. Select
-**Start update** to begin.
+Choose **Standard**:
+
+<p align="center">
+  <img src="docs/install-images/05a-update-type.jpg" width="360" alt="Update type: Standard / User defined — choose Standard">
+</p>
+
+Then scroll to the **bottom** of the list: you'll see **`mibpkg`** marked **`[Y]`** (installable).
+The other rows (DVD, GPS, …) show `[N/A]` — that's normal. Select **Start update** to begin.
 
 <p align="center">
   <img src="docs/install-images/05-mibpkg-listed.jpg" width="360" alt="Update list: mibpkg [Y] at the bottom, Start update below">
@@ -107,7 +114,9 @@ Choose **Standard**, then scroll to the **bottom** of the list: you'll see **`mi
 The install runs and the unit restarts a few times to finish. This is normal — **don't pull the
 card or power during the process.** When it settles you'll be back at the normal screen.
 
-> 📸 *[Image: the install progress / reboot screen.]* `docs/install-images/06-installing.png`
+<p align="center">
+  <img src="docs/install-images/06-installing.jpg" width="360" alt="Install running: Please wait, process will resume after reboot">
+</p>
 
 ### Step 7 — Open mibpkg
 
@@ -206,9 +215,11 @@ Two easy ways, each with a confirmation:
 Several screens are already in place (captured from a live unit). The remaining ones are physical
 shots only you can take; drop each at the path shown and swap its 📸 placeholder line for an image.
 
-**Already in the guide** (captured from a live unit): SW Update media selection
-(`04-sw-update.jpg`), the update list with mibpkg (`05-mibpkg-listed.jpg`), Version information
-(`08-version-info.jpg`), and the Discover result shot.
+**Already in the guide** (captured from a live unit): the Engineering menu
+(`engineering-menu.jpg`), Version information (`08-version-info.jpg`), SW Update media selection
+(`04-sw-update.jpg`), the update-type choice (`05a-update-type.jpg`), the update list with mibpkg
+(`05-mibpkg-listed.jpg`), the install/reboot progress screen (`06-installing.jpg`), and the
+Discover result shot.
 
 **Still to capture (physical):**
 - [ ] `docs/install-images/01-sd-format-mac.png` — Disk Utility **Erase** dialog: Format **MS-DOS
@@ -216,7 +227,6 @@ shots only you can take; drop each at the path shown and swap its 📸 placehold
 - [ ] `docs/install-images/02-card-contents.png` — the SD root showing `metainfo2.txt`, `mibpkg/`,
       `mod/`, `_Swdlautorun.txt`.
 - [ ] `docs/install-images/03-insert-sd1.png` — inserting the card into **SD1**.
-- [ ] `docs/install-images/06-installing.png` — the install/reboot progress screen.
 - [ ] `docs/install-images/07-mib-run-custom-script.png` — GEM → M.I.B. → Advanced Settings → Run
       Custom Script.
 
