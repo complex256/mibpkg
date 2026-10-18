@@ -18,11 +18,10 @@ removed, and a `DISABLE` card stops everything if anything goes wrong.
 
 You need:
 
-- An **Audi/VW MIB2 High** unit (MHI2 or MHI2Q). Not sure? mibpkg's **More** screen shows your unit
-  type after install.
+- An **Audi/VW MIB2 High** unit — model **MHI2** or **MHI2Q**. (Both are supported; you don't need
+  to tell them apart to install.)
 - An **SD card** (any size; 2 GB is plenty) and a computer with an SD reader.
-- The mibpkg card image: **`mibpkg-sd-<version>.zip`** (from a release, or built with
-  `scripts/bundle.sh` — see the README's developer section).
+- The latest **`mibpkg-sd-<version>.zip`**.
 
 There are two ways to install. **Method A (engineering menu)** needs no other software and is the
 recommended path for most people. **Method B (M.I.B.)** is a one-tap alternative if you already run
@@ -92,14 +91,14 @@ card or power during the process.** When it settles you'll be back at the normal
 
 ### Step 7 — Open mibpkg
 
-Two ways to use it (either is fine):
+**You use mibpkg from your phone's browser — that's the main interface.** See
+**[Using the web interface](#using-the-web-interface)** below.
 
-- **In the car:** open **GEM → mibpkg**. (On a brand-new install this appears after one more normal
-  reboot — see *Troubleshooting* if the tile isn't there yet.)
-- **From your phone (recommended):** see **[Using the web interface](#using-the-web-interface)**
-  below.
+The in-car **GEM → mibpkg** screen is just a backup: it shows the web address and has recovery
+buttons (remove a forgotten PIN, reset the web settings, remove mibpkg) for when you can't reach the
+web interface. You rarely need it.
 
-✅ **Done.** Skip to [Using the web interface](#using-the-web-interface).
+✅ **Done.** Go to [Using the web interface](#using-the-web-interface).
 
 ---
 
@@ -120,7 +119,7 @@ If you already run M.I.B., this is a one-tap install.
 
 mibpkg is easiest to use from your phone.
 
-1. Join the car's **Wi-Fi hotspot** (or reach the car over **Tailscale** if you've set that up).
+1. Join the car's **Wi-Fi hotspot** from your phone.
 2. In the car, open **GEM → mibpkg** — it shows the address, e.g. `http://10.255.1.1`.
 3. Open that address in your phone's browser.
 
@@ -145,8 +144,8 @@ From there:
 - **Add an online source:** **More → Sources → Add source** (`github:owner/repo`). The car checks it
   when it has internet.
 
-By default the interface answers only on the **hotspot** and **Tailscale** — never the SIM data
-link. You can change that and set a **PIN** under **More → Web settings**.
+The web interface is only accessible over the car's **Wi-Fi hotspot** or **Tailscale**. You can set
+a **PIN** for it under **More → Web settings**.
 
 ---
 
@@ -161,9 +160,7 @@ On a bench or a car without a live MOST bus, the unit flags the bus unstable. mi
 automatically — if you see it once right after installing, it won't come back on later boots.
 
 **It keeps returning to the software-update summary.**
-On a bench with no rotary/wheel to acknowledge the summary, the unit can re-enter update mode. Pull
-the SD card and reboot the unit; it will boot normally. *(Advanced / serial users: clear
-`SWDL/update.txt*` from `efs-persist` and reboot — see `docs/unit-facts.md`.)*
+Pull the SD card out of the unit and restart the car; it will boot normally.
 
 **GEM → mibpkg tile isn't there.**
 mibpkg turns the engineering menu on itself, but the menu reads that setting at boot — so on a fresh
@@ -181,8 +178,6 @@ Two easy ways, each with a confirmation:
   everything** (also deletes all mibpkg files and restores the stock files it changed).
 - **In the car:** **GEM → mibpkg → Remove mibpkg**, then confirm on the next screen (same two
   levels).
-
-*(Advanced: `mibpkg uninstall-self` or `mibpkg uninstall-self --purge` over SSH.)*
 
 ---
 
