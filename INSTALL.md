@@ -9,8 +9,9 @@ to install and manage software.
 **Time:** about 15 minutes. **Risk:** low — mibpkg backs up every file it changes and can be fully
 removed, and a `DISABLE` card stops everything if anything goes wrong.
 
-> 📸 *[Image: the mibpkg "Discover" screen open in a phone browser — the finished result.]*
-> `docs/install-images/00-result.png`
+<p align="center">
+  <img src="docs/screenshots/discover.png" width="300" alt="mibpkg Discover screen — the finished result">
+</p>
 
 ---
 
@@ -87,8 +88,9 @@ Put the card in the unit's **SD card 1** slot.
 
 Open the unit's engineering / Red menu and choose **Software Update** (SWDL). Select **SD card 1**.
 
-> 📸 *[Image: the SW Update screen with SD card 1 selected.]*
-> `docs/install-images/04-sw-update.png`
+<p align="center">
+  <img src="docs/install-images/04-sw-update.jpg" width="360" alt="SW Update media selection: SD card 1 / SD card 2 / USB">
+</p>
 
 ### Step 5 — Select "mibpkg installer" and start
 
@@ -199,22 +201,23 @@ Two easy ways, each with a confirmation:
 
 ## Screenshots to capture
 
-This guide reads fine as-is, but these images make it shine. Capture each and drop it at the path
-shown; they'll render in place.
+Several screens are already in place (captured from a live unit). The remaining ones are physical
+shots only you can take; drop each at the path shown and swap its 📸 placeholder line for an image.
 
-- [ ] `docs/install-images/00-result.png` — the mibpkg **Discover** screen in a phone browser.
+**Already in the guide:**
+- [x] Version information (`08-version-info.jpg`), SW Update media selection (`04-sw-update.jpg`),
+      and the Discover result shot.
+
+**Still to capture (physical):**
 - [ ] `docs/install-images/01-sd-format-mac.png` — Disk Utility **Erase** dialog: Format **MS-DOS
       (FAT)**, Scheme **Master Boot Record**.
 - [ ] `docs/install-images/02-card-contents.png` — the SD root showing `metainfo2.txt`, `mibpkg/`,
       `mod/`, `_Swdlautorun.txt`.
 - [ ] `docs/install-images/03-insert-sd1.png` — inserting the card into **SD1**.
-- [ ] `docs/install-images/04-sw-update.png` — the **SW Update** screen with SD card 1 selected.
-- [ ] `docs/install-images/05-mibpkg-listed.png` — the update list with **mibpkg installer [Y]**
-      highlighted. *(You already captured a version of this during testing.)*
+- [ ] `docs/install-images/05-mibpkg-listed.png` — the update list with **mibpkg [Y]** highlighted
+      and **Start update** below. *(You already captured this during testing.)*
 - [ ] `docs/install-images/06-installing.png` — the install/reboot progress screen.
 - [ ] `docs/install-images/07-mib-run-custom-script.png` — GEM → M.I.B. → Advanced Settings → Run
       Custom Script.
 
-Images are referenced at phone size; a straight-on photo or a dash-cam/HDMI capture of the screen is
-perfect. Once a file is in place, replace its 📸 placeholder line with:
-`![caption](docs/install-images/<name>.png)`.
+A straight-on photo or an HDMI/screen capture is perfect.
