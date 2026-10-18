@@ -77,11 +77,10 @@ Open the unit's engineering / Red menu and choose **Software Update** (SWDL). Se
 
 ### Step 5 — Select "mibpkg installer" and start
 
-In the update list you'll see **`mibpkg installer`** marked **`[Y]`** (installable). The other rows
-(IOC, GPS, …) show `[N/A]` — that's normal. Highlight **mibpkg installer** and choose **Start
-update**.
+In the update list you'll see **`mibpkg`** marked **`[Y]`** (installable). The other rows
+(IOC, GPS, …) show `[N/A]` — that's normal.
 
-> 📸 *[Image: the update list with "mibpkg installer [Y]" highlighted and "Start update" below.]*
+> 📸 *[Image: the update list with "mibpkg [Y]" highlighted and "Start update" below.]*
 > `docs/install-images/05-mibpkg-listed.png`
 
 ### Step 6 — Let it install and reboot
@@ -175,9 +174,15 @@ install it may take **one more normal reboot** for the tile to appear. In the me
 Create an empty file named `DISABLE` in the `mibpkg` folder on the card (`mibpkg/DISABLE`) and
 reboot. No mibpkg-managed services start while it's present.
 
-**Remove mibpkg entirely.**
-Over SSH: `mibpkg uninstall-self` removes the boot hook and the GEM entry (installed files stay in
-`/mnt/app/root/mibpkg` until you delete them).
+**Remove mibpkg.**
+Two easy ways, each with a confirmation:
+- **From your phone:** web interface → **More → Remove mibpkg**. Tick the acknowledgement, then
+  choose **Remove** (keeps installed files, so you can reinstall later) or **Remove and delete
+  everything** (also deletes all mibpkg files and restores the stock files it changed).
+- **In the car:** **GEM → mibpkg → Remove mibpkg**, then confirm on the next screen (same two
+  levels).
+
+*(Advanced: `mibpkg uninstall-self` or `mibpkg uninstall-self --purge` over SSH.)*
 
 ---
 

@@ -14,15 +14,43 @@ export async function render() {
   const status = await api('GET', '/api/status');
   const jobArea = h('div', {});
 
-  async function rescan() {
+  async function act(body) {
     try {
-      const id = await startAction({ action: 'rescan' });
+      const id = await startAction(body);
       if (id) {
         replace(jobArea, jobView(id));
       }
     } catch (e) {
       toast(e.message, { error: true });
     }
+  }
+
+  const rescan = () => act({ action: 'rescan' });
+
+  // Remove mibpkg: deliberately two steps. Tapping "Remove mibpkg" reveals a confirmation; the
+  // remove buttons stay disabled until the acknowledgement is checked.
+  const dangerArea = h('div', {});
+  function confirmUninstall() {
+    const ack = h('input', { type: 'checkbox' });
+    const removeBtn = h('button', { class: 'button danger', type: 'button', disabled: true, onclick: () => act({ action: 'uninstall-self' }) }, 'Remove mibpkg');
+    const purgeBtn = h('button', { class: 'button danger', type: 'button', disabled: true, onclick: () => act({ action: 'uninstall-self', purge: true }) }, 'Remove and delete everything');
+    ack.onchange = () => {
+      removeBtn.disabled = !ack.checked;
+      purgeBtn.disabled = !ack.checked;
+    };
+    replace(
+      dangerArea,
+      h(
+        'div',
+        { class: 'confirm' },
+        h('p', {}, 'Remove mibpkg from this unit? This stops every mibpkg package.'),
+        h('label', {}, ack, ' I understand this stops all mibpkg packages'),
+        h('p', { class: 'muted' }, '“Remove” keeps installed files so you can reinstall later. “Remove and delete everything” also deletes all mibpkg files and restores the stock files it changed.'),
+        removeBtn,
+        purgeBtn,
+        h('button', { class: 'button secondary', type: 'button', onclick: () => dangerArea.replaceChildren() }, 'Cancel'),
+      ),
+    );
   }
 
   return h(
@@ -50,5 +78,8 @@ export async function render() {
       status.last_result ? h('li', {}, h('span', {}, 'Last result'), h('span', {}, status.last_result)) : null,
     ),
     h('p', { class: 'muted' }, 'If this page ever stops working: GEM › mibpkg › Reset web settings.'),
+    h('div', { class: 'section-head' }, h('h2', {}, 'Danger zone')),
+    h('button', { class: 'button danger', type: 'button', onclick: confirmUninstall }, 'Remove mibpkg'),
+    dangerArea,
   );
 }
