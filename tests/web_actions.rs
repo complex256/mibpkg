@@ -30,6 +30,8 @@ fn valid_actions_build_fixed_argv() {
     assert_eq!(argv(r#"{"action":"check"}"#).unwrap(), ["check"]);
     assert_eq!(argv(r#"{"action":"config-resolve","package":"carmqtt","config":0,"choice":"keep"}"#).unwrap(), ["config-resolve", "carmqtt", "keep", "0"]);
     assert_eq!(argv(r#"{"action":"config-resolve","package":"carmqtt","config":2,"choice":"card"}"#).unwrap(), ["config-resolve", "carmqtt", "card", "2"]);
+    assert_eq!(argv(r#"{"action":"uninstall-self"}"#).unwrap(), ["uninstall-self"]);
+    assert_eq!(argv(r#"{"action":"uninstall-self","purge":true}"#).unwrap(), ["uninstall-self", "--purge"]);
 }
 
 #[test]

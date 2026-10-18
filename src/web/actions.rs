@@ -19,6 +19,7 @@ pub enum Action {
     Restart { package: String },
     Remove { package: String, #[serde(default)] purge: bool },
     ConfigResolve { package: String, config: usize, choice: String },
+    UninstallSelf { #[serde(default)] purge: bool },
 }
 
 /// Names that exist right now, so a request can only name real things.
@@ -110,6 +111,14 @@ pub fn validate(a: &Action, known: &Known) -> Result<Validated, String> {
             };
             let n = config.to_string();
             v(label, Some(&p), vec!["config-resolve", &p, choice, &n])
+        }
+        Action::UninstallSelf { purge } => {
+            let mut argv = vec!["uninstall-self"];
+            if *purge {
+                argv.push("--purge");
+            }
+            let label = if *purge { "Remove mibpkg and delete all its files" } else { "Remove mibpkg" };
+            v(label.into(), None, argv)
         }
     })
 }
