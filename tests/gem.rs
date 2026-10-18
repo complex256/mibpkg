@@ -112,8 +112,9 @@ fn the_only_screen_is_the_mibpkg_page() {
     common::collection(&f.sd(), "complex256", &[a]);
     let sys = RecordingSys::default();
     gem::regenerate(&Ctx::new(f.layout.clone(), &sys)).unwrap();
-    let esd: Vec<String> = fs::read_dir(f.layout.engdefs()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
-    assert_eq!(esd, ["mibpkg.esd"], "no package screens, no separate web screen");
+    let mut esd: Vec<String> = fs::read_dir(f.layout.engdefs()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+    esd.sort();
+    assert_eq!(esd, ["mibpkg.esd", "mibpkg_remove.esd"], "the mibpkg page and its remove sub-screen; no package or web screens");
     let text = fs::read_to_string(f.layout.engdefs().join("mibpkg.esd")).unwrap();
     assert!(text.starts_with("screen mibpkg Main\n"));
     assert!(!text.contains("alpha"), "packages are web-only");
@@ -202,10 +203,13 @@ fn upgrading_removes_the_package_and_web_screens() {
     page(&f);
     let mut esd: Vec<String> = fs::read_dir(f.layout.engdefs()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
     esd.sort();
-    assert_eq!(esd, ["mibpkg.esd"]);
+    assert_eq!(esd, ["mibpkg.esd", "mibpkg_remove.esd"]);
     let mut scripts: Vec<String> = fs::read_dir(f.layout.gem_dir()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
     scripts.sort();
-    assert_eq!(scripts, ["self-update.sh", "web-reset.sh", "web-restart.sh"]);
+    assert_eq!(
+        scripts,
+        ["self-update.sh", "uninstall-self.--purge.sh", "uninstall-self.sh", "web-reset.sh", "web-restart.sh"]
+    );
 }
 
 #[test]
@@ -223,4 +227,36 @@ fn update_checks_online_first_and_a_previous_mibpkg_can_be_rolled_back_to() {
     let p = page(&f);
     assert!(p.contains("Roll back mibpkg to 0.4.4"), "{p}");
     assert!(f.layout.gem_dir().join("rollback.mibpkg.sh").is_file());
+}
+
+#[test]
+fn screens_include_a_remove_subscreen_with_both_levels() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let model = gem::Model {
+        layout: &ctx.layout,
+        unit: &ctx.unit,
+        disabled: false,
+        has_result: false,
+        has_update_result: false,
+        rollback_to: None,
+    };
+    let screens = gem::screens(&model);
+    // The main screen, plus a confirm sub-screen parented to it (navigate-in = the first step).
+    assert!(screens.iter().any(|s| s.name == "mibpkg"));
+    let remove = screens.iter().find(|s| s.parent == "mibpkg").expect("a remove sub-screen under mibpkg");
+    let actions: Vec<Vec<String>> = remove
+        .items
+        .iter()
+        .filter_map(|i| match i {
+            Item::Button { action, .. } => Some(action.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(actions.iter().any(|a| a == &vec!["uninstall-self".to_string()]), "no plain-remove button");
+    assert!(
+        actions.iter().any(|a| a == &vec!["uninstall-self".to_string(), "--purge".to_string()]),
+        "no purge button"
+    );
 }

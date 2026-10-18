@@ -141,7 +141,20 @@ pub fn screens(m: &Model) -> Vec<Screen> {
     if m.has_update_result {
         items.push(Item::Live { label: "mibpkg update".into(), key: crate::persist::result_key(SELF) });
     }
-    vec![Screen { name: "mibpkg".into(), parent: m.layout.settings.gem_parent.clone(), items }]
+    let main = Screen { name: "mibpkg".into(), parent: m.layout.settings.gem_parent.clone(), items };
+    // A confirm sub-screen (navigating into it is the deliberate first step; tapping a button is
+    // the second). Two removal levels; the file name still starts with "mibpkg" so remove_screens
+    // cleans it up.
+    let remove = Screen {
+        name: "mibpkg_remove".into(),
+        parent: "mibpkg".into(),
+        items: vec![
+            text("Remove mibpkg from this unit. This stops every mibpkg package."),
+            button("Confirm: remove mibpkg (keep installed files)", &["uninstall-self"]),
+            button("Confirm: remove AND delete all mibpkg files", &["uninstall-self", "--purge"]),
+        ],
+    };
+    vec![main, remove]
 }
 
 /// Delete every mibpkg*.esd in engdefs. Caller holds /mnt/app rw.
