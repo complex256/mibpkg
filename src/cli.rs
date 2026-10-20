@@ -261,6 +261,16 @@ pub fn run(args: &[String]) -> Result<i32> {
 /// `purge`, also restore every stock file it (or its packages) patched and delete all mibpkg files.
 /// The caller holds the action lock (the top-level verb acquires it; GEM already holds it).
 fn uninstall_self(ctx: &Ctx, purge: bool) -> Result<String> {
+    // Without mibpkg nothing could restore the stock bundle list or the plugins' overrides.
+    let mut held: Vec<String> =
+        State::load(&ctx.layout)?.packages.keys().filter(|n| n.as_str() == crate::mibsdk::SDK_PKG).cloned().collect();
+    held.extend(crate::mibsdk::sdk_pkg::plugin_packages(&ctx.layout)?.into_iter().map(|(id, _)| id));
+    if !held.is_empty() {
+        bail!(
+            "remove the SDK packages first ({}): mibpkg remove <name>, plugins before mibsdk; without mibpkg nothing can restore the stock bundle list",
+            held.join(", ")
+        );
+    }
     control::request_stop(&ctx.layout)?;
     let end = Instant::now() + Duration::from_secs(15);
     while control::supervisor_pid(&ctx.layout, ctx.sys).is_some() && Instant::now() < end {

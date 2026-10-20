@@ -6,8 +6,10 @@ pub mod catalog;
 pub mod grants;
 pub mod ledger;
 pub mod propsline;
+pub mod sdk_pkg;
 pub mod stamp;
 pub mod toggles;
+pub mod zipnames;
 
 use crate::ctx::Ctx;
 use crate::fsutil;

@@ -8,7 +8,8 @@ use crate::ctx::Ctx;
 use crate::fsutil::{atomic_write, copy_atomic};
 use crate::index::{cmp_versions, Collection};
 use crate::legacy;
-use crate::manifest::Manifest;
+use crate::manifest::{Kind, Manifest};
+use crate::mibsdk::sdk_pkg;
 use crate::paths::Layout;
 use crate::state::{Installed, State};
 use anyhow::{bail, Context, Result};
@@ -20,6 +21,9 @@ use std::time::Duration;
 
 pub const SELF: &str = "mibpkg";
 const SCRIPT_TIMEOUT: Duration = Duration::from_secs(120);
+/// Appended to the result of an SDK install, update or rollback: the HMI loads it at boot.
+const SDK_START: &str = "; reboot the unit (or restart the HMI) to start it";
+const SDK_REMOVED: &str = "; reboot the unit (or restart the HMI) to finish removing it";
 
 pub fn current_version(layout: &Layout, pkg: &str) -> Option<String> {
     fs::read_to_string(layout.pkg_dir(pkg).join("current"))
@@ -251,10 +255,17 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
         None => (ctx.progress)("free space unknown (could not read df); continuing"),
     }
 
+    let kind = pkg.manifest.kind();
+    if kind == Kind::Sdk && !repair {
+        // The guards run before /mnt/app goes read-write: a refusal changes nothing at all.
+        sdk_pkg::check(ctx, &pkg.manifest, current_dir(layout, name).as_deref())?;
+    }
+
     let _rw = ctx.mounts.rw("/mnt/app")?;
     cleanup_stale(layout)?;
     let pkg_dir = layout.pkg_dir(name);
     let ver_dir = pkg_dir.join(&version);
+    let prev_dir = previous.as_ref().map(|p| pkg_dir.join(&p.version)).filter(|d| d.is_dir());
     let new_dir = pkg_dir.join(format!("{}.new", version));
     if !repair && ver_dir.exists() {
         // Newer than current, so never the active version: a leftover or the version a
@@ -269,6 +280,10 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
         (|| -> Result<()> {
         pkg.extract_to(&new_dir)?;
         fs::rename(&new_dir, &ver_dir)?;
+        if kind == Kind::Sdk {
+            // From the staged copy just extracted: the jars verified are the jars written.
+            sdk_pkg::deploy(ctx, &pkg.manifest, &ver_dir, prev_dir.as_deref())?;
+        }
         cfg = config::import(layout, media, &pkg.manifest, ctx.config_choice)?;
         if let Some(s) = &pkg.manifest.scripts.post_install {
             (ctx.progress)("running post_install");
@@ -339,6 +354,9 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
             "; needs config: {} (put it on the SD card in mibpkg/config/{name}/, then Rescan)",
             missing.join(", ")
         ));
+    }
+    if kind == Kind::Sdk {
+        msg.push_str(SDK_START);
     }
     (ctx.progress)("starting services");
     control::request_reload(layout)?;
@@ -441,6 +459,13 @@ pub fn remove(ctx: &Ctx, name: &str, purge: bool) -> Result<String> {
     }
     let _rw = ctx.mounts.rw("/mnt/app")?;
     cleanup_stale(layout)?;
+    // The SDK first puts the stock bundle list back (or refuses, changing nothing). A mibsdk whose
+    // manifest cannot be read is refused there too, never removed as plain files.
+    let sdk_note = if name == crate::mibsdk::SDK_PKG || current_manifest(layout, name).is_ok_and(|m| m.kind() == Kind::Sdk) {
+        Some(sdk_pkg::undeploy(ctx, purge)?)
+    } else {
+        None
+    };
     if let (Ok(m), Some(dir)) = (current_manifest(layout, name), current_dir(layout, name)) {
         if let Some(s) = &m.scripts.pre_remove {
             ctx.sys
@@ -465,7 +490,15 @@ pub fn remove(ctx: &Ctx, name: &str, purge: bool) -> Result<String> {
     }
     state.packages.remove(name);
     state.save(layout)?;
-    Ok(format!("removed {name}{}", if purge { " and its config" } else { "" }))
+    let msg = format!("removed {name}{}", if purge { " and its config" } else { "" });
+    Ok(match sdk_note {
+        // Warnings (one per line) come first, the note last.
+        Some(note) => match note.rsplit_once('\n') {
+            Some((warnings, last)) => format!("{warnings}\n{msg}; {last}{SDK_REMOVED}"),
+            None => format!("{msg}; {note}{SDK_REMOVED}"),
+        },
+        None => msg,
+    })
 }
 
 pub fn rollback(ctx: &Ctx, name: &str) -> Result<String> {
@@ -478,8 +511,16 @@ pub fn rollback(ctx: &Ctx, name: &str) -> Result<String> {
         &fs::read_to_string(prev_dir.join("manifest.toml"))
             .with_context(|| format!("{name} {prev} is no longer on the unit"))?,
     )?;
+    let kind = m.kind();
+    if kind == Kind::Sdk {
+        sdk_pkg::check(ctx, &m, current_dir(layout, name).as_deref())?;
+    }
     let _rw = ctx.mounts.rw("/mnt/app")?;
     cleanup_stale(layout)?;
+    if kind == Kind::Sdk {
+        // On failure this deploys the current version again; `current` is not switched.
+        sdk_pkg::deploy(ctx, &m, &prev_dir, current_dir(layout, name).as_deref())?;
+    }
     (ctx.progress)(&format!("switching {name} back to {prev}"));
     atomic_write(&layout.pkg_dir(name).join("current"), prev.as_bytes())?;
     bootd::write_for_package(layout, name, &bootd::entries(&m))?;
@@ -493,5 +534,6 @@ pub fn rollback(ctx: &Ctx, name: &str) -> Result<String> {
     entry.uses_scripts = m.uses_scripts();
     state.save(layout)?;
     control::request_reload(layout)?;
-    Ok(format!("rolled back {name} {} -> {prev}", inst.version))
+    let suffix = if kind == Kind::Sdk { SDK_START } else { "" };
+    Ok(format!("rolled back {name} {} -> {prev}{suffix}", inst.version))
 }

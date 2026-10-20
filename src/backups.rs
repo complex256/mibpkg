@@ -61,6 +61,21 @@ pub fn backup_once(layout: &Layout, unit_abs: &str) -> Result<PathBuf> {
     Ok(dst)
 }
 
+/// Record the file as absent before mibpkg's edit (a tombstone), whether or not it exists now:
+/// for a file another tool created that mibpkg adopts as its own (the SDK's DSITracer marker
+/// when `mibsdk-dev` recorded it as absent). Once only, like `backup_once`: an existing record
+/// is kept.
+pub fn record_absent(layout: &Layout, unit_abs: &str) -> Result<()> {
+    if has_backup(layout, unit_abs) {
+        return Ok(());
+    }
+    let t = tombstone_path(layout, unit_abs);
+    if let Some(dir) = t.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    }
+    crate::fsutil::atomic_write(&t, b"").with_context(|| format!("writing {}", t.display()))
+}
+
 /// Put the file back to its recorded original state, then forget the record. Clearing matters for
 /// tombstones: a stale one would otherwise delete a file mibpkg never created. A target already
 /// gone counts as restored; calling this with no record is an error.

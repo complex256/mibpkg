@@ -150,12 +150,15 @@ pub struct Ctx<'a> {
     /// How a config changed both on the card and on the car is settled (`--config=keep|card`);
     /// None leaves the conflict for the user.
     pub config_choice: Option<crate::config::Choice>,
+    /// `--force`: removing the SDK goes ahead despite pushed plugins or overrides in the ledger
+    /// (with a loud warning).
+    pub force: bool,
 }
 
 impl<'a> Ctx<'a> {
     pub fn new(layout: Layout, sys: &'a dyn Sys) -> Ctx<'a> {
         let unit = detect(&layout);
         let mounts = Mounts::new(sys, &layout);
-        Ctx { layout, sys, mounts, unit, progress: Box::new(|m: &str| crate::say!("{m}")), fetcher: Box::new(crate::fetch::Unavailable), config_choice: None }
+        Ctx { layout, sys, mounts, unit, progress: Box::new(|m: &str| crate::say!("{m}")), fetcher: Box::new(crate::fetch::Unavailable), config_choice: None, force: false }
     }
 }
