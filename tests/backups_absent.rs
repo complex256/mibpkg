@@ -103,7 +103,9 @@ fn restore_all_is_best_effort_and_reports_errors() {
     fs::create_dir_all(l.p(bad).parent().unwrap()).unwrap();
     fs::write(l.p(bad), b"o").unwrap();
     backup_once(&l, bad).unwrap();
-    fs::remove_dir_all(l.p(bad).parent().unwrap()).unwrap();
+    let d = l.p(bad).parent().unwrap().to_path_buf();
+    fs::remove_dir_all(&d).unwrap();
+    fs::write(&d, b"a file, not a dir").unwrap();
     fs::write(l.p(ok), b"patched").unwrap();
     assert!(restore_all(&l).is_err());
     assert_eq!(fs::read(l.p(ok)).unwrap(), b"orig", "other entries still restored");
