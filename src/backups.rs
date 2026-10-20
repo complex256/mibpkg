@@ -5,16 +5,57 @@ use anyhow::{Context, Result};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
+const ABSENT_SUFFIX: &str = ".absent";
+
 pub fn backup_path(layout: &Layout, unit_abs: &str) -> PathBuf {
     layout.state_dir().join("backups").join(unit_abs.trim_start_matches('/').replace('/', "%"))
 }
 
+fn tombstone_path(layout: &Layout, unit_abs: &str) -> PathBuf {
+    let mut s = backup_path(layout, unit_abs).into_os_string();
+    s.push(ABSENT_SUFFIX);
+    PathBuf::from(s)
+}
+
+/// True when the file did not exist before mibpkg first touched it (restore deletes it).
+pub fn is_tombstone(layout: &Layout, unit_abs: &str) -> bool {
+    tombstone_path(layout, unit_abs).exists()
+}
+
+/// True when a backup of either form (a copy or a tombstone) is recorded.
+pub fn has_backup(layout: &Layout, unit_abs: &str) -> bool {
+    backup_path(layout, unit_abs).exists() || is_tombstone(layout, unit_abs)
+}
+
+/// Drop the recorded backup and/or tombstone; nothing recorded is success.
+pub fn forget(layout: &Layout, unit_abs: &str) -> Result<()> {
+    for p in [backup_path(layout, unit_abs), tombstone_path(layout, unit_abs)] {
+        match std::fs::remove_file(&p) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e).with_context(|| format!("removing {}", p.display())),
+        }
+    }
+    Ok(())
+}
+
+/// Record the file's original state once: a copy if it exists, an empty `.absent` tombstone if not.
 pub fn backup_once(layout: &Layout, unit_abs: &str) -> Result<PathBuf> {
     let dst = backup_path(layout, unit_abs);
-    if !dst.exists() {
-        let src = layout.p(unit_abs);
-        let mode = std::fs::metadata(&src).with_context(|| format!("reading {}", src.display()))?.permissions().mode();
-        copy_atomic(&src, &dst, mode & 0o7777)?;
+    if has_backup(layout, unit_abs) {
+        return Ok(dst);
+    }
+    let src = layout.p(unit_abs);
+    match std::fs::metadata(&src) {
+        Ok(m) => copy_atomic(&src, &dst, m.permissions().mode() & 0o7777)?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let t = tombstone_path(layout, unit_abs);
+            if let Some(dir) = t.parent() {
+                std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+            }
+            crate::fsutil::atomic_write(&t, b"").with_context(|| format!("writing {}", t.display()))?;
+        }
+        Err(e) => return Err(e).with_context(|| format!("reading {}", src.display())),
     }
     Ok(dst)
 }
@@ -22,6 +63,13 @@ pub fn backup_once(layout: &Layout, unit_abs: &str) -> Result<PathBuf> {
 pub fn restore(layout: &Layout, unit_abs: &str) -> Result<()> {
     let src = backup_path(layout, unit_abs);
     let dst = layout.p(unit_abs);
+    if is_tombstone(layout, unit_abs) {
+        return match std::fs::remove_file(&dst) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e).with_context(|| format!("removing {}", dst.display())),
+        };
+    }
     let mode = std::fs::metadata(&src).with_context(|| format!("no backup of {unit_abs}"))?.permissions().mode();
     copy_atomic(&src, &dst, mode & 0o7777)?;
     Ok(())
@@ -37,7 +85,9 @@ pub fn restore_all(layout: &Layout) -> Result<()> {
     };
     for e in rd.filter_map(|e| e.ok()) {
         // backup_path encodes '/' as '%'; decode it back to the unit-absolute path.
-        let unit_abs = format!("/{}", e.file_name().to_string_lossy().replace('%', "/"));
+        let name = e.file_name().to_string_lossy().into_owned();
+        let name = name.strip_suffix(ABSENT_SUFFIX).unwrap_or(&name);
+        let unit_abs = format!("/{}", name.replace('%', "/"));
         restore(layout, &unit_abs)?;
     }
     Ok(())
