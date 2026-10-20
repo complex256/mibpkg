@@ -498,7 +498,7 @@ pub fn remove(ctx: &Ctx, name: &str, purge: bool) -> Result<String> {
     let mut msg = format!("removed {name}{}", if purge { " and its config" } else { "" });
     if sdk_note.is_some() {
         // Only now: until the package is recorded as removed, a rerun needs the stock backups.
-        if let Err(e) = sdk_pkg::forget_backups(layout) {
+        if let Err(e) = sdk_pkg::forget_backups(ctx) {
             msg.push_str(&format!(" (warning: could not drop the stock backups: {e:#})"));
         }
     }

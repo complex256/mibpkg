@@ -1457,3 +1457,108 @@ fn on_app_reasserts_and_retries_once() {
     let e = format!("{:#}", sdk_pkg::on_app(&ctx, "removing x", &mut || Err(io::Error::other("nope"))).unwrap_err());
     assert!(e.contains("removing x"), "{e}");
 }
+
+// ---- fix round 2 ----
+
+/// The fixture stock list as a newer firmware might ship it.
+fn new_firmware_stock() -> Vec<u8> {
+    let mut s = stock();
+    s.extend(b"# a newer firmware\r\n");
+    s
+}
+
+/// A stock record left by an earlier install (its forget failed) is stale once mibsdk is gone and
+/// the live list is stock: a fresh install backs up the live files again, and uninstall puts the
+/// live (new firmware) list back, never the old one.
+#[test]
+fn sdk_fresh_install_drops_a_stale_stock_record() {
+    let (f, dir) = unit();
+    // Stale: the old firmware's list, and the marker recorded as absent though it exists now.
+    write(&backups::backup_path(&f.layout, mibsdk::BUNDLES), &stock());
+    backups::record_absent(&f.layout, mibsdk::MARKER).unwrap();
+    write(&p(&f, mibsdk::BUNDLES), &new_firmware_stock());
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    install_sdk(&ctx, dir.path(), "0.1.0").unwrap();
+    assert_eq!(fs::read(backups::backup_path(&f.layout, mibsdk::BUNDLES)).unwrap(), new_firmware_stock());
+    assert!(!backups::is_tombstone(&f.layout, mibsdk::MARKER), "the live marker is backed up again");
+    assert_eq!(
+        fs::read(p(&f, mibsdk::BUNDLES)).unwrap(),
+        bundles::generate(&new_firmware_stock(), &spec(), true).unwrap()
+    );
+    install::remove(&ctx, "mibsdk", false).unwrap();
+    assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), new_firmware_stock());
+    assert!(p(&f, mibsdk::MARKER).exists());
+}
+
+/// A record kept by a failed undo while the live list is still generated stays the stock source.
+#[test]
+fn sdk_fresh_install_keeps_a_record_while_the_live_list_is_generated() {
+    let (f, dir) = unit();
+    backups::backup_once(&f.layout, mibsdk::BUNDLES).unwrap();
+    backups::backup_once(&f.layout, mibsdk::MARKER).unwrap();
+    write(&p(&f, mibsdk::BUNDLES), &bundles::generate(&stock(), &spec(), true).unwrap());
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    install_sdk(&ctx, dir.path(), "0.1.0").unwrap();
+    assert_eq!(fs::read(backups::backup_path(&f.layout, mibsdk::BUNDLES)).unwrap(), stock());
+    install::remove(&ctx, "mibsdk", false).unwrap();
+    assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), stock());
+}
+
+/// forget_backups tries every record: one that cannot be removed does not keep the other.
+#[test]
+fn forget_backups_attempts_every_record() {
+    let (f, _dir) = unit();
+    backups::backup_once(&f.layout, mibsdk::BUNDLES).unwrap();
+    backups::backup_once(&f.layout, mibsdk::MARKER).unwrap();
+    let mut t = backups::backup_path(&f.layout, mibsdk::BUNDLES).into_os_string();
+    t.push(".absent");
+    write(&PathBuf::from(t).join("blocker"), b"x"); // the tombstone path is a non-empty directory
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let _rw = ctx.mounts.rw("/mnt/app").unwrap();
+    assert!(sdk_pkg::forget_backups(&ctx).is_err());
+    assert!(!backups::has_backup(&f.layout, mibsdk::MARKER), "the marker record is still forgotten");
+    assert!(!backups::backup_path(&f.layout, mibsdk::BUNDLES).exists());
+    let rw = sys.calls.borrow().iter().filter(|c| *c == "rw /mnt/app").count();
+    assert!(rw >= 3, "forgetting re-asserts read-write: {:?}", sys.calls.borrow());
+}
+
+/// A deploy that fails before the bundle list is written leaves it untouched (not rewritten).
+#[test]
+fn sdk_deploy_failure_before_the_bundle_list_never_rewrites_it() {
+    use std::os::unix::fs::MetadataExt;
+    let (f, dir) = unit();
+    tracer_off(&f);
+    // put's temp file in lsd/ is a non-empty directory: the marker write (first put into lsd/) fails.
+    write(&p(&f, &format!("{}/.mibpkg.tmp/blocker", mibsdk::LSD)), b"x");
+    let ino = fs::metadata(p(&f, mibsdk::BUNDLES)).unwrap().ino();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let e = err(install_sdk(&ctx, dir.path(), "0.1.0"));
+    assert!(e.contains("the install was undone"), "{e}");
+    assert_eq!(fs::metadata(p(&f, mibsdk::BUNDLES)).unwrap().ino(), ino);
+    assert!(!p(&f, mibsdk::MARKER).exists());
+    assert!(sdk_jars_present(&f).is_empty());
+    assert!(!backups::has_backup(&f.layout, mibsdk::BUNDLES));
+}
+
+/// A retry after the package files went still honours --purge.
+#[test]
+fn sdk_remove_retry_honours_purge() {
+    let (f, _dir) = installed(None);
+    write(&p(&f, &format!("{}/data/x.properties", mibsdk::PERSIST)), b"x=1\n");
+    write(&p(&f, &format!("{}/cache/a.jar", mibsdk::RAM)), b"jar");
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    {
+        let _rw = ctx.mounts.rw("/mnt/app").unwrap();
+        sdk_pkg::undeploy(&ctx, false).unwrap();
+    }
+    fs::remove_dir_all(f.layout.pkg_dir("mibsdk")).unwrap();
+    install::remove(&ctx, "mibsdk", true).unwrap();
+    assert!(!p(&f, mibsdk::BASE).exists());
+    assert!(!p(&f, mibsdk::PERSIST).exists());
+    assert!(!p(&f, mibsdk::RAM).exists());
+}
