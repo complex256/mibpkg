@@ -73,8 +73,39 @@ pub(crate) fn release_in(run_dir: &Path, sys: &dyn Sys, mount: &str, holder: u32
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
         _ => {}
     }
+    if sweep_dead(run_dir, sys, tag)?.live {
+        return Ok(());
+    }
+    sys.remount(mount, false)
+}
+
+/// Clean up after holders that died without releasing (killed, or a panic under
+/// `panic=abort`, which skips `Drop`): remove their holder files and, if that left no live
+/// holder, remount `mount` read-only. With no dead holder found it changes nothing, so it is
+/// cheap to call on every supervisor start or tick.
+pub fn sweep(layout: &Layout, sys: &dyn Sys, mount: &str) -> Result<()> {
+    let run_dir = run_dir(layout);
+    let tag = tag(mount)?;
+    let _lock = remount_lock(&run_dir, sys)?;
+    let found = sweep_dead(&run_dir, sys, tag)?;
+    if found.dead > 0 && !found.live {
+        sys.remount(mount, false)?;
+    }
+    Ok(())
+}
+
+struct Holders {
+    live: bool,
+    dead: usize,
+}
+
+/// Remove the holder files of `tag` whose pid is dead; report whether a live one remains.
+/// A `mibpkg.rw.<tag>.*` name without a pid is not one mibpkg writes (package names `rw` and
+/// `rwlock` are reserved, so no package's files collide either): it is left alone and does not
+/// count as a holder.
+fn sweep_dead(run_dir: &Path, sys: &dyn Sys, tag: &str) -> Result<Holders> {
     let prefix = format!("mibpkg.rw.{tag}.");
-    let mut live = false;
+    let mut found = Holders { live: false, dead: 0 };
     for entry in fs::read_dir(run_dir).with_context(|| format!("reading {}", run_dir.display()))? {
         let entry = entry?;
         let name = entry.file_name();
@@ -82,15 +113,13 @@ pub(crate) fn release_in(run_dir: &Path, sys: &dyn Sys, mount: &str, holder: u32
             continue;
         };
         if sys.process_alive(pid) {
-            live = true;
+            found.live = true;
         } else {
             let _ = fs::remove_file(entry.path());
+            found.dead += 1;
         }
     }
-    if live {
-        return Ok(());
-    }
-    sys.remount(mount, false)
+    Ok(found)
 }
 
 pub(crate) fn reassert_in(run_dir: &Path, sys: &dyn Sys, mount: &str) -> Result<()> {

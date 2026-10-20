@@ -98,3 +98,103 @@ fn liveness_comes_from_proc_without_starting_a_process() {
     assert_eq!(alive_in_proc(t.path(), 123), Some(true));
     assert_eq!(alive_in_proc(t.path(), 456), Some(false));
 }
+
+/// Liveness from the host, with a hook run whenever a pid is found dead: it simulates another
+/// process acting on the lock between our liveness check and our takeover.
+struct RacingSys<F: Fn(u32)> {
+    on_dead: F,
+}
+
+impl<F: Fn(u32)> Sys for RacingSys<F> {
+    fn remount(&self, _mount: &str, _rw: bool) -> anyhow::Result<()> {
+        Ok(())
+    }
+    fn shell_syntax_ok(&self, _script: &std::path::Path) -> bool {
+        true
+    }
+    fn run_script(&self, _s: &std::path::Path, _a: &[&str], _e: &[(String, String)], _t: Duration) -> anyhow::Result<()> {
+        Ok(())
+    }
+    fn process_alive(&self, pid: u32) -> bool {
+        let alive = (RealSys { mounts: false }).process_alive(pid);
+        if !alive {
+            (self.on_dead)(pid);
+        }
+        alive
+    }
+    fn terminate(&self, _pid: u32) {}
+    fn free_bytes(&self, _path: &std::path::Path) -> Option<u64> {
+        None
+    }
+    fn persist_write(&self, _ns: u32, _key: u32, _value: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+    fn persist_write_byte(&self, _ns: u32, _key: u32, _value: u8) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+fn reaped_pid() -> u32 {
+    let mut c = std::process::Command::new("true").spawn().unwrap();
+    c.wait().unwrap();
+    c.id()
+}
+
+#[test]
+fn stale_takeover_spares_a_lock_another_taker_got_first() {
+    let f = common::fixture();
+    let p = f.layout.run("lock");
+    let mut other = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+    let other_pid = other.id();
+    fs::write(&p, reaped_pid().to_string()).unwrap();
+    // While we decide the dead holder's lock is stale, another taker removes it and takes it.
+    let p2 = p.clone();
+    let sys = RacingSys { on_dead: move |_| fs::write(&p2, other_pid.to_string()).unwrap() };
+    let e = Lock::acquire(&f.layout, &sys).unwrap_err();
+    assert!(format!("{e}").starts_with("busy"), "{e}");
+    assert_eq!(fs::read_to_string(&p).unwrap(), other_pid.to_string(), "the other taker's lock survives");
+    let _ = other.kill();
+    let _ = other.wait();
+}
+
+#[test]
+fn stale_takeover_still_works_when_nobody_races() {
+    let f = common::fixture();
+    let p = f.layout.run("lock");
+    fs::write(&p, reaped_pid().to_string()).unwrap();
+    let sys = RacingSys { on_dead: |_| {} };
+    let l = Lock::acquire(&f.layout, &sys).unwrap();
+    assert_eq!(fs::read_to_string(&p).unwrap(), std::process::id().to_string());
+    drop(l);
+    assert!(!p.exists());
+}
+
+#[test]
+fn dropping_a_lock_spares_one_another_process_took_over() {
+    let f = common::fixture();
+    let sys = RealSys { mounts: false };
+    let p = f.layout.run("lock");
+    let l = Lock::acquire(&f.layout, &sys).unwrap();
+    fs::write(&p, "4242").unwrap(); // our lock was (wrongly) stolen
+    drop(l);
+    assert_eq!(fs::read_to_string(&p).unwrap(), "4242");
+}
+
+#[test]
+fn waiting_for_a_lock_whose_holder_vanishes_takes_it() {
+    let f = common::fixture();
+    let sys = RealSys { mounts: false };
+    let p = f.layout.run("lock");
+    let mut other = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+    fs::write(&p, other.id().to_string()).unwrap();
+    let p2 = p.clone();
+    let w = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(200));
+        fs::remove_file(&p2).unwrap(); // the holder releases normally
+    });
+    let _l = Lock::acquire_at(&p, &sys, Duration::from_secs(2)).unwrap();
+    assert_eq!(fs::read_to_string(&p).unwrap(), std::process::id().to_string());
+    w.join().unwrap();
+    let _ = other.kill();
+    let _ = other.wait();
+}

@@ -5,18 +5,33 @@ use crate::sys::Sys;
 use crate::unit::{detect, UnitInfo};
 use crate::rwhold;
 use anyhow::{bail, Result};
-use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard};
 
 /// Refcounted `mount -uw`: nested guards remount once; the last drop goes read-only — unless
 /// another live process still holds the mount read-write (see `rwhold`).
+///
+/// Keep one `Mounts` per process (the one in its `Ctx`): holder files are per pid, so two
+/// `Mounts` in one process share a holder file and the first to release would withdraw it while
+/// the other still writes. The counts sit behind a mutex so threads sharing it stay consistent.
 pub struct Mounts<'a> {
     sys: &'a dyn Sys,
     run_dir: PathBuf,
     holder: u32,
-    counts: RefCell<BTreeMap<String, u32>>,
+    state: Mutex<HoldState>,
 }
+
+#[derive(Default)]
+struct HoldState {
+    /// Guards alive per mount.
+    counts: BTreeMap<String, u32>,
+    /// Mounts whose last release failed: our holder file may still keep them read-write.
+    unreleased: BTreeSet<String>,
+}
+
+/// Attempts at a release when the last guard drops (each may wait `RWLOCK_WAIT` for the lock).
+const RELEASE_ATTEMPTS: u32 = 2;
 
 pub struct RwGuard<'m, 'a> {
     mounts: &'m Mounts<'a>,
@@ -31,39 +46,75 @@ impl<'a> Mounts<'a> {
 
     /// Mounts held on behalf of pid `holder` (tests stand in for another process with it).
     pub fn with_holder(sys: &'a dyn Sys, layout: &Layout, holder: u32) -> Mounts<'a> {
-        Mounts { sys, run_dir: rwhold::run_dir(layout), holder, counts: RefCell::new(BTreeMap::new()) }
+        Mounts { sys, run_dir: rwhold::run_dir(layout), holder, state: Mutex::new(HoldState::default()) }
+    }
+
+    fn state(&self) -> MutexGuard<'_, HoldState> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     pub fn rw<'m>(&'m self, mount: &str) -> Result<RwGuard<'m, 'a>> {
-        let mut c = self.counts.borrow_mut();
-        let n = c.entry(mount.to_string()).or_insert(0);
-        if *n == 0 {
+        let mut st = self.state();
+        let n = st.counts.get(mount).copied().unwrap_or(0);
+        if n == 0 {
             rwhold::acquire_in(&self.run_dir, self.sys, mount, self.holder)?;
+            // Held again: the coming release settles any earlier failed one.
+            st.unreleased.remove(mount);
         }
-        *n += 1;
+        st.counts.insert(mount.to_string(), n + 1);
         Ok(RwGuard { mounts: self, mount: mount.to_string() })
     }
 
     /// Remount `mount` read-write again (something outside the protocol may have flipped it);
     /// only while this process holds it.
     pub fn reassert(&self, mount: &str) -> Result<()> {
-        if self.counts.borrow().get(mount).copied().unwrap_or(0) == 0 {
+        let st = self.state();
+        if st.counts.get(mount).copied().unwrap_or(0) == 0 {
             bail!("{mount} is not held read-write by this process");
         }
         rwhold::reassert_in(&self.run_dir, self.sys, mount)
+    }
+
+    /// Retry the releases that failed when their last guard dropped (a long-lived process calls
+    /// this so a mount does not stay read-write on its account). The first failure is returned;
+    /// a mount that fails stays pending.
+    pub fn retry_releases(&self) -> Result<()> {
+        let mut st = self.state();
+        let pending: Vec<String> = st.unreleased.iter().cloned().collect();
+        let mut first_err = None;
+        for mount in pending {
+            match rwhold::release_in(&self.run_dir, self.sys, &mount, self.holder) {
+                Ok(()) => {
+                    st.unreleased.remove(&mount);
+                }
+                Err(e) => {
+                    first_err.get_or_insert(e);
+                }
+            }
+        }
+        first_err.map_or(Ok(()), Err)
     }
 }
 
 impl Drop for RwGuard<'_, '_> {
     fn drop(&mut self) {
-        let mut c = self.mounts.counts.borrow_mut();
-        if let Some(n) = c.get_mut(&self.mount) {
-            *n -= 1;
-            if *n == 0 {
-                if let Err(e) = rwhold::release_in(&self.mounts.run_dir, self.mounts.sys, &self.mount, self.mounts.holder) {
-                    crate::warn!("warning: {e:#}");
-                }
+        let m = self.mounts;
+        let mut st = m.state();
+        let Some(n) = st.counts.get_mut(&self.mount) else { return };
+        *n -= 1;
+        if *n > 0 {
+            return;
+        }
+        let mut err = None;
+        for _ in 0..RELEASE_ATTEMPTS {
+            match rwhold::release_in(&m.run_dir, m.sys, &self.mount, m.holder) {
+                Ok(()) => return,
+                Err(e) => err = Some(e),
             }
+        }
+        st.unreleased.insert(self.mount.clone());
+        if let Some(e) = err {
+            crate::warn!("warning: {} may stay read-write: release failed ({e:#}); will retry", self.mount);
         }
     }
 }
