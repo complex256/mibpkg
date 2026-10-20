@@ -1123,3 +1123,125 @@ fn plugin_marker_token_round_trips_through_the_runtime_form() {
     assert_eq!(format!("{tok}\n").as_bytes(), raw.as_slice());
     assert!(!tok.is_empty() && tok.len() <= 64);
 }
+
+// ---- fix round 2 ----
+
+/// Where an install or rollback fails after its commit point (`current` written).
+#[derive(Clone, Copy, Debug)]
+enum After {
+    /// `bootd::write_for_package`: boot.d is a file.
+    Bootd,
+    /// `State::save`: its temp file is a non-empty directory.
+    StateSave,
+}
+
+fn block(f: &common::Fixture, at: After) -> PathBuf {
+    let p = match at {
+        After::Bootd => f.layout.boot_d(),
+        After::StateSave => PathBuf::from(format!("{}.tmp", f.layout.state_dir().join("installed.json").display())),
+    };
+    let _ = fs::remove_dir_all(&p);
+    match at {
+        After::Bootd => write(&p, b"not a dir"),
+        After::StateSave => write(&p.join("x"), b""),
+    }
+    p
+}
+
+fn unblock(p: &Path) {
+    if p.is_dir() {
+        fs::remove_dir_all(p).unwrap();
+    } else {
+        fs::remove_file(p).unwrap();
+    }
+}
+
+/// The jar and the grants line match the version `current` names, right after the failure and
+/// after the repair run.
+#[test]
+fn plugin_update_failing_after_the_commit_point_keeps_the_new_jar_and_repair_records_it() {
+    for at in [After::Bootd, After::StateSave] {
+        let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+        with_sdk(&f, dir.path());
+        let sys = RecordingSys::default();
+        let mut ctx = Ctx::new(f.layout.clone(), &sys);
+        approving(&mut ctx, &["vehicle.read", "network"]);
+        install_src(&ctx, &plugin_src(dir.path(), "hello", "1.0.0", 2, &["vehicle.read"])).unwrap();
+        let v2 = plugin_src(dir.path(), "hello", "1.1.0", 2, &["vehicle.read", "network"]);
+        let b = block(&f, at);
+        let _ = err(install_src(&ctx, &v2));
+        assert_eq!(install::current_version(&f.layout, "hello").as_deref(), Some("1.1.0"), "{at:?}");
+        assert_eq!(fs::read(plugin_jar(&f, "hello")).unwrap(), fs::read(v2.join("hello.jar")).unwrap(), "{at:?}");
+        assert_eq!(granted(&f, "hello"), Some(set(&["vehicle.read", "network"])), "{at:?}");
+        unblock(&b);
+        // The repair run (no approval needed) records 1.1.0, and the unit runs 1.1.0.
+        ctx.approved = None;
+        let msg = install_src(&ctx, &v2).unwrap();
+        assert!(msg.starts_with("repaired hello 1.1.0"), "{at:?}: {msg}");
+        assert_eq!(State::load(&f.layout).unwrap().packages["hello"].version, "1.1.0");
+        assert_eq!(fs::read(plugin_jar(&f, "hello")).unwrap(), fs::read(v2.join("hello.jar")).unwrap(), "{at:?}");
+        assert_eq!(granted(&f, "hello"), Some(set(&["vehicle.read", "network"])), "{at:?}");
+    }
+}
+
+/// A repair re-deploys from the version directory even when the unit holds another jar, and never
+/// grants more than is granted now.
+#[test]
+fn plugin_repair_redeploys_the_recorded_jar_without_adding_grants() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    let sys = RecordingSys::default();
+    let mut ctx = Ctx::new(f.layout.clone(), &sys);
+    approving(&mut ctx, &["vehicle.read", "network"]);
+    install_src(&ctx, &plugin_src(dir.path(), "hello", "1.0.0", 2, &["vehicle.read"])).unwrap();
+    let v2 = plugin_src(dir.path(), "hello", "1.1.0", 2, &["vehicle.read", "network"]);
+    let b = block(&f, After::StateSave);
+    let _ = err(install_src(&ctx, &v2));
+    unblock(&b);
+    // Something put the old jar and grants back meanwhile.
+    write(&plugin_jar(&f, "hello"), b"stale\n");
+    write(&p(&f, mibsdk::GRANTS), b"hello=vehicle.read\n");
+    ctx.approved = None;
+    let msg = install_src(&ctx, &v2).unwrap();
+    assert_eq!(fs::read(plugin_jar(&f, "hello")).unwrap(), fs::read(v2.join("hello.jar")).unwrap());
+    assert_eq!(granted(&f, "hello"), Some(set(&["vehicle.read"])));
+    assert!(msg.contains("hello stays blocked until granted: network"), "{msg}");
+}
+
+#[test]
+fn plugin_rollback_failing_after_the_commit_point_keeps_the_rolled_back_jar() {
+    for at in [After::Bootd, After::StateSave] {
+        let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+        with_sdk(&f, dir.path());
+        let sys = RecordingSys::default();
+        let mut ctx = Ctx::new(f.layout.clone(), &sys);
+        approving(&mut ctx, &["vehicle.read", "network"]);
+        let v1 = plugin_src(dir.path(), "hello", "1.0.0", 2, &["vehicle.read"]);
+        install_src(&ctx, &v1).unwrap();
+        install_src(&ctx, &plugin_src(dir.path(), "hello", "1.1.0", 2, &["vehicle.read", "network"])).unwrap();
+        let b = block(&f, at);
+        ctx.approved = None;
+        let _ = err(install::rollback(&ctx, "hello"));
+        assert_eq!(install::current_version(&f.layout, "hello").as_deref(), Some("1.0.0"), "{at:?}");
+        assert_eq!(fs::read(plugin_jar(&f, "hello")).unwrap(), fs::read(v1.join("hello.jar")).unwrap(), "{at:?}");
+        assert_eq!(granted(&f, "hello"), Some(set(&["vehicle.read"])), "{at:?}");
+        unblock(&b);
+        // Running the rollback again finishes it.
+        install::rollback(&ctx, "hello").unwrap();
+        assert_eq!(State::load(&f.layout).unwrap().packages["hello"].version, "1.0.0", "{at:?}");
+        assert_eq!(fs::read(plugin_jar(&f, "hello")).unwrap(), fs::read(v1.join("hello.jar")).unwrap(), "{at:?}");
+        assert_eq!(granted(&f, "hello"), Some(set(&["vehicle.read"])), "{at:?}");
+    }
+}
+
+/// A runtime that logs tokens answers by token only: a token-less line is never taken for ours.
+#[test]
+fn ack_a_token_capable_runtime_is_answered_by_token_only() {
+    let base = ack::Baseline::of("0 INFO x start\n");
+    let tail = "2 INFO dev dev channel: reload requested for hello\n3 STATUS hello ENABLED x\n";
+    let plain = format!("0 INFO x start\n{tail}");
+    assert_eq!(ack::answer(&plain, "hello", &base, Some("9-9-9"), false), ok("ENABLED", "x"));
+    let mixed = format!("0 INFO x start\n1 INFO dev dev channel: reload requested for other token=1-1-1\n{tail}");
+    assert_eq!(ack::answer(&mixed, "hello", &base, Some("9-9-9"), false), None);
+    assert_eq!(ack::answer(&mixed, "hello", &base, Some("9-9-9"), true), None);
+}

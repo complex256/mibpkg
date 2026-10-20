@@ -163,7 +163,7 @@ fn restore(ctx: &Ctx, id: &str, prior: &Prior) -> Result<()> {
     }
 }
 
-/// A plugin deployed by an install or rollback that has not committed yet. Dropped without
+/// A plugin deployed by an install or rollback whose `current` is not written yet. Dropped without
 /// `commit`, it puts the jar and the grants line back as they were (an error after the deploy
 /// must not leave the unit on a version the package state does not record). Keep it alive while
 /// /mnt/app is held read-write.
@@ -175,7 +175,7 @@ pub struct Deployed<'c, 'a> {
 }
 
 impl Deployed<'_, '_> {
-    /// The install committed: keep the deploy; its notes.
+    /// `current` now names the deployed version: keep the deploy; its notes.
     pub fn commit(mut self) -> Vec<String> {
         self.prior = None;
         std::mem::take(&mut self.notes)
@@ -239,6 +239,17 @@ pub fn deploy<'c, 'a>(ctx: &'c Ctx<'a>, m: &Manifest, ver_dir: &Path, approval: 
         ));
     }
     Ok(Deployed { ctx, id: id.to_string(), prior: Some(prior), notes })
+}
+
+/// The repair of an install that committed (`current` names the version in `ver_dir`) but did not
+/// finish: deploy that version's jar again (stamp-verified, idempotent), with the grants line
+/// limited to what it declares and is granted now (a repair never asks and never adds). Its
+/// notes. Caller contract as `deploy`.
+pub fn redeploy(ctx: &Ctx, m: &Manifest, ver_dir: &Path) -> Result<Vec<String>> {
+    let plugin = m.plugin.as_ref().context("not a [plugin] package")?;
+    let current = grants::read(&ctx.layout)?.remove(&m.package.name).unwrap_or_default();
+    let approval = grants::plan(&plugin.permissions, Some(&plugin.permissions), &current);
+    Ok(deploy(ctx, m, ver_dir, &approval)?.commit())
 }
 
 static TOKEN_SEQ: AtomicU64 = AtomicU64::new(0);

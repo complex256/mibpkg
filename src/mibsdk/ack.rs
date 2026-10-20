@@ -7,7 +7,12 @@
 //! /tmp, a rename over it fails), so any read may be empty or cut short. A reload line therefore
 //! counts as the answer to our request only when it carries our token, or when it follows the
 //! last line of a whole baseline snapshot taken before the marker was written. Counting lines is
-//! never used: a short read would make an old line look new.
+//! never used: a short read would make an old line look new. Once the log shows a runtime that
+//! logs tokens, only the token answers.
+//!
+//! Older runtimes (no token) leave a narrow window: a read cut short exactly at a line break that
+//! reads the same twice in a row passes for a whole baseline, so an old reload line between the
+//! cut and the real end could be taken for ours (a stale STATUS, or a purge after an old unload).
 use super::LOG;
 use crate::paths::Layout;
 use std::fs;
@@ -101,16 +106,21 @@ fn status(line: &str, id: &str) -> Option<(String, String)> {
 /// The answer to our reload of `id` in the log `text`, if there is one yet: the last `STATUS <id>`
 /// line after the reload line that is ours, unless that is `DISABLED reloading` (in progress).
 ///
-/// Ours: the last reload line carrying `token`; else (the runtime logs no token) the first
+/// Ours: the last reload line carrying `token`; else (no reload line in `text` carries a token,
+/// so the runtime logs none) the first
 /// token-less reload line after the baseline's anchor. Without the anchor in `text`, the ring
 /// wrapped, but only a `stable` read (the same text twice in a row) is trusted with that: a read cut
 /// short loses the anchor too. An unknown baseline is answered by the token alone.
 #[doc(hidden)]
 pub fn answer(text: &str, id: &str, base: &Baseline, token: Option<&str>, stable: bool) -> Option<(String, String)> {
     let lines: Vec<&str> = text.lines().collect();
+    // A runtime that logs tokens: a token-less line is never ours.
+    let token_runtime =
+        lines.iter().any(|l| l.split_once("reload requested for ").is_some_and(|(_, r)| r.contains(" token=")));
     let by_token = token.and_then(|t| lines.iter().rposition(|l| reload(l, id) == Some(Some(t))));
     let trigger = match by_token {
         Some(i) => i,
+        None if token_runtime => return None,
         None => {
             let anchor = base.anchor.as_deref()?;
             let from = match lines.iter().rposition(|l| *l == anchor) {

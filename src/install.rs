@@ -303,8 +303,8 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
                 .context("post_install script failed")?;
         }
         if let Some(a) = &approval {
-            // Last, so little can fail after it; until the commit below, an error puts the jar and
-            // grants line back. As for the SDK: verified and installed from the staged copy.
+            // Last, so little can fail after it; until `current` is written, an error puts the jar
+            // and grants line back. As for the SDK: verified and installed from the staged copy.
             plugin_deployed = Some(plugin_pkg::deploy(ctx, &pkg.manifest, &ver_dir, a)?);
         }
         Ok(())
@@ -317,7 +317,16 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
     }
 
     (ctx.progress)(&format!("switching {name} to {}", version));
+    if repair && kind == Kind::Plugin {
+        // `current` already names this version: make the unit run it too (an earlier run may have
+        // failed before, or put another jar back); never grants more than is granted now.
+        plugin_notes = plugin_pkg::redeploy(ctx, &pkg.manifest, &ver_dir)?;
+    }
     atomic_write(&pkg_dir.join("current"), version.as_bytes())?; // commit point
+    if let Some(d) = plugin_deployed.take() {
+        // Committed: from here on, the jar and grants line belong to the version `current` names.
+        plugin_notes = d.commit();
+    }
     bootd::write_for_package(layout, name, &bootd::entries(&pkg.manifest))?;
     let old_version = previous.as_ref().map(|p| p.version.clone());
     // Only a version whose files are still here can be rolled back to (mibpkg itself,
@@ -336,9 +345,6 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
     );
     state.collections.insert(coll_id.to_string(), coll_name.to_string());
     state.save(layout)?;
-    if let Some(d) = plugin_deployed.take() {
-        plugin_notes = d.commit();
-    }
 
     let mut msg = match &old_version {
         _ if repair => format!("repaired {name} {} (an earlier install was interrupted)", version),
@@ -593,13 +599,17 @@ pub fn rollback(ctx: &Ctx, name: &str) -> Result<String> {
         // On failure this deploys the current version again; `current` is not switched.
         sdk_notes = sdk_pkg::deploy(ctx, &m, &prev_dir, current_dir(layout, name).as_deref())?;
     }
-    // Until the commit below, an error puts the current jar and grants line back.
+    // Until `current` is switched, an error puts the current jar and grants line back.
     let plugin_deployed = match &approval {
         Some(a) => Some(plugin_pkg::deploy(ctx, &m, &prev_dir, a)?),
         None => None,
     };
     (ctx.progress)(&format!("switching {name} back to {prev}"));
     atomic_write(&layout.pkg_dir(name).join("current"), prev.as_bytes())?;
+    if let Some(d) = plugin_deployed {
+        // Committed (`current` names the previous version now); a re-run finishes the rest.
+        plugin_notes = d.commit();
+    }
     bootd::write_for_package(layout, name, &bootd::entries(&m))?;
     if name == SELF {
         self_update(layout, &prev_dir)?;
@@ -610,9 +620,6 @@ pub fn rollback(ctx: &Ctx, name: &str) -> Result<String> {
     entry.services = m.services.iter().map(|s| format!("{name}.{}", s.name)).collect();
     entry.uses_scripts = m.uses_scripts();
     state.save(layout)?;
-    if let Some(d) = plugin_deployed {
-        plugin_notes = d.commit();
-    }
     control::request_reload(layout)?;
     let suffix = if kind == Kind::Sdk { SDK_START } else { "" };
     let notes: String = sdk_notes.iter().map(|n| format!("\n{n}")).collect();
