@@ -27,6 +27,54 @@ pub struct Manifest {
     /// Reserved for stock-file patches (not implemented in v1).
     #[serde(default)]
     pub patch: Option<toml::Value>,
+    /// A mibsdk plugin: one jar the SDK runtime loads. Declarative, like [sdk].
+    #[serde(default)]
+    pub plugin: Option<PluginSpec>,
+    /// The mibsdk runtime itself (package `mibsdk`).
+    #[serde(default)]
+    pub sdk: Option<SdkSpec>,
+}
+
+/// `[plugin]`. The package name is the plugin id; the jar's stamp is `<jar>.stamp`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginSpec {
+    pub jar: String,
+    pub api: u32,
+    pub permissions: Vec<String>,
+}
+
+/// `[sdk]`: the values the SDK install writes into the unit's bundle list and sdk.properties.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SdkSpec {
+    pub api: u32,
+    pub min_api: u32,
+    pub hmi: Vec<String>,
+    pub jars: Vec<String>,
+    /// One stamp for all jars, e.g. "mibsdk-unit.stamp".
+    pub stamp: String,
+    pub configurator: String,
+    /// A bundle-list line, `<name>=<activator class>`.
+    pub bundle: String,
+    pub tracer_configurator: String,
+    /// Class names; the bundle-list line is `HMICar=<value>`.
+    pub hmicar_stock: String,
+    pub hmicar: String,
+    /// Class path prefixes only the SDK may define, e.g. "de/audi/tghu/car/hmi/".
+    pub owned: Vec<String>,
+    /// sdk.properties lines.
+    #[serde(default)]
+    pub properties: Vec<String>,
+    /// The permission catalog file, e.g. "permissions.json".
+    pub permissions: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Plain,
+    Plugin,
+    Sdk,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -120,6 +168,28 @@ impl Manifest {
             .with_context(|| format!("version {:?} is not semver (like 1.2.0)", self.package.version))
     }
 
+    pub fn kind(&self) -> Kind {
+        match (&self.plugin, &self.sdk) {
+            (Some(_), _) => Kind::Plugin,
+            (None, Some(_)) => Kind::Sdk,
+            (None, None) => Kind::Plain,
+        }
+    }
+
+    /// Files a [plugin] or [sdk] package must carry (`archive::pack` checks them).
+    pub fn kind_files(&self) -> Vec<String> {
+        match (&self.plugin, &self.sdk) {
+            (Some(p), _) => vec![p.jar.clone(), format!("{}.stamp", p.jar)],
+            (None, Some(s)) => {
+                let mut v = s.jars.clone();
+                v.push(s.stamp.clone());
+                v.push(s.permissions.clone());
+                v
+            }
+            (None, None) => Vec::new(),
+        }
+    }
+
     pub fn uses_scripts(&self) -> bool {
         self.scripts.post_install.is_some() || self.scripts.pre_remove.is_some()
     }
@@ -135,6 +205,7 @@ impl Manifest {
             bail!("package name {:?} is reserved (mibpkg uses it for its own /tmp files)", self.package.name);
         }
         self.version()?;
+        self.validate_kind()?;
         for f in &self.files {
             safe_rel(&f.src)?;
             parse_mode(&f.mode)?;
@@ -179,6 +250,99 @@ impl Manifest {
         }
         Ok(())
     }
+
+    fn validate_kind(&self) -> Result<()> {
+        let name = self.package.name.as_str();
+        if self.plugin.is_some() && self.sdk.is_some() {
+            bail!("a package is either [plugin] or [sdk], not both");
+        }
+        if self.sdk.is_none() && name == SDK_PACKAGE {
+            bail!("the name {SDK_PACKAGE} is reserved for the SDK package");
+        }
+        if self.kind() == Kind::Plain {
+            return Ok(());
+        }
+        if !self.files.is_empty() || !self.services.is_empty() || !self.configs.is_empty() || self.uses_scripts() {
+            bail!("plugin and sdk packages are declarative: no files, services, configs or scripts");
+        }
+        if let Some(p) = &self.plugin {
+            if name.len() < 2 {
+                bail!("plugin id {name:?} must be 2-40 characters");
+            }
+            file_name("[plugin] jar", &p.jar, ".jar")?;
+            if p.api < 1 {
+                bail!("[plugin] api must be at least 1");
+            }
+            for perm in &p.permissions {
+                if perm.is_empty() || !perm.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)) {
+                    bail!("permission {perm:?} must be 1 or more of [A-Za-z0-9._-]");
+                }
+            }
+        }
+        if let Some(s) = &self.sdk {
+            if name != SDK_PACKAGE {
+                bail!("the SDK package must be named {SDK_PACKAGE}, not {name:?}");
+            }
+            for j in &s.jars {
+                file_name("[sdk] jars entry", j, ".jar")?;
+            }
+            file_name("[sdk] stamp", &s.stamp, ".stamp")?;
+            file_name("[sdk] permissions", &s.permissions, ".json")?;
+            if s.min_api < 1 || s.min_api > s.api {
+                bail!("[sdk] needs 1 <= min_api <= api (min_api {}, api {})", s.min_api, s.api);
+            }
+            for (key, v) in [
+                ("configurator", &s.configurator),
+                ("tracer_configurator", &s.tracer_configurator),
+                ("hmicar_stock", &s.hmicar_stock),
+                ("hmicar", &s.hmicar),
+            ] {
+                if !class_name(v) {
+                    bail!("[sdk] {key} {v:?} must be a Java class name ([A-Za-z_$][A-Za-z0-9_$.]*)");
+                }
+            }
+            if !s.bundle.contains('=') || has_control(&s.bundle) {
+                bail!("[sdk] bundle {:?} must be one <name>=<class> line", s.bundle);
+            }
+            for p in &s.properties {
+                if has_control(p) {
+                    bail!("[sdk] properties entry {p:?} must be a single line");
+                }
+            }
+            for o in &s.owned {
+                let ok = !o.is_empty()
+                    && !o.starts_with('/')
+                    && o.bytes().all(|b| b.is_ascii_alphanumeric() || b"_$/".contains(&b));
+                if !ok {
+                    bail!("[sdk] owned prefix {o:?} must be a class path like de/audi/tghu/car/hmi/ (no leading /)");
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The SDK package's name. Only a manifest with [sdk] may use it (it is not in RESERVED).
+pub const SDK_PACKAGE: &str = "mibsdk";
+
+/// One safe path component ending in `ext`.
+fn file_name(what: &str, v: &str, ext: &str) -> Result<()> {
+    let p = safe_rel(v).with_context(|| format!("{what} {v:?}"))?;
+    if p.components().count() != 1 || !v.ends_with(ext) || v.len() == ext.len() {
+        bail!("{what} {v:?} must be a single file name ending {ext}");
+    }
+    Ok(())
+}
+
+/// `[A-Za-z_$][A-Za-z0-9_$.]*`
+fn class_name(s: &str) -> bool {
+    let mut b = s.bytes();
+    b.next().is_some_and(|c| c.is_ascii_alphabetic() || c == b'_' || c == b'$')
+        && b.all(|c| c.is_ascii_alphanumeric() || b"_$.".contains(&c))
+}
+
+fn has_control(s: &str) -> bool {
+    s.chars().any(char::is_control)
 }
 
 /// 1-40 of [a-z0-9-], starting with a letter or digit: names become file names and command

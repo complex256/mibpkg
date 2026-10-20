@@ -33,9 +33,11 @@ pub fn pack(src_dir: &Path, out: &Path) -> Result<Manifest> {
     let text = fs::read_to_string(src_dir.join("manifest.toml"))
         .with_context(|| format!("reading {}/manifest.toml", src_dir.display()))?;
     let m = Manifest::parse(&text)?;
+    let kind_files = m.kind_files();
     let mut needed: Vec<&str> = m.files.iter().map(|f| f.src.as_str()).collect();
     needed.extend(m.configs.iter().filter_map(|c| c.example.as_deref()));
     needed.extend([&m.scripts.post_install, &m.scripts.pre_remove].into_iter().flatten().map(|s| s.as_str()));
+    needed.extend(kind_files.iter().map(|s| s.as_str()));
     for n in needed {
         if !src_dir.join(n).is_file() {
             bail!("{n} is named in manifest.toml but missing from {}", src_dir.display());

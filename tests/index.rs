@@ -76,3 +76,55 @@ fn flat_index_lists_packages_next_to_it() {
     let idx = mibpkg::index::build_index_flat(&out, "complex256", "complex256 packages").unwrap();
     assert_eq!(idx.packages[0].file, "alpha-1.0.0.mpk");
 }
+
+#[test]
+fn index_entry_carries_kind_and_permissions_and_omits_them_for_plain_packages() {
+    let t = tempfile::tempdir().unwrap();
+    let plain = common::pkg_src(t.path(), "alpha", "1.0.0", "sleep 1", "");
+    let hello = t.path().join("src-hello");
+    fs::create_dir_all(&hello).unwrap();
+    fs::write(
+        hello.join("manifest.toml"),
+        "[package]\nname = \"hello\"\nversion = \"1.0.0\"\n\n[plugin]\njar = \"hello.jar\"\napi = 1\npermissions = [\"vehicle.read\", \"network\"]\n",
+    )
+    .unwrap();
+    fs::write(hello.join("hello.jar"), b"jar").unwrap();
+    fs::write(hello.join("hello.jar.stamp"), b"stamp").unwrap();
+    let dir = common::collection(&t.path().join("sd"), "c", &[plain, hello]);
+
+    let c = Collection::load(&dir).unwrap();
+    let h = c.latest("hello").unwrap();
+    assert_eq!(h.kind.as_deref(), Some("plugin"));
+    assert_eq!(h.permissions, vec!["vehicle.read", "network"]);
+    let a = c.latest("alpha").unwrap();
+    assert_eq!(a.kind, None);
+    assert!(a.permissions.is_empty());
+
+    let json: serde_json::Value = serde_json::from_str(&fs::read_to_string(dir.join("index.json")).unwrap()).unwrap();
+    let entries = json["packages"].as_array().unwrap();
+    let raw = |n: &str| entries.iter().find(|e| e["name"] == n).unwrap().as_object().unwrap().clone();
+    let alpha = raw("alpha");
+    assert!(!alpha.contains_key("kind") && !alpha.contains_key("permissions"), "{alpha:?}");
+    let hello = raw("hello");
+    assert_eq!(hello["kind"], "plugin");
+    assert_eq!(hello["permissions"], serde_json::json!(["vehicle.read", "network"]));
+}
+
+#[test]
+fn index_entry_kind_is_sdk_for_the_sdk_package() {
+    let t = tempfile::tempdir().unwrap();
+    let s = t.path().join("src-mibsdk");
+    fs::create_dir_all(&s).unwrap();
+    let manifest = fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/manifests/sdk-mibsdk.toml"),
+    )
+    .unwrap();
+    fs::write(s.join("manifest.toml"), manifest).unwrap();
+    for f in ["mibsdk-runtime.jar", "mibsdk-adapter-hqc.jar", "mibsdk-rt-retrotranslator.jar", "mibsdk-unit.stamp", "permissions.json"] {
+        fs::write(s.join(f), b"x").unwrap();
+    }
+    let dir = common::collection(&t.path().join("sd"), "c", &[s]);
+    let e = Collection::load(&dir).unwrap().latest("mibsdk").unwrap().clone();
+    assert_eq!(e.kind.as_deref(), Some("sdk"));
+    assert!(e.permissions.is_empty());
+}

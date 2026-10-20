@@ -183,16 +183,7 @@ pub fn release(o: &ReleaseOpts, fetcher: &dyn Fetcher, publisher: &dyn Publisher
             continue;
         }
         let fname = f.file_name().unwrap().to_string_lossy().to_string();
-        entries.push(IndexEntry {
-            name: m.package.name.clone(),
-            version: m.package.version.clone(),
-            file: download_url(&o.repo, &o.tag, &fname),
-            sha256,
-            size,
-            description: m.package.description.clone(),
-            compat: m.compat.clone(),
-            uses_scripts: m.uses_scripts(),
-        });
+        entries.push(IndexEntry::new(m, download_url(&o.repo, &o.tag, &fname), sha256, size));
         added.push(format!("{} {}", m.package.name, m.package.version));
     }
 
