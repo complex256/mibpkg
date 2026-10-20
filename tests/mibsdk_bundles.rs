@@ -307,3 +307,102 @@ fn check_hmicar_refuses_two_lines_and_spaced_foreign_value() {
         "HMICar is not stock in the stock bundles file (HMICar\tx=y); refusing; nothing changed"
     );
 }
+
+// ---- the HMICar key as java.util.Properties reads it ----
+
+/// Extra lines that each define the key `HMICar` to `Properties.load`, shown in the refusal as
+/// the (first physical) line that carries it.
+const SPELLINGS: [(&[u8], &str); 13] = [
+    (b" HMICar=x\n", " HMICar=x"),
+    (b"\tHMICar=x\n", "\tHMICar=x"),
+    (b"\x0cHMICar=x\n", "\x0cHMICar=x"),
+    (b"HMICar:x\n", "HMICar:x"),
+    (b"HMICar  :  x\n", "HMICar  :  x"),
+    (b"HMICar x\n", "HMICar x"),
+    (b"HMICar\n", "HMICar"),
+    (b"HMICar\tx=y\n", "HMICar\tx=y"),
+    (b"HMI\\u0043ar=x\n", "HMI\\u0043ar=x"),
+    (b"\\HMICar=x\n", "\\HMICar=x"),
+    (b"HMI\\\n   Car=x\n", "HMI\\"),
+    (b"a=b\rHMICar=x\r\n", "HMICar=x"),
+    (b"c=d\\\\\nHMICar=x\n", "HMICar=x"),
+];
+
+#[test]
+fn check_hmicar_counts_every_properties_spelling_of_the_key() {
+    for (extra, shown) in SPELLINGS {
+        let text = [&stock()[..], extra].concat();
+        assert_eq!(
+            hmicar_refusal(&text, &[HMICAR_STOCK]),
+            format!("HMICar is not stock in the stock bundles file ({shown}); refusing; nothing changed"),
+            "{:?}",
+            String::from_utf8_lossy(extra)
+        );
+    }
+}
+
+#[test]
+fn check_hmicar_skips_continuations_comments_and_other_keys() {
+    for extra in [
+        &b"a=b\\\nHMICar=x\n"[..],
+        b"a=b\\\r\n  HMICar:x\r\n",
+        b"a=b\\\rHMICar x\r",
+        b"# HMICar=x\n",
+        b"  ! HMICar=x\n",
+        b"HMICarX=x\n",
+        b"xHMICar=x\n",
+        b"HMICa\\r=x\n",
+    ] {
+        let text = [&stock()[..], extra].concat();
+        check_hmicar(&text, "x", &[HMICAR_STOCK]).unwrap_or_else(|e| panic!("{extra:?}: {e:#}"));
+    }
+    // A comment does not continue onto the next line.
+    let text = [&stock()[..], b"# c\\\nHMICar=x\n"].concat();
+    assert!(hmicar_refusal(&text, &[HMICAR_STOCK]).contains("(HMICar=x)"));
+}
+
+#[test]
+fn check_hmicar_shows_other_bytes_as_latin1() {
+    assert_eq!(
+        hmicar_refusal(b"HMICar=caf\xe9\xff\n", &[HMICAR_STOCK]),
+        "HMICar is not stock in the stock bundles file (HMICar=caf\u{e9}\u{ff}); refusing; nothing changed"
+    );
+}
+
+#[test]
+fn generate_refuses_every_spelling_check_hmicar_refuses() {
+    for (extra, _) in SPELLINGS {
+        for base in [stock(), gen(&stock(), true)] {
+            let text = [&base[..], extra].concat();
+            let why = refusal(&text, true);
+            assert!(why.contains("HMICar"), "{:?}: {why}", String::from_utf8_lossy(extra));
+        }
+    }
+    // The only HMICar= line continues the line before it: Properties sees no HMICar key at all.
+    let src = b"de.audi.tghu.serviceDelegateConfigurator=x\nBundle.Startup.Autostart=A\na=b\\\nHMICar=de.audi.tghu.car.hmi.Activator\n";
+    assert_eq!(refusal(src, true), "expected exactly one HMICar= line, found 0");
+}
+
+#[test]
+fn generate_refuses_a_touched_line_ending_in_a_bare_cr() {
+    let cfg = &b"de.audi.tghu.serviceDelegateConfigurator=x"[..];
+    let auto = &b"Bundle.Startup.Autostart=A"[..];
+    let hmi = &b"HMICar=de.audi.tghu.car.hmi.Activator"[..];
+    for (i, what) in ["de.audi.tghu.serviceDelegateConfigurator", "Bundle.Startup.Autostart", "HMICar"].iter().enumerate() {
+        let lines: Vec<Vec<u8>> =
+            [cfg, auto, hmi].iter().enumerate().map(|(j, l)| [*l, if i == j { b"\r" } else { b"\n" }].concat()).collect();
+        assert_eq!(
+            refusal(&lines.concat(), true),
+            format!("the {what} line ends in a bare CR; rewriting it would join it to the next line; refusing")
+        );
+    }
+}
+
+#[test]
+fn generate_refuses_a_bundle_line_without_a_name() {
+    for bundle in ["MibSdk", "=mibsdk.adapter.hqc.SdkBundleActivator"] {
+        let sdk = SdkSpec { bundle: bundle.into(), ..spec() };
+        let why = format!("{:#}", generate(&stock(), &sdk, true).expect_err("accepted"));
+        assert_eq!(why, format!("[sdk] bundle {bundle:?} is not a <name>=<activator> line"));
+    }
+}

@@ -90,7 +90,10 @@ fn latin1_stripped(b: &[u8]) -> String {
 /// again gives the same bytes.
 pub fn generate(stock: &[u8], sdk: &SdkSpec, tracer_active: bool) -> Result<Vec<u8>> {
     let bundle_line = sdk.bundle.as_bytes();
-    let bundle_name = sdk.bundle.split_once('=').map_or(bundle_line, |(name, _)| name.as_bytes());
+    let bundle_name = match sdk.bundle.split_once('=') {
+        Some((name, _)) if !name.is_empty() => name.as_bytes(),
+        _ => bail!("[sdk] bundle {:?} is not a <name>=<activator> line", sdk.bundle),
+    };
     let mut lines = split_lines(stock);
 
     let cfg: Vec<usize> = (0..lines.len()).filter(|&i| is_configurator(&lines[i])).collect();
@@ -105,7 +108,9 @@ pub fn generate(stock: &[u8], sdk: &SdkSpec, tracer_active: bool) -> Result<Vec<
         );
     }
     let target = active.first().copied().unwrap_or(cfg[0]);
-    let eol = split_eol(&lines[target]).1.to_vec();
+    let (body, eol) = split_eol(&lines[target]);
+    refuse_bare_cr(body, CONFIGURATOR_KEY)?;
+    let eol = eol.to_vec();
     lines[target] = [CONFIGURATOR_KEY, b"=", sdk.configurator.as_bytes(), &eol].concat();
 
     let auto: Vec<usize> =
@@ -114,6 +119,7 @@ pub fn generate(stock: &[u8], sdk: &SdkSpec, tracer_active: bool) -> Result<Vec<
         bail!("expected exactly one Bundle.Startup.Autostart line, found {}", auto.len());
     }
     let (body, eol) = split_eol(&lines[auto[0]]);
+    refuse_bare_cr(body, AUTOSTART_KEY)?;
     let value = skip_blanks(after_key_eq(body, AUTOSTART_KEY).unwrap_or_default());
     let prefix = &body[..body.len() - value.len()];
     let rest = value
@@ -129,7 +135,14 @@ pub fn generate(stock: &[u8], sdk: &SdkSpec, tracer_active: bool) -> Result<Vec<
     if hmi.len() != 1 {
         bail!("expected exactly one HMICar= line, found {}", hmi.len());
     }
+    // The key as the HMI's Properties.load reads it must name that same line and no other.
+    let props = hmicar_lines(&lines);
+    if props != hmi {
+        let n = if props.is_empty() { 0 } else { props.len() + usize::from(!props.contains(&hmi[0])) };
+        bail!("expected exactly one HMICar= line, found {n}");
+    }
     let (body, eol) = split_eol(&lines[hmi[0]]);
+    refuse_bare_cr(body, HMICAR_KEY)?;
     // Exact bytes; the SDK's own value is accepted too, so generate() is a fixed point.
     let accepted = [&sdk.hmicar_stock, &sdk.hmicar].map(|v| [HMICAR_KEY, b"=", v.as_bytes()].concat());
     if !accepted.iter().any(|a| a == body) {
@@ -164,32 +177,108 @@ pub fn sdk_properties(sdk: &SdkSpec, tracer_active: bool) -> Vec<u8> {
     out
 }
 
-/// Port of `mibsdk-dev`'s `check_hmicar`: `text` must have exactly one `HMICar=` line (any blank
-/// before the `=`; a key followed by a blank counts wherever its `=` is) and, one trailing `\r`
-/// aside, it must equal one of the `allowed` full lines byte for byte. `what` names the file in
+/// Port of `mibsdk-dev`'s `check_hmicar`, counting the key as `java.util.Properties` reads it:
+/// `text` must define the key `HMICar` exactly once, in any spelling (`hmicar_lines`), and that
+/// line (without its `\r\n` / `\n`) must equal one of the `allowed` full lines byte for byte.
+/// Properties keeps the last of several, so any extra spelling refuses. `what` names the file in
 /// the refusal.
 pub fn check_hmicar(text: &[u8], what: &str, allowed: &[&str]) -> Result<()> {
-    let mut lines: Vec<&[u8]> = text.split(|c| *c == b'\n').collect();
-    if lines.last().is_some_and(|l| l.is_empty()) {
-        lines.pop();
-    }
-    let mut n = 0;
-    let mut got: &[u8] = b"";
-    for line in lines {
-        let line = line.strip_suffix(b"\r").unwrap_or(line);
-        let hit = match line.strip_prefix(HMICAR_KEY) {
-            Some([b'=', ..]) => true,
-            Some([b' ' | b'\t', rest @ ..]) => rest.contains(&b'='),
-            _ => false,
-        };
-        if hit {
-            n += 1;
-            got = line;
-        }
-    }
-    if n != 1 || !allowed.iter().any(|a| a.as_bytes() == got) {
-        let shown = if n == 0 { "no HMICar= line".into() } else { String::from_utf8_lossy(got) };
+    let lines = split_lines(text);
+    let hits = hmicar_lines(&lines);
+    let got = hits.last().map(|&i| split_eol(&lines[i]).0);
+    if hits.len() != 1 || !allowed.iter().any(|a| Some(a.as_bytes()) == got) {
+        let shown = got.map_or_else(|| "no HMICar= line".to_string(), latin1);
         bail!("HMICar is not stock in {what} ({shown}); refusing; nothing changed");
     }
     Ok(())
+}
+
+/// Refuses a line about to be rewritten whose break is a lone `\r`: `split_eol` keeps that `\r`
+/// in the body, so the rewritten line would run into the next one.
+fn refuse_bare_cr(body: &[u8], key: &[u8]) -> Result<()> {
+    if body.ends_with(b"\r") {
+        bail!(
+            "the {} line ends in a bare CR; rewriting it would join it to the next line; refusing",
+            latin1(key)
+        );
+    }
+    Ok(())
+}
+
+/// `b` decoded as Latin-1 (the encoding `Properties.load` reads).
+fn latin1(b: &[u8]) -> String {
+    b.iter().map(|&c| c as char).collect()
+}
+
+/// `Properties.load`'s blanks: space, tab and form feed.
+fn is_props_blank(c: &u8) -> bool {
+    matches!(c, b' ' | b'\t' | 0x0c)
+}
+
+/// The indexes (into `split_lines`) of the lines that start a logical line whose key
+/// `Properties.load` reads as `HMICar`: leading blanks skipped; `#` / `!` comment lines skipped
+/// (they never continue); a line ending in an odd number of backslashes continues onto the next,
+/// which is then part of its value (or key), never a key of its own.
+fn hmicar_lines(lines: &[Vec<u8>]) -> Vec<usize> {
+    let mut hits = Vec::new();
+    let mut open: Option<(usize, Vec<u8>)> = None;
+    for (i, line) in lines.iter().enumerate() {
+        let body = split_eol(line).0;
+        let body = body.strip_suffix(b"\r").unwrap_or(body);
+        let text = &body[body.iter().take_while(|c| is_props_blank(c)).count()..];
+        let (start, mut logical) = match open.take() {
+            Some(cont) => cont,
+            None if text.is_empty() || text[0] == b'#' || text[0] == b'!' => continue,
+            None => (i, Vec::new()),
+        };
+        let backslashes = text.iter().rev().take_while(|c| **c == b'\\').count();
+        if backslashes % 2 == 1 {
+            logical.extend_from_slice(&text[..text.len() - 1]);
+            open = Some((start, logical));
+            continue;
+        }
+        logical.extend_from_slice(text);
+        if properties_key(&logical).as_deref() == Some("HMICar") {
+            hits.push(start);
+        }
+    }
+    if let Some((start, logical)) = open {
+        if properties_key(&logical).as_deref() == Some("HMICar") {
+            hits.push(start);
+        }
+    }
+    hits
+}
+
+/// The key of a logical line as `Properties.load` reads it: up to the first unescaped `=`, `:`
+/// or blank, with `\uXXXX`, `\t`, `\n`, `\r`, `\f` and `\<c>` escapes resolved. `None` for a
+/// malformed `\u` escape.
+fn properties_key(logical: &[u8]) -> Option<String> {
+    let mut key = String::new();
+    let mut i = 0;
+    while let Some(&c) = logical.get(i) {
+        i += 1;
+        match c {
+            b'=' | b':' => break,
+            _ if is_props_blank(&c) => break,
+            b'\\' => {
+                let Some(&e) = logical.get(i) else { break };
+                i += 1;
+                key.push(match e {
+                    b'u' => {
+                        let hex = logical.get(i..i + 4).filter(|h| h.iter().all(u8::is_ascii_hexdigit))?;
+                        i += 4;
+                        char::from_u32(u32::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok()?)?
+                    }
+                    b't' => '\t',
+                    b'n' => '\n',
+                    b'r' => '\r',
+                    b'f' => '\x0c',
+                    other => other as char,
+                });
+            }
+            _ => key.push(c as char),
+        }
+    }
+    Some(key)
 }
