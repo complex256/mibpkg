@@ -50,6 +50,12 @@ pub fn off_ids(layout: &Layout) -> BTreeSet<String> {
     out
 }
 
+/// The file `UserToggles` reads has a `<id>.off` line (whatever its value), as `drop` matches it.
+/// An unreadable file has none.
+pub fn has_line(layout: &Layout, id: &str) -> bool {
+    fs::read_to_string(layout.p(&source(layout))).is_ok_and(|t| propsline::drop(&t, &format!("{id}{SUFFIX}")).1)
+}
+
 /// Drops `<id>.off` so a reinstalled plugin starts on; whether there was such a line. Read from
 /// the file `UserToggles` reads (the `.tmp` fallback included); the result is written to the
 /// target, which the runtime then prefers. Nothing is written when there was no such line. PERSIST is writable without a remount; the caller holds the

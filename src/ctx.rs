@@ -153,12 +153,15 @@ pub struct Ctx<'a> {
     /// `--force`: removing the SDK goes ahead despite pushed plugins or overrides in the ledger
     /// (with a loud warning).
     pub force: bool,
+    /// `--approve=<perm,…>`: the permissions the user approved for this action's plugin installs;
+    /// None (and anything it does not cover) asks instead of installing.
+    pub approved: Option<Vec<String>>,
 }
 
 impl<'a> Ctx<'a> {
     pub fn new(layout: Layout, sys: &'a dyn Sys) -> Ctx<'a> {
         let unit = detect(&layout);
         let mounts = Mounts::new(sys, &layout);
-        Ctx { layout, sys, mounts, unit, progress: Box::new(|m: &str| crate::say!("{m}")), fetcher: Box::new(crate::fetch::Unavailable), config_choice: None, force: false }
+        Ctx { layout, sys, mounts, unit, progress: Box::new(|m: &str| crate::say!("{m}")), fetcher: Box::new(crate::fetch::Unavailable), config_choice: None, force: false, approved: None }
     }
 }

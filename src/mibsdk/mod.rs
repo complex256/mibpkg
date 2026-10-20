@@ -1,10 +1,12 @@
 //! The mibsdk plugin SDK on the unit: its paths, whether it is installed and running, and the
 //! verified writes every change to its files goes through. Nothing else in mibpkg names an SDK
 //! path.
+pub mod ack;
 pub mod bundles;
 pub mod catalog;
 pub mod grants;
 pub mod ledger;
+pub mod plugin_pkg;
 pub mod propsline;
 pub mod sdk_pkg;
 pub mod stamp;

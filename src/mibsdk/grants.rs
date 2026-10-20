@@ -66,6 +66,11 @@ pub fn set(ctx: &Ctx, id: &str, perms: &BTreeSet<String>) -> Result<()> {
     put(ctx, GRANTS, text.as_bytes(), MODE)
 }
 
+/// `id` has a grants line (keyed exactly `id`, as `drop_line` matches it).
+pub fn has_line(layout: &Layout, id: &str) -> Result<bool> {
+    Ok(propsline::drop(&current_text(layout)?, id).1)
+}
+
 /// Removes `id`'s grants line; whether there was one. Nothing is written when there was none.
 /// Caller holds `ctx.mounts.rw("/mnt/app")` and the action lock.
 pub fn drop_line(ctx: &Ctx, id: &str) -> Result<bool> {

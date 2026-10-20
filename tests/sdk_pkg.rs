@@ -169,7 +169,7 @@ fn install_sdk(ctx: &Ctx, dir: &Path, version: &str) -> anyhow::Result<String> {
     install_src(ctx, &sdk_src(dir, version))
 }
 
-/// A `[plugin]` package (installed as files only until Task 8 adds its deploy).
+/// A `[plugin]` package without permissions (deployed by Task 8: needs the SDK installed).
 fn install_plugin(ctx: &Ctx, dir: &Path, id: &str, api: u32) {
     let s = dir.join(format!("src-{id}"));
     fs::create_dir_all(&s).unwrap();
@@ -181,7 +181,13 @@ fn install_plugin(ctx: &Ctx, dir: &Path, id: &str, api: u32) {
     )
     .unwrap();
     fs::write(s.join(format!("{id}.jar")), "jar").unwrap();
-    fs::write(s.join(format!("{id}.jar.stamp")), "format=1\n").unwrap();
+    let jar = format!("{id}.jar");
+    let (h, _) = archive::sha256_file(&s.join(&jar)).unwrap();
+    fs::write(
+        s.join(format!("{jar}.stamp")),
+        format!("format=1\nkind=plugin\nchecks=classVersion48\nplugin.id={id}\nplugin.unrestricted=false\nsha256.{jar}={h}\n"),
+    )
+    .unwrap();
     install_src(ctx, &s).unwrap();
 }
 
@@ -964,7 +970,8 @@ fn sdk_update_refused_while_plugin_needs_other_api() {
     let (f, dir) = unit();
     let sys = RecordingSys::default();
     let ctx = Ctx::new(f.layout.clone(), &sys);
-    install_sdk(&ctx, dir.path(), "0.1.0").unwrap();
+    // Installed while an SDK supporting api 3 was.
+    install_src(&ctx, &sdk_src_with(dir.path(), "0.1.0", &SDK_JARS, 1, 3)).unwrap();
     install_plugin(&ctx, dir.path(), "bike-rack", 3);
     let e = err(install_sdk(&ctx, dir.path(), "0.2.0"));
     assert_eq!(e, "bike-rack needs plugin api 3; this SDK supports 1..2; nothing changed");
@@ -1271,11 +1278,15 @@ fn uninstall_self_refuses_while_mibsdk_installed() {
     assert!(e.contains("mibsdk"), "{e}");
     assert!(e.contains("mibpkg remove"), "{e}");
     assert!(State::load(&f.layout).unwrap().packages.contains_key("mibsdk"));
-    // A plugin package alone refuses too.
-    let (f2, _d2) = unit();
+    // A plugin package alone refuses too (its SDK's record gone).
+    let (f2, d2) = unit();
     let sys = RecordingSys::default();
     let ctx = Ctx::new(f2.layout.clone(), &sys);
+    install_sdk(&ctx, d2.path(), "0.1.0").unwrap();
     install_plugin(&ctx, dir.path(), "bike-rack", 2);
+    let mut st = State::load(&f2.layout).unwrap();
+    st.packages.remove("mibsdk");
+    st.save(&f2.layout).unwrap();
     let e = format!("{:#}", run(&f2).unwrap_err());
     assert!(e.contains("bike-rack"), "{e}");
 }

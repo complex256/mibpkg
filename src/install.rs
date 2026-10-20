@@ -9,7 +9,7 @@ use crate::fsutil::{atomic_write, copy_atomic};
 use crate::index::{cmp_versions, Collection};
 use crate::legacy;
 use crate::manifest::{Kind, Manifest};
-use crate::mibsdk::sdk_pkg;
+use crate::mibsdk::{plugin_pkg, sdk_pkg};
 use crate::paths::Layout;
 use crate::state::{Installed, State};
 use anyhow::{bail, Context, Result};
@@ -260,8 +260,15 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
         // The guards run before /mnt/app goes read-write: a refusal changes nothing at all.
         sdk_pkg::check(ctx, &pkg.manifest, current_dir(layout, name).as_deref())?;
     }
+    // A plugin's checks and approval, also before anything is written (NeedsApproval included).
+    let approval = if kind == Kind::Plugin && !repair {
+        let old = previous.as_ref().and_then(|_| current_manifest(layout, name).ok());
+        Some(plugin_pkg::check(ctx, &pkg.manifest, old.as_ref())?)
+    } else {
+        None
+    };
 
-    let _rw = ctx.mounts.rw("/mnt/app")?;
+    let rw = ctx.mounts.rw("/mnt/app")?;
     cleanup_stale(layout)?;
     let pkg_dir = layout.pkg_dir(name);
     let ver_dir = pkg_dir.join(&version);
@@ -274,6 +281,7 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
     }
     let mut cfg = config::Report::default();
     let mut sdk_notes = Vec::new();
+    let mut plugin_notes = Vec::new();
     let staged = if repair {
         Ok(())
     } else {
@@ -284,6 +292,10 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
         if kind == Kind::Sdk {
             // From the staged copy just extracted: the jars verified are the jars written.
             sdk_notes = sdk_pkg::deploy(ctx, &pkg.manifest, &ver_dir, prev_dir.as_deref())?;
+        }
+        if let Some(a) = &approval {
+            // As for the SDK: verified and installed from the staged copy.
+            plugin_notes = plugin_pkg::deploy(ctx, &pkg.manifest, &ver_dir, a)?;
         }
         cfg = config::import(layout, media, &pkg.manifest, ctx.config_choice)?;
         if let Some(s) = &pkg.manifest.scripts.post_install {
@@ -365,7 +377,20 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
     }
     (ctx.progress)("starting services");
     control::request_reload(layout)?;
+    if kind == Kind::Plugin {
+        // No /mnt/app read-write guard is held while the runtime is waited for.
+        drop(rw);
+        msg.push_str(&plugin_tail(ctx, name, &plugin_notes));
+    }
     Ok(msg)
+}
+
+/// The deploy notes and the hot-load's note of a plugin, each on its own line.
+fn plugin_tail(ctx: &Ctx, id: &str, notes: &[String]) -> String {
+    let mut s: String = notes.iter().map(|n| format!("\n{n}")).collect();
+    s.push('\n');
+    s.push_str(&plugin_pkg::activate(ctx, id));
+    s
 }
 
 /// Install or upgrade from a .mpk file the user supplied (a web upload), not from a collection.
@@ -447,7 +472,11 @@ pub fn update_all(ctx: &Ctx, media: &[PathBuf], colls: &[Collection]) -> Result<
         let coll = pick_collection(&state, colls, &name, None, &ctx.unit)?;
         out.push(match install(ctx, media, coll, &name) {
             Ok(m) => m,
-            Err(e) => format!("{name}: FAILED {e:#}"),
+            // Never approved on the user's behalf: the update waits for an explicit approval.
+            Err(e) => match e.downcast_ref::<plugin_pkg::NeedsApproval>() {
+                Some(n) => format!("{name}: needs permission approval ({})", n.ask.join(", ")),
+                None => format!("{name}: FAILED {e:#}"),
+            },
         });
     }
     Ok(out)
@@ -462,7 +491,8 @@ pub fn remove(ctx: &Ctx, name: &str, purge: bool) -> Result<String> {
     if !state.packages.contains_key(name) {
         bail!("{name} is not installed");
     }
-    let _rw = ctx.mounts.rw("/mnt/app")?;
+    let is_plugin = current_manifest(layout, name).is_ok_and(|m| m.kind() == Kind::Plugin);
+    let rw = ctx.mounts.rw("/mnt/app")?;
     cleanup_stale(layout)?;
     // The SDK first puts the stock bundle list back (or refuses, changing nothing). A mibsdk whose
     // manifest cannot be read is refused there too, never removed as plain files.
@@ -495,6 +525,14 @@ pub fn remove(ctx: &Ctx, name: &str, purge: bool) -> Result<String> {
     }
     state.packages.remove(name);
     state.save(layout)?;
+    if is_plugin {
+        // The plugin itself: jar, grants line, switch and data, waiting for the runtime with no
+        // /mnt/app read-write guard held.
+        drop(rw);
+        return plugin_pkg::remove_package(ctx, name, purge).with_context(|| {
+            format!("the {name} package was removed, but taking the plugin off the unit did not finish; run: mibpkg sdk remove {name}")
+        });
+    }
     let mut msg = format!("removed {name}{}", if purge { " and its config" } else { "" });
     if sdk_note.is_some() {
         // Only now: until the package is recorded as removed, a rerun needs the stock backups.
@@ -524,14 +562,25 @@ pub fn rollback(ctx: &Ctx, name: &str) -> Result<String> {
     )?;
     let kind = m.kind();
     let mut sdk_notes = Vec::new();
+    let mut plugin_notes = Vec::new();
     if kind == Kind::Sdk {
         sdk_pkg::check(ctx, &m, current_dir(layout, name).as_deref())?;
     }
-    let _rw = ctx.mounts.rw("/mnt/app")?;
+    // Grants never grow on a rollback: what the current version declared and is granted, of what
+    // the previous one declares; a permission only the previous one declares needs an approval.
+    let approval = if kind == Kind::Plugin {
+        Some(plugin_pkg::check(ctx, &m, current_manifest(layout, name).ok().as_ref())?)
+    } else {
+        None
+    };
+    let rw = ctx.mounts.rw("/mnt/app")?;
     cleanup_stale(layout)?;
     if kind == Kind::Sdk {
         // On failure this deploys the current version again; `current` is not switched.
         sdk_notes = sdk_pkg::deploy(ctx, &m, &prev_dir, current_dir(layout, name).as_deref())?;
+    }
+    if let Some(a) = &approval {
+        plugin_notes = plugin_pkg::deploy(ctx, &m, &prev_dir, a)?;
     }
     (ctx.progress)(&format!("switching {name} back to {prev}"));
     atomic_write(&layout.pkg_dir(name).join("current"), prev.as_bytes())?;
@@ -548,5 +597,10 @@ pub fn rollback(ctx: &Ctx, name: &str) -> Result<String> {
     control::request_reload(layout)?;
     let suffix = if kind == Kind::Sdk { SDK_START } else { "" };
     let notes: String = sdk_notes.iter().map(|n| format!("\n{n}")).collect();
-    Ok(format!("rolled back {name} {} -> {prev}{suffix}{notes}", inst.version))
+    let mut msg = format!("rolled back {name} {} -> {prev}{suffix}{notes}", inst.version);
+    if kind == Kind::Plugin {
+        drop(rw);
+        msg.push_str(&plugin_tail(ctx, name, &plugin_notes));
+    }
+    Ok(msg)
 }

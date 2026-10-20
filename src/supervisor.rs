@@ -660,6 +660,13 @@ pub fn seed_once(ctx: &Ctx, media: &[PathBuf]) -> Result<()> {
         names.sort();
         names.dedup();
         for name in names {
+            // Never seeded: an SDK changes the HMI bundle list and a plugin needs an explicit
+            // permission approval; both are installed by hand (the marker is still written).
+            let by_hand = coll.index.packages.iter().any(|e| e.name == name && matches!(e.kind.as_deref(), Some("sdk" | "plugin")));
+            if by_hand {
+                println!("mibpkg: seed {name}: skipped: SDK and plugin packages are installed by hand (they change the HMI bundle list / need permission approval)");
+                continue;
+            }
             match install::install(ctx, media, &coll, &name) {
                 Ok(m) => println!("mibpkg: seed {name}: {m}"),
                 Err(e) => println!("mibpkg: seed {name}: FAILED {e:#}"),
