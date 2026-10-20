@@ -502,16 +502,16 @@ fn strs(ids: &[&str]) -> Vec<String> {
 fn propsline_set_rewrites_one_line_and_keeps_others_and_comments() {
     let text = "# hello=commented\nhello=a\nother = x,y\r\nhello=again\n  hello  =  b\n";
     assert_eq!(
-        propsline::set(text, "hello", "vehicle.read,network"),
+        propsline::set(text, "hello", "vehicle.read,network").unwrap(),
         "# hello=commented\nhello=vehicle.read,network\nother = x,y\r\n"
     );
 }
 
 #[test]
 fn propsline_set_appends_when_absent() {
-    assert_eq!(propsline::set("", "hello", "vehicle.read"), "hello=vehicle.read\n");
-    assert_eq!(propsline::set("other=x", "hello", ""), "other=x\nhello=\n", "the last line gains its newline");
-    assert_eq!(propsline::set("bike-rack=x\n", "bike", "y"), "bike-rack=x\nbike=y\n");
+    assert_eq!(propsline::set("", "hello", "vehicle.read").unwrap(), "hello=vehicle.read\n");
+    assert_eq!(propsline::set("other=x", "hello", "").unwrap(), "other=x\nhello=\n", "the last line gains its newline");
+    assert_eq!(propsline::set("bike-rack=x\n", "bike", "y").unwrap(), "bike-rack=x\nbike=y\n");
 }
 
 // was: test_leaves_a_plugin_with_a_longer_id_alone
@@ -528,7 +528,7 @@ fn propsline_drop_exact_key_only() {
 fn propsline_comment_line_is_never_a_key() {
     let text = "#hello=x\n   # hello=y\nhello\n";
     assert_eq!(propsline::drop(text, "hello"), (text.to_string(), false), "a line without = has no key either");
-    assert_eq!(propsline::set(text, "#hello", "z"), format!("{text}#hello=z\n"));
+    assert_eq!(propsline::set(text, "#hello", "z").unwrap(), format!("{text}#hello=z\n"));
 }
 
 // was: test_drops_the_plugins_off_switch
@@ -665,13 +665,16 @@ fn catalog_parses_the_sdk_permissions_json() {
     assert!(catalog::parse(&json.replace("\"network\"", "\"net work\"")).is_err(), "bad permission id");
     assert!(catalog::parse("{").is_err());
 
-    // installed(): BASE/permissions.json, None when absent or unparsable.
+    // installed(): BASE/permissions.json; Ok(None) when absent, Err when unreadable or corrupt.
     let f = common::fixture();
-    assert!(catalog::installed(&f.layout).is_none());
+    assert!(catalog::installed(&f.layout).unwrap().is_none(), "missing: no catalog");
     write_at(&f, mibsdk::PERMISSIONS, &json);
-    assert_eq!(catalog::installed(&f.layout).unwrap().len(), 7);
+    assert_eq!(catalog::installed(&f.layout).unwrap().unwrap().len(), 7);
     write_at(&f, mibsdk::PERMISSIONS, "not json");
-    assert!(catalog::installed(&f.layout).is_none());
+    assert!(catalog::installed(&f.layout).is_err(), "corrupt: fail closed");
+    fs::remove_file(f.layout.p(mibsdk::PERMISSIONS)).unwrap();
+    fs::create_dir(f.layout.p(mibsdk::PERMISSIONS)).unwrap();
+    assert!(catalog::installed(&f.layout).is_err(), "unreadable: fail closed");
 }
 
 #[test]
@@ -783,4 +786,88 @@ fn ledger_contains_all() {
     assert!(ledger::contains_all("", ""));
     assert!(!ledger::contains_all(ENTRY, newer));
     assert!(!ledger::contains_all(ENTRY, OTHER));
+}
+
+// ---- fix round 1 ----
+
+#[test]
+fn propsline_set_rejects_line_breaks_in_key_or_value() {
+    for (k, v) in [("a\nb", "x"), ("a\rb", "x"), ("a", "x\ny=z"), ("a", "x\r")] {
+        assert!(propsline::set("", k, v).is_err(), "{k:?}={v:?}");
+    }
+}
+
+#[test]
+fn grants_set_rejects_a_bad_permission_or_id() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    write_at(&f, mibsdk::GRANTS, "other=network\n");
+    let _rw = ctx.mounts.rw("/mnt/app").unwrap();
+    for bad in ["net work", "a,b", "x\ny=z", ""] {
+        assert!(grants::set(&ctx, "hello", &set(&[bad])).is_err(), "{bad:?}");
+    }
+    assert!(grants::set(&ctx, "hel\nlo", &set(&["network"])).is_err());
+    assert_eq!(fs::read_to_string(f.layout.p(mibsdk::GRANTS)).unwrap(), "other=network\n", "nothing written");
+}
+
+#[test]
+fn toggles_drop_falls_back_to_the_temp_file() {
+    // UserToggles reads plugins.properties.tmp when the target is missing; so must drop, or a
+    // reinstalled plugin would start switched off.
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    write_at(&f, &format!("{}.tmp", mibsdk::TOGGLES), "hello.off=true\nother.off=true\n");
+    assert!(toggles::drop(&ctx, "hello").unwrap());
+    assert_eq!(fs::read_to_string(f.layout.p(mibsdk::TOGGLES)).unwrap(), "other.off=true\n");
+    assert_eq!(toggles::off_ids(&f.layout), set(&["other"]));
+}
+
+#[test]
+fn ledger_reads_the_temp_file_when_the_target_is_missing() {
+    // OverrideLedger.load falls back to <file>.tmp (DurableFiles' delete-then-rename window): an
+    // override held there must still refuse an uninstall.
+    for abs in [mibsdk::LEDGER, mibsdk::OLD_LEDGER] {
+        let f = common::fixture();
+        let tmp = format!("{abs}.tmp");
+        write_at(&f, &tmp, ENTRY);
+        let e = ledger::read(&f.layout).unwrap();
+        assert_eq!(e.len(), 1, "{abs}");
+        assert_eq!(e[0].line, ENTRY.trim());
+        assert_eq!(e[0].source, f.layout.p(&tmp));
+        assert_eq!(ledger::of(&e, "bike-rack").len(), 1);
+
+        // The target wins when it is there.
+        write_at(&f, abs, OTHER);
+        let lines: Vec<String> = ledger::read(&f.layout).unwrap().into_iter().map(|e| e.line).collect();
+        assert_eq!(lines, [OTHER.trim()]);
+
+        // An unreadable temp file fails closed too.
+        fs::remove_file(f.layout.p(abs)).unwrap();
+        fs::remove_file(f.layout.p(&tmp)).unwrap();
+        fs::create_dir(f.layout.p(&tmp)).unwrap();
+        assert!(ledger::read(&f.layout).is_err(), "{abs}");
+    }
+}
+
+#[test]
+fn ledger_of_matches_properties_separators() {
+    let f = common::fixture();
+    write_at(&f, mibsdk::LEDGER, "a.key = bike|PERSISTENT|F1|F0|R\nb.key:bike|PERSISTENT|F1|F0\nc.key bike-rack|PERSISTENT|F1|F0|A\n");
+    let e = ledger::read(&f.layout).unwrap();
+    assert_eq!(e.iter().map(|e| e.plugin.as_str()).collect::<Vec<_>>(), ["bike", "bike", "bike-rack"]);
+    assert_eq!(e.iter().map(|e| e.key.as_str()).collect::<Vec<_>>(), ["a.key", "b.key", "c.key"]);
+    assert_eq!(ledger::of(&e, "bike").len(), 2);
+    assert_eq!(ledger::of(&e, "bike-rack").len(), 1);
+}
+
+#[test]
+fn ledger_latin1_round_trips() {
+    let bytes: Vec<u8> = b"k=p|PERSISTENT|\xe9|\xff|A\n".to_vec();
+    let text = ledger::decode(&bytes);
+    assert_eq!(ledger::encode(&text).unwrap(), bytes);
+    let (new, _) = ledger::merge(&text, "");
+    assert_eq!(ledger::encode(&new).unwrap(), bytes);
+    assert!(ledger::encode("k=\u{20ac}").is_err(), "not latin-1");
 }

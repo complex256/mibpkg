@@ -277,7 +277,7 @@ impl Manifest {
                 bail!("[plugin] api must be at least 1");
             }
             for perm in &p.permissions {
-                if perm.is_empty() || !perm.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)) {
+                if !crate::mibsdk::catalog::is_permission(perm) {
                     bail!("permission {perm:?} must be 1 or more of [A-Za-z0-9._-]");
                 }
             }

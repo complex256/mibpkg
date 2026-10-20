@@ -6,6 +6,7 @@ use crate::paths::Layout;
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::fs;
+use std::io;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct PermInfo {
@@ -41,9 +42,15 @@ pub fn parse(json: &str) -> Result<Vec<PermInfo>> {
     Ok(f.permissions)
 }
 
-/// The installed SDK's catalog; `None` when the file is missing or unparsable.
-pub fn installed(layout: &Layout) -> Option<Vec<PermInfo>> {
-    parse(&fs::read_to_string(layout.p(PERMISSIONS)).ok()?).ok()
+/// The installed SDK's catalog: `Ok(None)` when it has none (the file is missing); an unreadable
+/// or corrupt file is an error, so a permission check built on it fails closed.
+pub fn installed(layout: &Layout) -> Result<Option<Vec<PermInfo>>> {
+    let text = match fs::read_to_string(layout.p(PERMISSIONS)) {
+        Ok(t) => t,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).with_context(|| format!("reading {PERMISSIONS}")),
+    };
+    parse(&text).with_context(|| format!("reading {PERMISSIONS}")).map(Some)
 }
 
 /// One line per id: `"<text> (<id>)"`, prefixed `"WARNING: "` when loud, or

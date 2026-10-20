@@ -4,10 +4,11 @@
 //! The runtime is all-or-nothing today: a plugin whose declared permissions are not all granted is
 //! `BLOCKED_PERMISSIONS` and never runs. Approval is still kept per permission id so optional
 //! permissions can be added later.
+use super::catalog::is_permission;
 use super::{propsline, put, GRANTS};
 use crate::ctx::Ctx;
 use crate::paths::Layout;
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
@@ -57,8 +58,11 @@ fn current_text(layout: &Layout) -> Result<String> {
 /// Sets `id`'s grants line to `perms` (empty = revoke all), keeping every other line. Caller
 /// holds `ctx.mounts.rw("/mnt/app")` and the action lock.
 pub fn set(ctx: &Ctx, id: &str, perms: &BTreeSet<String>) -> Result<()> {
+    if let Some(bad) = perms.iter().find(|p| !is_permission(p)) {
+        bail!("cannot grant {bad:?} to {id}: a permission is 1 or more of [A-Za-z0-9._-]");
+    }
     let list: Vec<&str> = perms.iter().map(String::as_str).collect();
-    let text = propsline::set(&current_text(&ctx.layout)?, id, &list.join(","));
+    let text = propsline::set(&current_text(&ctx.layout)?, id, &list.join(","))?;
     put(ctx, GRANTS, text.as_bytes(), MODE)
 }
 

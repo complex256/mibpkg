@@ -18,12 +18,22 @@ fn valid_id(id: &str) -> bool {
         && b[1..].iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
 }
 
+/// The file `UserToggles` reads: the target, or its `.tmp` when the target is not a file (the
+/// runtime died between delete and rename). A non-file target without a `.tmp` is read as is
+/// (and fails).
+fn source(layout: &Layout) -> String {
+    let tmp = format!("{TOGGLES}.tmp");
+    if layout.p(TOGGLES).is_file() || !layout.p(&tmp).exists() {
+        TOGGLES.to_string()
+    } else {
+        tmp
+    }
+}
+
 /// The ids switched off. As `UserToggles`: a missing file falls back to its `.tmp` (the runtime
 /// died between delete and rename), and an unreadable file reads as empty (every plugin on).
 pub fn off_ids(layout: &Layout) -> BTreeSet<String> {
-    let file = layout.p(TOGGLES);
-    let file = if file.is_file() { file } else { layout.p(&format!("{TOGGLES}.tmp")) };
-    let Ok(text) = fs::read_to_string(file) else { return BTreeSet::new() };
+    let Ok(text) = fs::read_to_string(layout.p(&source(layout))) else { return BTreeSet::new() };
     let mut out = BTreeSet::new();
     for line in text.lines() {
         let t = line.trim_start();
@@ -40,14 +50,16 @@ pub fn off_ids(layout: &Layout) -> BTreeSet<String> {
     out
 }
 
-/// Drops `<id>.off` so a reinstalled plugin starts on; whether there was such a line. Nothing is
-/// written when there was none. PERSIST is writable without a remount; the caller holds the
+/// Drops `<id>.off` so a reinstalled plugin starts on; whether there was such a line. Read from
+/// the file `UserToggles` reads (the `.tmp` fallback included); the result is written to the
+/// target, which the runtime then prefers. Nothing is written when there was no such line. PERSIST is writable without a remount; the caller holds the
 /// action lock.
 pub fn drop(ctx: &Ctx, id: &str) -> Result<bool> {
-    let text = match fs::read_to_string(ctx.layout.p(TOGGLES)) {
+    let src = source(&ctx.layout);
+    let text = match fs::read_to_string(ctx.layout.p(&src)) {
         Ok(t) => t,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-        Err(e) => return Err(e).with_context(|| format!("reading {TOGGLES}")),
+        Err(e) => return Err(e).with_context(|| format!("reading {src}")),
     };
     let (text, dropped) = propsline::drop(&text, &format!("{id}{SUFFIX}"));
     if dropped {

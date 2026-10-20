@@ -1,6 +1,7 @@
 //! Line editing of `.properties` files the runtime reads (`grants.properties`,
 //! `plugins.properties`): port of `mibsdk-dev`'s `GRANTS_PY`. Only the line whose key is exactly
 //! the given key is touched; every other line is kept byte for byte.
+use anyhow::{bail, Result};
 
 /// The key of `line`: the trimmed text before the first `=`; `None` for a comment line (`#` after
 /// leading whitespace) or a line without `=`.
@@ -31,8 +32,12 @@ fn join(out: &[&str]) -> String {
 }
 
 /// `text` with the first line keyed `key` replaced by `key=value` and any later ones dropped, or
-/// with `key=value` appended when there is none.
-pub fn set(text: &str, key: &str, value: &str) -> String {
+/// with `key=value` appended when there is none. A line break in `key` or `value` is refused: it
+/// would smuggle in another line.
+pub fn set(text: &str, key: &str, value: &str) -> Result<String> {
+    if [key, value].iter().any(|s| s.contains(['\n', '\r'])) {
+        bail!("a properties key or value may not contain a line break: {key:?}={value:?}");
+    }
     let new = format!("{key}={value}");
     let mut out = Vec::new();
     let mut done = false;
@@ -49,7 +54,7 @@ pub fn set(text: &str, key: &str, value: &str) -> String {
     if !done {
         out.push(new.as_str());
     }
-    join(&out)
+    Ok(join(&out))
 }
 
 /// `text` without the lines keyed `key`, and whether there were any.
