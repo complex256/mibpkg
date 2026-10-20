@@ -288,6 +288,8 @@ fn uninstall_self(ctx: &Ctx, purge: bool) -> Result<String> {
             // Stock-file backups live on /mnt/app (e.g. the GEM jar) AND /mnt/system (startup.sh),
             // both read-only by default; restore_all writes to all of them, so mount system rw too.
             let _rw_sys = ctx.mounts.rw("/mnt/system")?;
+            // A stale SDK stock record would put an older firmware's bundle list back.
+            crate::mibsdk::sdk_pkg::drop_stale_records(ctx)?;
             crate::backups::restore_all(&ctx.layout)?;
             match fs::remove_dir_all(ctx.layout.home()) {
                 Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),

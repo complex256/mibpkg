@@ -1562,3 +1562,72 @@ fn sdk_remove_retry_honours_purge() {
     assert!(!p(&f, mibsdk::PERSIST).exists());
     assert!(!p(&f, mibsdk::RAM).exists());
 }
+
+// ---- fix round 3 ----
+
+/// A half-done fresh install (the marker created, jars written, the bundle list still stock,
+/// mibsdk not recorded) keeps its records: the marker tombstone still says DSITracer was off.
+#[test]
+fn sdk_records_of_a_half_done_install_are_not_stale() {
+    let (f, dir) = unit();
+    tracer_off(&f);
+    backups::backup_once(&f.layout, mibsdk::BUNDLES).unwrap();
+    backups::backup_once(&f.layout, mibsdk::MARKER).unwrap(); // tombstone: absent before
+    write(&p(&f, mibsdk::MARKER), b""); // created by the interrupted install
+    for j in SDK_JARS {
+        write(&p(&f, &format!("{}/{j}", mibsdk::JARS)), b"half-installed");
+    }
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let msg = install_sdk(&ctx, dir.path(), "0.1.0").unwrap();
+    assert!(!msg.contains("stale"), "{msg}");
+    assert!(backups::is_tombstone(&f.layout, mibsdk::MARKER), "the tombstone is kept");
+    assert!(!autostart(&f).contains("DSITracer"));
+    install::remove(&ctx, "mibsdk", false).unwrap();
+    assert!(!p(&f, mibsdk::MARKER).exists(), "DSITracer is not left enabled");
+    assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), stock());
+}
+
+/// Dropping a stale record that fails before anything was written says nothing changed.
+#[test]
+fn sdk_failed_stale_drop_says_nothing_changed() {
+    let (f, dir) = unit();
+    write(&backups::backup_path(&f.layout, mibsdk::BUNDLES), &stock());
+    let mut t = backups::backup_path(&f.layout, mibsdk::BUNDLES).into_os_string();
+    t.push(".absent");
+    write(&PathBuf::from(t).join("blocker"), b"x"); // forgetting this record fails
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let e = err(install_sdk(&ctx, dir.path(), "0.1.0"));
+    assert!(e.ends_with("; nothing changed"), "{e}");
+    assert!(!e.contains("undone"), "{e}");
+    assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), stock());
+    assert!(sdk_jars_present(&f).is_empty());
+}
+
+fn uninstall_self_purge(f: &common::Fixture) {
+    let args: Vec<String> = ["--root", f.root().to_str().unwrap(), "--no-supervisor", "uninstall-self", "--purge"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(mibpkg::cli::run(&args).unwrap(), 0);
+}
+
+/// uninstall-self --purge never restores a stale stock record over the live (newer) list, but
+/// still restores a record while the live list is generated.
+#[test]
+fn uninstall_self_purge_skips_stale_sdk_records() {
+    let (f, _dir) = unit();
+    write(&backups::backup_path(&f.layout, mibsdk::BUNDLES), &stock());
+    backups::record_absent(&f.layout, mibsdk::MARKER).unwrap();
+    write(&p(&f, mibsdk::BUNDLES), &new_firmware_stock());
+    uninstall_self_purge(&f);
+    assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), new_firmware_stock());
+    assert!(p(&f, mibsdk::MARKER).exists(), "a stale tombstone deletes nothing");
+
+    let (f, _dir) = unit();
+    backups::backup_once(&f.layout, mibsdk::BUNDLES).unwrap();
+    write(&p(&f, mibsdk::BUNDLES), &bundles::generate(&stock(), &spec(), true).unwrap());
+    uninstall_self_purge(&f);
+    assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), stock());
+}

@@ -69,31 +69,56 @@ fn hmicar_lines(sdk: &SdkSpec) -> (String, String) {
     (format!("HMICar={}", sdk.hmicar_stock), format!("HMICar={}", sdk.hmicar))
 }
 
-/// The live bundle list references the SDK: it names mibsdk or the SDK bundle, or its `HMICar=`
-/// is not the stock line.
-fn references_sdk(live: &[u8], spec: &SdkSpec) -> bool {
+/// The live bundle list references the SDK: it names mibsdk or (with the spec) the SDK bundle,
+/// or its `HMICar=` is not the stock line.
+fn references_sdk(live: &[u8], spec: Option<&SdkSpec>) -> bool {
     let has = |needle: &[u8]| live.windows(needle.len()).any(|w| w == needle);
-    has(b"mibsdk") || has(spec.bundle.as_bytes()) || bundles::check_hmicar(live, "", &[&hmicar_lines(spec).0]).is_err()
+    has(b"mibsdk")
+        || spec.is_some_and(|spec| {
+            has(spec.bundle.as_bytes()) || bundles::check_hmicar(live, "", &[&hmicar_lines(spec).0]).is_err()
+        })
 }
 
-/// Bundle-list / marker records left by an earlier install (a forget that failed) are stale on a
-/// fresh install (no mibsdk package recorded) whose live list does not reference the SDK: the
-/// live files are stock, perhaps of a newer firmware, and must be backed up again. While the live
-/// list is generated (an undo that failed), the record is the only stock copy and is kept.
-fn stale_records(l: &Layout, spec: &SdkSpec) -> Result<bool> {
+/// Any SDK file is on the unit: a `mibsdk-*.jar` in JARS or BASE/sdk.properties. A deploy writes
+/// them before the marker and the bundle list, an undo removes them only after the marker, and an
+/// uninstall removes them: their presence means an install is half done. A JARS that cannot be
+/// listed counts as present.
+fn sdk_files_present(l: &Layout) -> bool {
+    l.p(&format!("{BASE}/sdk.properties")).exists()
+        || names(l, JARS).map_or(true, |v| v.iter().any(|n| n.starts_with("mibsdk-") && n.ends_with(".jar")))
+}
+
+/// Bundle-list / marker records left by an earlier install (a forget that failed) are stale when
+/// no mibsdk package is recorded, no SDK file is on the unit and the live list does not reference
+/// the SDK: the live files are stock, perhaps of a newer firmware, and must be backed up again.
+/// While the live list is generated (an undo that failed) or SDK files remain (a half-done
+/// install, whose marker tombstone is still needed), the records are the stock state and are kept.
+pub fn stale_records(l: &Layout, spec: Option<&SdkSpec>) -> Result<bool> {
     if !backups::has_backup(l, BUNDLES) && !backups::has_backup(l, MARKER) {
         return Ok(false);
     }
-    if State::load(l)?.packages.contains_key(SDK_PKG) {
+    if State::load(l)?.packages.contains_key(SDK_PKG) || sdk_files_present(l) {
         return Ok(false);
     }
     Ok(fs::read(l.p(BUNDLES)).is_ok_and(|live| !references_sdk(&live, spec)))
 }
 
+/// Forget stale records (`stale_records`, without a spec) so that restoring every backup
+/// (`uninstall-self --purge`) never puts an older list over the live one. The caller holds
+/// /mnt/app read-write.
+pub fn drop_stale_records(ctx: &Ctx) -> Result<bool> {
+    if !stale_records(&ctx.layout, None)? {
+        return Ok(false);
+    }
+    forget_on_app(ctx, BUNDLES)?;
+    forget_on_app(ctx, MARKER)?;
+    Ok(true)
+}
+
 /// The stock bundle list on record: mibpkg's backup (unless stale), else a complete `mibsdk-dev`
 /// backup that the install will adopt; None on a unit nothing has touched yet.
 fn stock_source(layout: &Layout, spec: &SdkSpec) -> Result<Option<PathBuf>> {
-    if backups::has_backup(layout, BUNDLES) && !stale_records(layout, spec)? {
+    if backups::has_backup(layout, BUNDLES) && !stale_records(layout, Some(spec))? {
         return Ok(Some(backups::backup_path(layout, BUNDLES)));
     }
     let st = stock_dir();
@@ -352,7 +377,7 @@ fn plan(ctx: &Ctx, m: &Manifest, dir: &Path, notes: &mut Vec<String>) -> Result<
         .map_err(|e| anyhow!(stamp::sdk_refusal(&format!("{e:#}"))))?;
 
     let st = stock_dir();
-    let drop_stale = stale_records(l, &spec)?;
+    let drop_stale = stale_records(l, Some(&spec))?;
     if drop_stale {
         notes.push(format!("dropped a stale stock record of an earlier install ({BUNDLES} is stock); backed up the live files again"));
     }
@@ -441,6 +466,8 @@ struct Done {
     backup_verified: bool,
     /// The marker or the bundle list may have been written.
     activating: bool,
+    /// Anything (a record dropped, a backup written) may have changed.
+    changed: bool,
     /// The bundle list may have been written (set just before its write).
     bundles_written: bool,
     /// Jars this run put into JARS.
@@ -455,8 +482,10 @@ fn back_up(ctx: &Ctx, plan: &Plan, ops: &dyn FileOps, done: &mut Done, notes: &m
     let st = stock_dir();
     if plan.drop_stale {
         forget_on_app(ctx, BUNDLES)?;
+        done.changed = true;
         forget_on_app(ctx, MARKER)?;
     }
+    done.changed = true;
     let (had_bundles, had_marker) = (backups::has_backup(l, BUNDLES), backups::has_backup(l, MARKER));
     let r = (|| -> Result<()> {
         if let Some(a) = &plan.adopt {
@@ -569,7 +598,7 @@ fn undo_fresh(ctx: &Ctx, plan: &Plan, done: &Done) -> Result<String> {
         if done.created_marker_backup {
             forget_on_app(ctx, MARKER)?;
         }
-        return Ok("the install was undone".into());
+        return Ok(if done.changed { "the install was undone" } else { "nothing changed" }.into());
     }
     let live_stock = if done.bundles_written || plan.adopt.is_some() {
         put(ctx, BUNDLES, &plan.stock, plan.stock_mode)?;
