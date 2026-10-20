@@ -270,6 +270,9 @@ impl Manifest {
                 bail!("plugin id {name:?} must be 2-40 characters");
             }
             file_name("[plugin] jar", &p.jar, ".jar")?;
+            if p.jar != format!("{name}.jar") {
+                bail!("[plugin] jar {:?} must be {name}.jar (the plugin id)", p.jar);
+            }
             if p.api < 1 {
                 bail!("[plugin] api must be at least 1");
             }
@@ -283,8 +286,21 @@ impl Manifest {
             if name != SDK_PACKAGE {
                 bail!("the SDK package must be named {SDK_PACKAGE}, not {name:?}");
             }
+            for (key, v) in [("jars", &s.jars), ("hmi", &s.hmi), ("owned", &s.owned)] {
+                if v.is_empty() {
+                    bail!("[sdk] {key} must not be empty");
+                }
+            }
             for j in &s.jars {
                 file_name("[sdk] jars entry", j, ".jar")?;
+                if !j.starts_with("mibsdk-") || j.starts_with("mibsdk-spike-") {
+                    bail!("[sdk] jars entry {j:?} must start with mibsdk- (and not mibsdk-spike-)");
+                }
+            }
+            for h in &s.hmi {
+                if h.is_empty() || !h.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+                    bail!("[sdk] hmi entry {h:?} must be 1 or more of [A-Za-z0-9_]");
+                }
             }
             file_name("[sdk] stamp", &s.stamp, ".stamp")?;
             file_name("[sdk] permissions", &s.permissions, ".json")?;
@@ -301,13 +317,14 @@ impl Manifest {
                     bail!("[sdk] {key} {v:?} must be a Java class name ([A-Za-z_$][A-Za-z0-9_$.]*)");
                 }
             }
-            if !s.bundle.contains('=') || has_control(&s.bundle) {
-                bail!("[sdk] bundle {:?} must be one <name>=<class> line", s.bundle);
+            let bundle_ok = s.bundle.split_once('=').is_some_and(|(k, class)| {
+                !k.is_empty() && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') && k != "HMICar" && class_name(class)
+            });
+            if !bundle_ok {
+                bail!("[sdk] bundle {:?} must be <[A-Za-z0-9_]+>=<class name>, and not HMICar", s.bundle);
             }
             for p in &s.properties {
-                if has_control(p) {
-                    bail!("[sdk] properties entry {p:?} must be a single line");
-                }
+                property_line(p).with_context(|| format!("[sdk] properties entry {p:?}"))?;
             }
             for o in &s.owned {
                 let ok = !o.is_empty()
@@ -327,6 +344,9 @@ pub const SDK_PACKAGE: &str = "mibsdk";
 
 /// One safe path component ending in `ext`.
 fn file_name(what: &str, v: &str, ext: &str) -> Result<()> {
+    if v.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        bail!("{what} {v:?} must not contain spaces or control characters");
+    }
     let p = safe_rel(v).with_context(|| format!("{what} {v:?}"))?;
     if p.components().count() != 1 || !v.ends_with(ext) || v.len() == ext.len() {
         bail!("{what} {v:?} must be a single file name ending {ext}");
@@ -343,6 +363,26 @@ fn class_name(s: &str) -> bool {
 
 fn has_control(s: &str) -> bool {
     s.chars().any(char::is_control)
+}
+
+/// One sdk.properties line: `key=value`, no line continuation (an odd run of trailing
+/// backslashes), and not `chain.configurator`, which the SDK install writes itself.
+fn property_line(p: &str) -> Result<()> {
+    if has_control(p) {
+        bail!("must be a single line");
+    }
+    if !p.contains('=') {
+        bail!("must be key=value");
+    }
+    if p.bytes().rev().take_while(|b| *b == b'\\').count() % 2 == 1 {
+        bail!("must not end with an escaping backslash");
+    }
+    // java.util.Properties ends a key at the first '=', ':' or whitespace.
+    let key = p.trim_start().split(|c: char| c == '=' || c == ':' || c.is_whitespace()).next().unwrap_or("");
+    if key == "chain.configurator" {
+        bail!("chain.configurator is written by the SDK install, not the manifest");
+    }
+    Ok(())
 }
 
 /// 1-40 of [a-z0-9-], starting with a letter or digit: names become file names and command

@@ -303,3 +303,63 @@ fn pack_refuses_sdk_without_permissions_json() {
     stage(&s, &sdk("mibsdk"), &files);
     assert!(pack_err(&s).contains("permissions.json is named in manifest.toml but missing from"));
 }
+
+// ---- hardening (review follow-up) ----
+
+#[test]
+fn sdk_jars_must_be_mibsdk_jars_but_not_spike_jars() {
+    refused(&sdk_with("jars", "jars = [\"runtime.jar\"]"), "mibsdk-");
+    refused(&sdk_with("jars", "jars = [\"mibsdk-runtime.jar\", \"mibsdk-spike-ui.jar\"]"), "mibsdk-spike-");
+    assert!(Manifest::parse(&sdk_with("jars", "jars = [\"mibsdk-runtime.jar\"]")).is_ok());
+}
+
+#[test]
+fn sdk_bundle_must_be_key_equals_class_and_not_hmicar() {
+    for bad in ["=a.B", "Mib Sdk=a.B", "MibSdk=", "MibSdk=a b", "MibSdk=a.B\\\\", "HMICar=a.B", "Mib-Sdk=a.B"] {
+        refused(&sdk_with("bundle", &format!("bundle = \"{bad}\"")), "bundle");
+    }
+    assert!(Manifest::parse(&sdk_with("bundle", "bundle = \"Mib_Sdk2=a.B$c\"")).is_ok());
+}
+
+#[test]
+fn sdk_properties_must_be_assignments_without_trailing_escape_or_chain_configurator() {
+    for bad in [
+        "ui.enabled",
+        "ui.enabled=true\\\\",
+        "a=b\\\\\\\\\\\\",
+        "chain.configurator=x.Y",
+        " chain.configurator = x.Y",
+        "chain.configurator:x.Y",
+    ] {
+        refused(&sdk_with("properties", &format!("properties = [\"{bad}\"]")), "properties");
+    }
+    // An even run of backslashes is an escaped backslash, not a continuation.
+    assert!(Manifest::parse(&sdk_with("properties", "properties = [\"a=b\\\\\\\\\"]")).is_ok());
+}
+
+#[test]
+fn sdk_hmi_entries_are_word_characters() {
+    for bad in ["", "HMI AU", "HMI-AU", "HMI/AU"] {
+        refused(&sdk_with("hmi", &format!("hmi = [\"{bad}\"]")), "hmi");
+    }
+}
+
+#[test]
+fn file_names_refuse_spaces_and_control_characters() {
+    refused(&plugin("hello", "jar = \"hel lo.jar\"\napi = 1\npermissions = []"), "jar");
+    refused(&sdk_with("stamp", "stamp = \"mibsdk-unit\\t.stamp\""), "stamp");
+    refused(&sdk_with("permissions", "permissions = \"perm issions.json\""), "permissions");
+    refused(&sdk_with("jars", "jars = [\"mibsdk-run\\ntime.jar\"]"), "jar");
+}
+
+#[test]
+fn plugin_jar_must_be_named_after_the_plugin_id() {
+    refused(&plugin("hello", "jar = \"other.jar\"\napi = 1\npermissions = []"), "hello.jar");
+}
+
+#[test]
+fn sdk_jars_hmi_and_owned_must_be_non_empty() {
+    refused(&sdk_with("jars", "jars = []"), "jars");
+    refused(&sdk_with("hmi", "hmi = []"), "hmi");
+    refused(&sdk_with("owned", "owned = []"), "owned");
+}
