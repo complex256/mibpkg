@@ -419,3 +419,60 @@ fn installed_sdk_none_until_installed() {
     fs::write(mibsdk::reboot_flag(&f.layout), "").unwrap();
     assert!(!mibsdk::sdk_running(&f.layout));
 }
+
+/// Real file operations, except that the first `remove` fails with EROFS (a read-only flip
+/// just before `put`).
+struct RoRemoveOnce {
+    failed: Cell<bool>,
+}
+
+impl FileOps for RoRemoveOnce {
+    fn write(&self, p: &Path, b: &[u8], mode: u32) -> io::Result<()> {
+        mibsdk::StdOps.write(p, b, mode)
+    }
+    fn read(&self, p: &Path) -> io::Result<Vec<u8>> {
+        mibsdk::StdOps.read(p)
+    }
+    fn rename(&self, a: &Path, b: &Path) -> io::Result<()> {
+        mibsdk::StdOps.rename(a, b)
+    }
+    fn remove(&self, p: &Path) -> io::Result<()> {
+        if !self.failed.replace(true) {
+            return Err(io::Error::from_raw_os_error(30)); // EROFS
+        }
+        mibsdk::StdOps.remove(p)
+    }
+}
+
+#[test]
+fn put_retries_when_the_stale_temp_sweep_hits_a_read_only_mount() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    fs::create_dir_all(f.layout.p("/mnt/app/eso/hmi/lsd/mibsdk/plugins")).unwrap();
+    let stale = temp_of(&ctx, TARGET);
+    fs::write(&stale, "left by an interrupted run").unwrap();
+    let _rw = ctx.mounts.rw("/mnt/app").unwrap();
+    sys.calls.borrow_mut().clear();
+    let ops = RoRemoveOnce { failed: Cell::new(false) };
+    mibsdk::put_with(&ctx, TARGET, b"new", 0o644, &ops).unwrap();
+    assert_eq!(fs::read(f.layout.p(TARGET)).unwrap(), b"new");
+    // Reassert before the first attempt, and again before the retry.
+    assert_eq!(rw_calls(&sys), 2, "{:?}", sys.calls.borrow());
+    assert!(!stale.exists());
+}
+
+#[test]
+fn put_success_removes_a_temp_left_by_a_no_op_rename() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    fs::create_dir_all(f.layout.p("/mnt/app/eso/hmi/lsd/mibsdk/plugins")).unwrap();
+    fs::write(f.layout.p(TARGET), "same").unwrap();
+    let _rw = ctx.mounts.rw("/mnt/app").unwrap();
+    // The rename "succeeds" without moving; the target already holds the bytes, so put succeeds.
+    let ops = FlakyRename::new(1);
+    mibsdk::put_with(&ctx, TARGET, b"same", 0o644, &ops).unwrap();
+    assert_eq!(ops.renames.borrow().len(), 1);
+    assert!(!temp_of(&ctx, TARGET).exists());
+}

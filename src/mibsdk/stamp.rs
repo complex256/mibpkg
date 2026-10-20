@@ -54,6 +54,10 @@ pub fn sdk_refusal(why: &str) -> String {
 /// Check `stamp_file` against `jars` (each by its file name). The error's text is exactly the
 /// reason: `missing`, `format`, `kind`, `id <got|None> != <want>`, `no hash for <name>` or
 /// `hash mismatch for <name>`. Unknown keys are ignored.
+///
+/// Caller contract: verify and install from the same mibpkg-owned staged copy (the jars checked
+/// here are the bytes `put_file` writes); a unit stamp is verified against ALL `[sdk] jars`
+/// (a jar left out is never checked); a plugin stamp against its one jar with `Some(id)`.
 pub fn verify(stamp_file: &Path, kind: StampKind, expected_id: Option<&str>, jars: &[&Path]) -> Result<Verified> {
     let Ok(raw) = std::fs::read(stamp_file) else { bail!("missing") };
     // ISO-8859-1: every byte is the code point of the same value.

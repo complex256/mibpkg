@@ -93,12 +93,20 @@ impl FileOps for StdOps {
 /// file next to the target, read it back, rename it over the target, read the target back.
 /// Another process may remount /mnt/app read-only at any moment, and a rename there can "succeed"
 /// without replacing the target (QNX `mv` exits 0), so any failure re-asserts read-write and
-/// retries once. For a target under /mnt/app the caller holds `ctx.mounts.rw("/mnt/app")`.
+/// retries once.
+///
+/// Caller contract: for a target under /mnt/app the caller holds `ctx.mounts.rw("/mnt/app")`;
+/// every caller holds the action lock, because the temp file name (`.mibpkg.tmp`) is shared by
+/// all writers into one directory.
 pub fn put(ctx: &Ctx, dst_abs: &str, bytes: &[u8], mode: u32) -> Result<()> {
     put_with(ctx, dst_abs, bytes, mode, &StdOps)
 }
 
 /// `put` with the bytes of the local file `src` (read once: the bytes read are the bytes written).
+///
+/// Caller contract (as `put`, plus): `src` is the mibpkg-owned staged copy that `stamp::verify`
+/// checked (the package's version directory), never a path someone else can rewrite between
+/// the check and the install.
 pub fn put_file(ctx: &Ctx, dst_abs: &str, src: &Path, mode: u32) -> Result<()> {
     let bytes = fs::read(src).with_context(|| format!("reading {}", src.display()))?;
     put(ctx, dst_abs, &bytes, mode)
@@ -110,15 +118,14 @@ pub fn put_with(ctx: &Ctx, dst_abs: &str, bytes: &[u8], mode: u32, ops: &dyn Fil
     let dir = dst.parent().ok_or_else(|| anyhow!("{dst_abs} has no parent directory"))?;
     let tmp = dir.join(PUT_TMP);
     let on_app = dst_abs == APP || dst_abs.starts_with(&format!("{APP}/"));
-    remove_if_present(ops, &tmp).with_context(|| format!("removing the stale {}", tmp.display()))?;
     if on_app {
         ctx.mounts.reassert(APP).with_context(|| format!("writing {dst_abs}"))?;
     }
-    let first = match put_once(ops, &tmp, &dst, bytes, mode) {
-        Ok(()) => return Ok(()),
-        Err(e) => e,
-    };
+    // The temp file is removed on every exit path, success included: a rename that did not
+    // move it (the target already held these bytes) would otherwise leave it behind.
+    let first = put_once(ops, &tmp, &dst, bytes, mode);
     let _ = remove_if_present(ops, &tmp);
+    let Err(first) = first else { return Ok(()) };
     if on_app {
         ctx.mounts
             .reassert(APP)
@@ -129,8 +136,11 @@ pub fn put_with(ctx: &Ctx, dst_abs: &str, bytes: &[u8], mode: u32, ops: &dyn Fil
     r.map_err(|e| anyhow!("failed to write {dst_abs}: {e} (and before the retry: {first})"))
 }
 
-/// One attempt; leaves the temp file for the caller to remove.
+/// One attempt: remove a stale temp file (left by an interrupted run), write the temp file, read
+/// it back, rename it over the target, read the target back. A failure anywhere (EROFS from the
+/// unlink included) is the caller's cue to re-assert read-write and retry.
 fn put_once(ops: &dyn FileOps, tmp: &Path, dst: &Path, bytes: &[u8], mode: u32) -> std::result::Result<(), String> {
+    remove_if_present(ops, tmp).map_err(|e| format!("removing the stale temp file: {e}"))?;
     ops.write(tmp, bytes, mode).map_err(|e| format!("writing the temp file: {e}"))?;
     if ops.read(tmp).map_err(|e| format!("reading the temp file back: {e}"))? != bytes {
         return Err("the temp file read back differs".into());
