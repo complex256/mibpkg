@@ -39,7 +39,8 @@ pub fn forget(layout: &Layout, unit_abs: &str) -> Result<()> {
     Ok(())
 }
 
-/// Record the file's original state once: a copy if it exists, an empty `.absent` tombstone if not.
+/// Record the file's original state once (a tombstone is not refreshed if the file appears later;
+/// `forget` first to re-record): a copy if it exists, an empty `.absent` tombstone if not.
 pub fn backup_once(layout: &Layout, unit_abs: &str) -> Result<PathBuf> {
     let dst = backup_path(layout, unit_abs);
     if has_backup(layout, unit_abs) {
@@ -60,19 +61,23 @@ pub fn backup_once(layout: &Layout, unit_abs: &str) -> Result<PathBuf> {
     Ok(dst)
 }
 
+/// Put the file back to its recorded original state, then forget the record. Clearing matters for
+/// tombstones: a stale one would otherwise delete a file mibpkg never created. A target already
+/// gone counts as restored; calling this with no record is an error.
 pub fn restore(layout: &Layout, unit_abs: &str) -> Result<()> {
     let src = backup_path(layout, unit_abs);
     let dst = layout.p(unit_abs);
     if is_tombstone(layout, unit_abs) {
-        return match std::fs::remove_file(&dst) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e).with_context(|| format!("removing {}", dst.display())),
-        };
+        match std::fs::remove_file(&dst) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e).with_context(|| format!("removing {}", dst.display())),
+        }
+        return forget(layout, unit_abs);
     }
     let mode = std::fs::metadata(&src).with_context(|| format!("no backup of {unit_abs}"))?.permissions().mode();
     copy_atomic(&src, &dst, mode & 0o7777)?;
-    Ok(())
+    forget(layout, unit_abs)
 }
 
 /// Restore every backed-up stock file to the version mibpkg saved before touching it. Used by a
@@ -83,12 +88,23 @@ pub fn restore_all(layout: &Layout) -> Result<()> {
         Ok(rd) => rd,
         Err(_) => return Ok(()), // no backups dir = nothing to restore
     };
+    let mut errors = Vec::new();
     for e in rd.filter_map(|e| e.ok()) {
-        // backup_path encodes '/' as '%'; decode it back to the unit-absolute path.
         let name = e.file_name().to_string_lossy().into_owned();
+        if name.ends_with(".tmp") {
+            // Leftover of an interrupted atomic write: not a backup, drop it.
+            let _ = std::fs::remove_file(e.path());
+            continue;
+        }
         let name = name.strip_suffix(ABSENT_SUFFIX).unwrap_or(&name);
+        // backup_path encodes '/' as '%'; decode it back to the unit-absolute path.
         let unit_abs = format!("/{}", name.replace('%', "/"));
-        restore(layout, &unit_abs)?;
+        if let Err(err) = restore(layout, &unit_abs) {
+            errors.push(format!("{unit_abs}: {err:#}"));
+        }
+    }
+    if !errors.is_empty() {
+        anyhow::bail!("could not restore {} file(s): {}", errors.len(), errors.join("; "));
     }
     Ok(())
 }
