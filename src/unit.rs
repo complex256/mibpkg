@@ -53,3 +53,13 @@ impl Compat {
         unit_ok && fw_ok
     }
 }
+
+/// The HMI build: the value of the first `HMI = ...` line of /ifs/version_info.txt with all
+/// whitespace removed, e.g. "HMI_AU_MIB2_HQC_NAR_G22_C10_180803".
+pub fn hmi_version(layout: &Layout) -> Option<String> {
+    let raw = std::fs::read(layout.p(crate::mibsdk::VERSION_INFO)).ok()?;
+    let text = String::from_utf8_lossy(&raw);
+    let line = text.lines().find(|l| l.strip_prefix("HMI").is_some_and(|r| r.trim_start().starts_with('=')))?;
+    let v: String = line.split_once('=')?.1.chars().filter(|c| !c.is_whitespace()).collect();
+    (!v.is_empty()).then_some(v)
+}

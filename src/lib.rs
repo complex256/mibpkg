@@ -56,3 +56,4 @@ pub mod publish;
 pub mod scaffold;
 pub mod firewall;
 pub mod web;
+pub mod mibsdk;

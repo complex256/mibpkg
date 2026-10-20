@@ -1,0 +1,6 @@
+format=1
+kind=unit
+checks=classVersion48,linkCheck,permissionScan
+sha256.mibsdk-adapter-hqc.jar=04446287dc341413d5a83a2715d6f21ec2ece655ebb0c24eb16d8095a9f0f062
+sha256.mibsdk-rt-retrotranslator.jar=929739579b2ec4c6e7b19f1e20680437c478a1ca2c1369b766ee8ed8e4a89ce0
+sha256.mibsdk-runtime.jar=7c017705cc5afcaf9af16b5489b820f435a3ea38ecae18c510f148b24863b942
