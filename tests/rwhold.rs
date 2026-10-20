@@ -249,3 +249,44 @@ fn sweep_leaves_a_live_holder_rw() {
     assert!(odd.exists(), "names without a pid are not ours to delete");
     assert!(sys.calls.borrow().is_empty());
 }
+
+#[test]
+fn dropping_mounts_with_a_stuck_release_withdraws_our_holder() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let own = f.layout.run(&format!("rw.app.{}", std::process::id()));
+    let lock = f.layout.run("rwlock");
+    let blocker = Live::spawn();
+    {
+        let m = Mounts::new(&sys, &f.layout);
+        let g = m.rw("/mnt/app").unwrap();
+        fs::write(&lock, blocker.pid().to_string()).unwrap();
+        drop(g); // release fails: the remount lock is busy
+        assert!(own.exists());
+    } // Mounts dropped while the lock is still busy: its retry fails too
+    assert!(!own.exists(), "a scoped Ctx must not leave our holder keeping /mnt/app rw");
+    assert_eq!(*sys.calls.borrow(), vec!["rw /mnt/app"]);
+    // Once the lock frees, another process's ordinary release goes read-only.
+    fs::remove_file(&lock).unwrap();
+    let other = Live::spawn();
+    let b = Mounts::with_holder(&sys, &f.layout, other.pid());
+    drop(b.rw("/mnt/app").unwrap());
+    assert_eq!(sys.calls.borrow().last().unwrap(), "ro /mnt/app");
+}
+
+#[test]
+fn dropping_mounts_retries_a_pending_release() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let own = f.layout.run(&format!("rw.app.{}", std::process::id()));
+    let lock = f.layout.run("rwlock");
+    let blocker = Live::spawn();
+    let m = Mounts::new(&sys, &f.layout);
+    let g = m.rw("/mnt/app").unwrap();
+    fs::write(&lock, blocker.pid().to_string()).unwrap();
+    drop(g);
+    fs::remove_file(&lock).unwrap();
+    drop(m);
+    assert!(!own.exists());
+    assert_eq!(*sys.calls.borrow(), vec!["rw /mnt/app", "ro /mnt/app"]);
+}

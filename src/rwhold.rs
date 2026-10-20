@@ -7,8 +7,9 @@
 //! read-only. Holder files of dead processes are swept on release. The remount itself and the
 //! holder bookkeeping run under the remount lock `/tmp/mibpkg.rwlock`.
 //!
-//! Holders are per pid, so a process keeps one `Ctx` (the supervisor's web threads share it);
-//! nested guards within a process are refcounted by `ctx::Mounts` and touch the registry once.
+//! Holders are per pid, so a process keeps one `ctx::Mounts` (the one in its `Ctx`); nested
+//! guards within a process are refcounted there and touch the registry once. The web server is
+//! its own process and its jobs run as child processes, so each registers under its own pid.
 //! A tool outside this protocol can still remount read-only at any time, which is why writes to
 //! `/mnt/app` go through `mibsdk::put`, which reasserts read-write before it writes.
 use crate::lock::Lock;
@@ -130,6 +131,16 @@ pub(crate) fn reassert_in(run_dir: &Path, sys: &dyn Sys, mount: &str) -> Result<
 
 fn remount_lock(run_dir: &Path, sys: &dyn Sys) -> Result<Lock> {
     Lock::acquire_at(&run_dir.join("mibpkg.rwlock"), sys, RWLOCK_WAIT)
+}
+
+/// Delete `holder`'s file for `mount` without the remount lock or a remount: the last resort
+/// of a `Mounts` going away whose release could not run, so that the next release or sweep by
+/// any process can go read-only.
+pub(crate) fn withdraw_in(run_dir: &Path, mount: &str, holder: u32) -> Result<()> {
+    match fs::remove_file(holder_file(run_dir, tag(mount)?, holder)) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+        _ => Ok(()),
+    }
 }
 
 fn holder_file(run_dir: &Path, tag: &str, holder: u32) -> PathBuf {

@@ -29,6 +29,10 @@ impl Lock {
     /// and a new lock counts as taken only if it still names this process after the pid is
     /// written. That closes the common races (a file vanishing mid-check, two takers of the same
     /// dead pid), though not every interleaving.
+    ///
+    /// (Unix semantics assumed: on Windows a removed file that is still open stays
+    /// "delete pending", so `create_new` would fail with an access error rather than retry.
+    /// mibpkg runs on QNX and is tested on Linux/macOS.)
     pub fn acquire_at(path: &Path, sys: &dyn Sys, wait: Duration) -> Result<Lock> {
         let me = std::process::id();
         let deadline = Instant::now() + wait;

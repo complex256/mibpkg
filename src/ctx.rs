@@ -12,9 +12,13 @@ use std::sync::{Mutex, MutexGuard};
 /// Refcounted `mount -uw`: nested guards remount once; the last drop goes read-only — unless
 /// another live process still holds the mount read-write (see `rwhold`).
 ///
-/// Keep one `Mounts` per process (the one in its `Ctx`): holder files are per pid, so two
-/// `Mounts` in one process share a holder file and the first to release would withdraw it while
-/// the other still writes. The counts sit behind a mutex so threads sharing it stay consistent.
+/// One `Mounts` per process (the one in its `Ctx`): holder files are per pid, so two `Mounts`
+/// in one process share a holder file and the first to release would withdraw it while the other
+/// still writes. `Mounts` is not `Sync` (`&dyn Sys` isn't), so no threads share it today; the
+/// counts sit behind a mutex only so that sharing stays correct if `Sys` ever becomes `Sync`.
+///
+/// Dropping a `Mounts` retries any release that failed, and if that fails too, withdraws this
+/// process's holder files so a scoped `Ctx` never leaves a mount read-write on its account.
 pub struct Mounts<'a> {
     sys: &'a dyn Sys,
     run_dir: PathBuf,
@@ -115,6 +119,21 @@ impl Drop for RwGuard<'_, '_> {
         st.unreleased.insert(self.mount.clone());
         if let Some(e) = err {
             crate::warn!("warning: {} may stay read-write: release failed ({e:#}); will retry", self.mount);
+        }
+    }
+}
+
+impl Drop for Mounts<'_> {
+    fn drop(&mut self) {
+        if self.retry_releases().is_ok() {
+            return;
+        }
+        let st = self.state();
+        for mount in &st.unreleased {
+            match rwhold::withdraw_in(&self.run_dir, mount, self.holder) {
+                Ok(()) => crate::warn!("warning: {mount}: release still failing; withdrew this process's read-write hold without remounting (the next release or sweep goes read-only)"),
+                Err(e) => crate::warn!("warning: {mount} may stay read-write: release failed and the hold could not be withdrawn ({e:#})"),
+            }
         }
     }
 }
