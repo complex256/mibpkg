@@ -8,7 +8,7 @@ use std::path::{Component, Path, PathBuf};
 pub const KNOWN_PHASES: &[&str] = &["default"];
 
 /// Package names that would collide with mibpkg's own /tmp/mibpkg.<name>* files.
-pub const RESERVED: &[&str] = &["restart", "reload", "stop", "selfupdate", "pid", "lock", "status", "log"];
+pub const RESERVED: &[&str] = &["restart", "reload", "stop", "selfupdate", "pid", "lock", "status", "log", "rw", "rwlock"];
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]

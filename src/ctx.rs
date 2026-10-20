@@ -3,13 +3,18 @@
 use crate::paths::Layout;
 use crate::sys::Sys;
 use crate::unit::{detect, UnitInfo};
-use anyhow::Result;
+use crate::rwhold;
+use anyhow::{bail, Result};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
-/// Refcounted `mount -uw`: nested guards remount once; the last drop goes read-only.
+/// Refcounted `mount -uw`: nested guards remount once; the last drop goes read-only — unless
+/// another live process still holds the mount read-write (see `rwhold`).
 pub struct Mounts<'a> {
     sys: &'a dyn Sys,
+    run_dir: PathBuf,
+    holder: u32,
     counts: RefCell<BTreeMap<String, u32>>,
 }
 
@@ -19,18 +24,33 @@ pub struct RwGuard<'m, 'a> {
 }
 
 impl<'a> Mounts<'a> {
-    pub fn new(sys: &'a dyn Sys) -> Mounts<'a> {
-        Mounts { sys, counts: RefCell::new(BTreeMap::new()) }
+    /// Mounts held on behalf of this process.
+    pub fn new(sys: &'a dyn Sys, layout: &Layout) -> Mounts<'a> {
+        Mounts::with_holder(sys, layout, std::process::id())
+    }
+
+    /// Mounts held on behalf of pid `holder` (tests stand in for another process with it).
+    pub fn with_holder(sys: &'a dyn Sys, layout: &Layout, holder: u32) -> Mounts<'a> {
+        Mounts { sys, run_dir: rwhold::run_dir(layout), holder, counts: RefCell::new(BTreeMap::new()) }
     }
 
     pub fn rw<'m>(&'m self, mount: &str) -> Result<RwGuard<'m, 'a>> {
         let mut c = self.counts.borrow_mut();
         let n = c.entry(mount.to_string()).or_insert(0);
         if *n == 0 {
-            self.sys.remount(mount, true)?;
+            rwhold::acquire_in(&self.run_dir, self.sys, mount, self.holder)?;
         }
         *n += 1;
         Ok(RwGuard { mounts: self, mount: mount.to_string() })
+    }
+
+    /// Remount `mount` read-write again (something outside the protocol may have flipped it);
+    /// only while this process holds it.
+    pub fn reassert(&self, mount: &str) -> Result<()> {
+        if self.counts.borrow().get(mount).copied().unwrap_or(0) == 0 {
+            bail!("{mount} is not held read-write by this process");
+        }
+        rwhold::reassert_in(&self.run_dir, self.sys, mount)
     }
 }
 
@@ -40,7 +60,7 @@ impl Drop for RwGuard<'_, '_> {
         if let Some(n) = c.get_mut(&self.mount) {
             *n -= 1;
             if *n == 0 {
-                if let Err(e) = self.mounts.sys.remount(&self.mount, false) {
+                if let Err(e) = rwhold::release_in(&self.mounts.run_dir, self.mounts.sys, &self.mount, self.mounts.holder) {
                     crate::warn!("warning: {e:#}");
                 }
             }
@@ -65,6 +85,7 @@ pub struct Ctx<'a> {
 impl<'a> Ctx<'a> {
     pub fn new(layout: Layout, sys: &'a dyn Sys) -> Ctx<'a> {
         let unit = detect(&layout);
-        Ctx { layout, sys, mounts: Mounts::new(sys), unit, progress: Box::new(|m: &str| crate::say!("{m}")), fetcher: Box::new(crate::fetch::Unavailable), config_choice: None }
+        let mounts = Mounts::new(sys, &layout);
+        Ctx { layout, sys, mounts, unit, progress: Box::new(|m: &str| crate::say!("{m}")), fetcher: Box::new(crate::fetch::Unavailable), config_choice: None }
     }
 }

@@ -4,7 +4,11 @@ use crate::sys::Sys;
 use anyhow::{bail, Result};
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+/// How often a waiting `acquire_at` retries a lock held by a live process.
+const POLL: Duration = Duration::from_millis(50);
 
 #[derive(Debug)]
 pub struct Lock {
@@ -12,35 +16,49 @@ pub struct Lock {
 }
 
 impl Lock {
+    /// The action lock: fails at once if another live mibpkg holds it.
     pub fn acquire(layout: &Layout, sys: &dyn Sys) -> Result<Lock> {
-        let path = layout.run("lock");
-        for _ in 0..2 {
-            match OpenOptions::new().write(true).create_new(true).open(&path) {
+        Lock::acquire_at(&layout.run("lock"), sys, Duration::ZERO)
+    }
+
+    /// A pid lock file at `path`. A lock left by a dead process is taken over; one held by a
+    /// live process is retried every 50 ms for up to `wait`, then is "busy".
+    pub fn acquire_at(path: &Path, sys: &dyn Sys, wait: Duration) -> Result<Lock> {
+        let deadline = Instant::now() + wait;
+        let mut steals = 0;
+        loop {
+            match OpenOptions::new().write(true).create_new(true).open(path) {
                 Ok(mut f) => {
                     write!(f, "{}", std::process::id())?;
-                    return Ok(Lock { path });
+                    return Ok(Lock { path: path.to_path_buf() });
                 }
                 Err(e) if e.kind() == ErrorKind::AlreadyExists => {
-                    let read = || fs::read_to_string(&path).ok().and_then(|s| s.trim().parse::<u32>().ok());
+                    let read = || fs::read_to_string(path).ok().and_then(|s| s.trim().parse::<u32>().ok());
                     let mut holder = read();
                     if holder.is_none() && path.exists() {
                         // Created but its pid not written yet: give the holder a moment.
-                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        std::thread::sleep(Duration::from_millis(100));
                         holder = read();
                     }
                     match holder {
                         Some(pid) if sys.process_alive(pid) => {
-                            bail!("busy: another mibpkg action is running (pid {pid})")
+                            if Instant::now() >= deadline {
+                                bail!("busy: another mibpkg action is running (pid {pid})")
+                            }
+                            std::thread::sleep(POLL);
                         }
                         _ => {
-                            let _ = fs::remove_file(&path);
+                            let _ = fs::remove_file(path);
+                            steals += 1;
+                            if steals >= 2 && Instant::now() >= deadline {
+                                bail!("busy: could not take {}", path.display())
+                            }
                         }
                     }
                 }
                 Err(e) => return Err(e.into()),
             }
         }
-        bail!("busy: could not take {}", path.display())
     }
 }
 

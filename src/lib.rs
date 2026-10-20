@@ -30,6 +30,7 @@ pub mod index;
 pub mod unit;
 pub mod ctx;
 pub mod lock;
+pub mod rwhold;
 pub mod sys;
 pub mod backups;
 pub mod state;
