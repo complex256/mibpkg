@@ -71,6 +71,11 @@ fn check_id(id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Plugin `id`'s jar or grants line is on the unit.
+pub fn on_unit(layout: &crate::paths::Layout, id: &str) -> bool {
+    check_id(id).is_ok() && (layout.p(&jar_abs(id)).exists() || grants::has_line(layout, id).unwrap_or(true))
+}
+
 /// The install checks, before anything is written (nothing here writes): the SDK is installed,
 /// supports the plugin's api and this unit's HMI, and knows every declared permission. Then the
 /// approval: what the plugin adds over `old` (the installed package's manifest, or None: every
@@ -135,13 +140,66 @@ fn remove_if_present(p: &Path) -> io::Result<()> {
     }
 }
 
+/// What a deploy replaced: the jar and the grants line before it (None: there was none).
+struct Prior {
+    jar: Option<Vec<u8>>,
+    grants: Option<BTreeSet<String>>,
+}
+
+/// Put the jar and the grants line of `id` back as `prior` holds them. The caller holds
+/// /mnt/app read-write.
+fn restore(ctx: &Ctx, id: &str, prior: &Prior) -> Result<()> {
+    let target = jar_abs(id);
+    match &prior.jar {
+        Some(b) => put(ctx, &target, b, JAR_MODE)?,
+        None => {
+            let p = ctx.layout.p(&target);
+            on_app(ctx, &format!("cannot remove {target}"), &mut || remove_if_present(&p))?;
+        }
+    }
+    match &prior.grants {
+        Some(g) => grants::set(ctx, id, g),
+        None => grants::drop_line(ctx, id).map(|_| ()),
+    }
+}
+
+/// A plugin deployed by an install or rollback that has not committed yet. Dropped without
+/// `commit`, it puts the jar and the grants line back as they were (an error after the deploy
+/// must not leave the unit on a version the package state does not record). Keep it alive while
+/// /mnt/app is held read-write.
+pub struct Deployed<'c, 'a> {
+    ctx: &'c Ctx<'a>,
+    id: String,
+    prior: Option<Prior>,
+    notes: Vec<String>,
+}
+
+impl Deployed<'_, '_> {
+    /// The install committed: keep the deploy; its notes.
+    pub fn commit(mut self) -> Vec<String> {
+        self.prior = None;
+        std::mem::take(&mut self.notes)
+    }
+}
+
+impl Drop for Deployed<'_, '_> {
+    fn drop(&mut self) {
+        let Some(prior) = self.prior.take() else { return };
+        match restore(self.ctx, &self.id, &prior) {
+            Ok(()) => (self.ctx.progress)(&format!("put {}.jar and its grants line back as they were", self.id)),
+            Err(e) => crate::warn!("warning: could not put {}.jar and its grants line back ({e:#}); run: mibpkg sdk remove {} or install it again", self.id, self.id),
+        }
+    }
+}
+
 /// Install the plugin's jar from `ver_dir` (the staged copy, verified against its stamp there)
 /// to `BASE/plugins/<id>.jar` and set its grants line to `approval.grant`. If the grants line
-/// cannot be written, the jar that was there before is put back. Returns the notes: the
-/// unrestricted warning, a takeover of a pushed jar, and a plugin left blocked by missing grants.
+/// cannot be written, the jar and line are put back at once; afterwards, until `commit`, by
+/// dropping the result. Its notes: the unrestricted warning, a takeover of a pushed jar, and a
+/// plugin left blocked by missing grants.
 ///
 /// Caller contract: holds the action lock and `ctx.mounts.rw("/mnt/app")`.
-pub fn deploy(ctx: &Ctx, m: &Manifest, ver_dir: &Path, approval: &Approval) -> Result<Vec<String>> {
+pub fn deploy<'c, 'a>(ctx: &'c Ctx<'a>, m: &Manifest, ver_dir: &Path, approval: &Approval) -> Result<Deployed<'c, 'a>> {
     let plugin = m.plugin.as_ref().context("not a [plugin] package")?;
     let id = m.package.name.as_str();
     let l = &ctx.layout;
@@ -149,23 +207,19 @@ pub fn deploy(ctx: &Ctx, m: &Manifest, ver_dir: &Path, approval: &Approval) -> R
     let verified = stamp::verify(&ver_dir.join(format!("{}.stamp", plugin.jar)), stamp::StampKind::Plugin, Some(id), &[&jar])
         .map_err(|e| anyhow!(stamp::plugin_refusal(id, &format!("{e:#}"))))?;
     let target = jar_abs(id);
-    let prior = match fs::read(l.p(&target)) {
-        Ok(b) => Some(b),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-        Err(e) => return Err(e).with_context(|| format!("reading {target}")),
+    let prior = Prior {
+        jar: match fs::read(l.p(&target)) {
+            Ok(b) => Some(b),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e).with_context(|| format!("reading {target}")),
+        },
+        grants: grants::read(l)?.remove(id),
     };
-    let takeover = prior.is_some() && !State::load(l)?.packages.contains_key(id);
+    let takeover = prior.jar.is_some() && !State::load(l)?.packages.contains_key(id);
     ensure_plugins_dir(ctx)?;
     put_file(ctx, &target, &jar, JAR_MODE)?;
     if let Err(e) = grants::set(ctx, id, &approval.grant) {
-        let undo = match &prior {
-            Some(b) => put(ctx, &target, b, JAR_MODE),
-            None => {
-                let p = l.p(&target);
-                on_app(ctx, &format!("cannot remove {target}"), &mut || remove_if_present(&p))
-            }
-        };
-        return Err(match undo {
+        return Err(match restore(ctx, id, &prior) {
             Ok(()) => e.context(format!("{id}.jar was put back as it was")),
             Err(u) => e.context(format!("putting {target} back failed too ({u:#})")),
         });
@@ -184,22 +238,25 @@ pub fn deploy(ctx: &Ctx, m: &Manifest, ver_dir: &Path, approval: &Approval) -> R
             grants::missing(&plugin.permissions, &BTreeSet::new()).join(",")
         ));
     }
-    Ok(notes)
+    Ok(Deployed { ctx, id: id.to_string(), prior: Some(prior), notes })
 }
 
 static TOKEN_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// A reload marker's content: new on every request (the runtime reloads once per new content and
-/// never deletes the marker).
+/// never deletes the marker). Printable ASCII without spaces, under 64 chars, then a line break, so
+/// the token the runtime logs for it (`ack::token_of`) is exactly the text before the break.
 fn token() -> String {
     let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     format!("{secs}-{}-{}\n", std::process::id(), TOKEN_SEQ.fetch_add(1, Ordering::Relaxed))
 }
 
-/// Put a fresh token into `plugins/<id>.reload`. The caller holds /mnt/app read-write.
-fn put_marker(ctx: &Ctx, id: &str) -> Result<()> {
+/// Put a fresh token into `plugins/<id>.reload`; the token. The caller holds /mnt/app read-write.
+fn put_marker(ctx: &Ctx, id: &str) -> Result<String> {
     ensure_plugins_dir(ctx)?;
-    put(ctx, &reload_abs(id), token().as_bytes(), JAR_MODE)
+    let t = token();
+    put(ctx, &reload_abs(id), t.as_bytes(), JAR_MODE)?;
+    Ok(t)
 }
 
 fn seconds(d: Duration) -> String {
@@ -222,15 +279,16 @@ pub fn activate_with(ctx: &Ctx, id: &str, timeout: Duration) -> String {
     if !sdk_running(&ctx.layout) {
         return "the SDK is not running; it loads at the next boot".into();
     }
-    let before = ack::count(&ctx.layout, id);
-    let requested = (|| -> Result<()> {
+    let base = ack::baseline(&ctx.layout);
+    let requested = (|| -> Result<String> {
         let _rw = ctx.mounts.rw("/mnt/app")?;
         put_marker(ctx, id)
     })();
-    if let Err(e) = requested {
-        return format!("could not request a reload ({e:#}); it loads at the next HMI start");
-    }
-    match ack::wait(&ctx.layout, id, before, timeout) {
+    let token = match requested {
+        Ok(t) => t,
+        Err(e) => return format!("could not request a reload ({e:#}); it loads at the next HMI start"),
+    };
+    match ack::wait(&ctx.layout, id, &base, Some(&ack::token_of(token.as_bytes())), timeout) {
         Some((state, reason)) => format!("loaded: {state} {reason}").trim_end().to_string(),
         None => format!("reload requested; the SDK did not confirm within {} (it loads at the next HMI start)", seconds(timeout)),
     }
@@ -292,8 +350,8 @@ fn remove(ctx: &Ctx, id: &str, purge: bool, ack_timeout: Duration, ledger_wait: 
         bail!("{id} is not installed");
     }
     let running = sdk_running(l);
-    let before = ack::count(l, id);
-    let off_dropped = {
+    let base = if running { ack::baseline(l) } else { ack::Baseline::unknown() };
+    let (off_dropped, token) = {
         let _rw = ctx.mounts.rw("/mnt/app")?;
         let p = l.p(&jar);
         on_app(ctx, &format!("cannot remove {jar}"), &mut || remove_if_present(&p))?;
@@ -303,14 +361,13 @@ fn remove(ctx: &Ctx, id: &str, purge: bool, ack_timeout: Duration, ledger_wait: 
         grants::drop_line(ctx, id)?;
         // Before the marker: the reload must see the plugin switched on again.
         let off_dropped = toggles::drop(ctx, id)?;
-        put_marker(ctx, id)?;
-        off_dropped
+        (off_dropped, put_marker(ctx, id)?)
     };
     let mut out = vec![format!(
         "removed {id}: plugins/{id}.jar and its grants line{}; reload requested",
         if off_dropped { format!(" and its {id}.off switch") } else { String::new() }
     )];
-    let acked = running && ack::wait(l, id, before, ack_timeout).is_some();
+    let acked = running && ack::wait(l, id, &base, Some(&ack::token_of(token.as_bytes())), ack_timeout).is_some();
 
     let start = Instant::now();
     let mut first = true;

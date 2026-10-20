@@ -508,26 +508,131 @@ fn plugin_activate_holds_no_rw_guard_while_waiting() {
     assert_eq!(sys.calls.borrow().last().map(String::as_str), Some("ro /mnt/app"));
 }
 
+const OLD: &str = "1 INFO dev dev channel: reload requested for hello\n2 STATUS hello ENABLED old\n\
+                   3 INFO dev dev channel: reload requested for hello-2\n4 STATUS hello-2 FAILED x\n";
+
+fn ok(state: &str, reason: &str) -> Option<(String, String)> {
+    Some((state.to_string(), reason.to_string()))
+}
+
 #[test]
 fn ack_wait_takes_the_last_status_after_the_new_reload_line() {
     let f = common::fixture();
     let log = p(&f, mibsdk::LOG);
-    write(
-        &log,
-        b"1 INFO dev dev channel: reload requested for hello\n2 STATUS hello ENABLED old\n\
-          3 INFO dev dev channel: reload requested for hello-2\n4 STATUS hello-2 FAILED x\n",
-    );
-    assert_eq!(ack::wait(&f.layout, "hello", 1, Duration::ZERO), None);
+    write(&log, OLD.as_bytes());
+    let base = ack::baseline(&f.layout);
+    assert_eq!(ack::wait(&f.layout, "hello", &base, None, Duration::ZERO), None);
     append_log(&log, "5 INFO dev dev channel: reload requested for hello\n6 STATUS hello DISABLED reloading\n");
     // Still reloading: keeps waiting.
-    assert_eq!(ack::wait(&f.layout, "hello", 1, Duration::from_millis(300)), None);
+    assert_eq!(ack::wait(&f.layout, "hello", &base, None, Duration::from_millis(300)), None);
     append_log(&log, "7 STATUS hello-2 ENABLED y\n8 STATUS hello BLOCKED_PERMISSIONS missing permissions: network\n");
     assert_eq!(
-        ack::wait(&f.layout, "hello", 1, Duration::ZERO),
-        Some(("BLOCKED_PERMISSIONS".to_string(), "missing permissions: network".to_string()))
+        ack::wait(&f.layout, "hello", &base, None, Duration::ZERO),
+        ok("BLOCKED_PERMISSIONS", "missing permissions: network")
     );
-    assert_eq!(ack::count(&f.layout, "hello"), 2);
-    assert_eq!(ack::count(&f.layout, "hell"), 0);
+    // Exact id: hell is not hello.
+    assert_eq!(ack::wait(&f.layout, "hell", &base, None, Duration::ZERO), None);
+}
+
+/// Fix round 1 (Important 1): /tmp/mibsdk.log is rewritten in place, so a baseline read may be
+/// empty or cut short; the old reload line must never look new.
+#[test]
+fn ack_an_empty_or_partial_baseline_never_acks_an_old_line() {
+    let f = common::fixture();
+    let log = p(&f, mibsdk::LOG);
+    for partial in ["", "1 INFO dev dev channel: reload requested for hello\n2 STATUS hel"] {
+        write(&log, partial.as_bytes());
+        let t = Instant::now();
+        let base = ack::baseline(&f.layout);
+        assert!(t.elapsed() >= Duration::from_millis(200), "an unusable baseline is retried for a while");
+        assert_eq!(base, ack::Baseline::unknown(), "{partial:?}");
+        write(&log, OLD.as_bytes());
+        assert_eq!(ack::wait(&f.layout, "hello", &base, None, Duration::from_millis(300)), None, "{partial:?}");
+    }
+    // A baseline that becomes whole while it is retried is used.
+    write(&log, b"");
+    let path = log.clone();
+    let fill = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(100));
+        fs::write(path, OLD).unwrap();
+    });
+    let base = ack::baseline(&f.layout);
+    fill.join().unwrap();
+    assert_eq!(base, ack::Baseline::of(OLD));
+}
+
+#[test]
+fn ack_a_partial_read_while_waiting_is_not_taken_for_a_wrapped_ring() {
+    let base = ack::Baseline::of(&format!("{OLD}9 INFO x latest\n"));
+    // The anchor is cut off this (unstable) read: the old lines in it are not new.
+    assert_eq!(ack::answer(OLD, "hello", &base, None, false), None);
+    // Read the same twice (stable) without the anchor: the ring wrapped, every line is new.
+    assert_eq!(ack::answer(OLD, "hello", &base, None, true), ok("ENABLED", "old"));
+    // With the anchor, only what follows it counts, stable or not.
+    let text = format!("{OLD}9 INFO x latest\n10 INFO dev dev channel: reload requested for hello\n11 STATUS hello ENABLED new\n");
+    assert_eq!(ack::answer(&text, "hello", &base, None, false), ok("ENABLED", "new"));
+    assert_eq!(ack::answer(&format!("{OLD}9 INFO x latest\n"), "hello", &base, None, true), None);
+}
+
+#[test]
+fn ack_ring_wrap_drops_the_anchor_and_the_new_lines_count() {
+    let f = common::fixture();
+    let log = p(&f, mibsdk::LOG);
+    write(&log, OLD.as_bytes());
+    let base = ack::baseline(&f.layout);
+    // The ring wrapped: every line of the baseline is gone.
+    write(&log, b"50 INFO dev dev channel: reload requested for hello\n51 STATUS hello ENABLED wrapped\n");
+    assert_eq!(ack::wait(&f.layout, "hello", &base, None, Duration::from_secs(1)), ok("ENABLED", "wrapped"));
+}
+
+#[test]
+fn ack_matches_the_exact_token_when_the_runtime_logs_one() {
+    let f = common::fixture();
+    let log = p(&f, mibsdk::LOG);
+    // No usable baseline at all: only the token can tell the reload apart.
+    let base = ack::Baseline::unknown();
+    write(
+        &log,
+        b"1 INFO dev dev channel: reload requested for hello token=9-9-0\n2 STATUS hello ENABLED old\n\
+          3 INFO dev dev channel: reload requested for hello token=9-9-1\n4 STATUS hello DISABLED reloading\n",
+    );
+    assert_eq!(ack::wait(&f.layout, "hello", &base, Some("9-9-1"), Duration::ZERO), None);
+    assert_eq!(ack::wait(&f.layout, "hello", &base, None, Duration::ZERO), None);
+    append_log(&log, "5 STATUS hello BLOCKED_PERMISSIONS missing permissions: network\n");
+    assert_eq!(
+        ack::wait(&f.layout, "hello", &base, Some("9-9-1"), Duration::ZERO),
+        ok("BLOCKED_PERMISSIONS", "missing permissions: network")
+    );
+    // Another request's token after a known anchor is not ours.
+    let base = ack::Baseline::of("0 INFO x start\n");
+    write(&log, b"0 INFO x start\n1 INFO dev dev channel: reload requested for hello token=1-1-1\n2 STATUS hello ENABLED theirs\n");
+    assert_eq!(ack::wait(&f.layout, "hello", &base, Some("2-2-2"), Duration::ZERO), None);
+}
+
+/// The runtime logs the marker's token: activate waits for exactly its own request.
+#[test]
+fn plugin_activate_waits_for_its_own_token() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    install_src(&ctx, &plugin_src(dir.path(), "hello", "1.0.0", 2, &[])).unwrap();
+    running(&f);
+    let (m, log) = (marker(&f, "hello"), p(&f, mibsdk::LOG));
+    let rt = thread::spawn(move || {
+        let end = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < end {
+            if let Ok(tok) = fs::read_to_string(&m) {
+                append_log(&log, "300 INFO dev dev channel: reload requested for hello token=0-0-0\n301 STATUS hello ENABLED stale\n");
+                append_log(&log, &format!("302 INFO dev dev channel: reload requested for hello token={}\n303 STATUS hello ENABLED mine\n", tok.trim()));
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    });
+    let note = plugin_pkg::activate_with(&ctx, "hello", Duration::from_secs(3));
+    rt.join().unwrap();
+    assert_eq!(note, "loaded: ENABLED mine");
 }
 
 // ---- removal ----
@@ -899,4 +1004,122 @@ fn manifest_of_a_plugin_parses() {
     let s = plugin_src(dir.path(), "hello", "1.0.0", 2, &["vehicle.read"]);
     let m = Manifest::parse(&read(&s.join("manifest.toml"))).unwrap();
     assert_eq!(m.plugin.unwrap().permissions, vec!["vehicle.read".to_string()]);
+}
+
+// ---- fix round 1 ----
+
+/// The commit point cannot be written: a non-empty directory sits where `current` goes.
+fn block_current(f: &common::Fixture, id: &str) {
+    let cur = f.layout.pkg_dir(id).join("current");
+    let _ = fs::remove_file(&cur);
+    write(&cur.join("x"), b"");
+}
+
+/// Important 2: a failure after the deploy puts the jar and the grants line back.
+#[test]
+fn plugin_update_failing_after_the_deploy_puts_the_jar_and_grants_back() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    let sys = RecordingSys::default();
+    let mut ctx = Ctx::new(f.layout.clone(), &sys);
+    approving(&mut ctx, &["vehicle.read", "network"]);
+    let v1 = plugin_src(dir.path(), "hello", "1.0.0", 2, &["vehicle.read"]);
+    install_src(&ctx, &v1).unwrap();
+    let grants_before = grants_text(&f);
+    block_current(&f, "hello");
+    let e = err(install_src(&ctx, &plugin_src(dir.path(), "hello", "1.1.0", 2, &["vehicle.read", "network"])));
+    assert!(!e.is_empty());
+    assert_eq!(fs::read(plugin_jar(&f, "hello")).unwrap(), fs::read(v1.join("hello.jar")).unwrap());
+    assert_eq!(grants_text(&f), grants_before);
+    assert_eq!(State::load(&f.layout).unwrap().packages["hello"].version, "1.0.0");
+    // A fresh install that fails after its deploy leaves no jar and no grants line.
+    block_current(&f, "fresh");
+    let _ = err(install_src(&ctx, &plugin_src(dir.path(), "fresh", "1.0.0", 2, &["network"])));
+    assert!(!plugin_jar(&f, "fresh").exists());
+    assert!(granted(&f, "fresh").is_none());
+    assert_eq!(sys.calls.borrow().last().map(String::as_str), Some("ro /mnt/app"));
+}
+
+#[test]
+fn plugin_rollback_failing_after_the_deploy_puts_the_jar_and_grants_back() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    let sys = RecordingSys::default();
+    let mut ctx = Ctx::new(f.layout.clone(), &sys);
+    approving(&mut ctx, &["vehicle.read", "network"]);
+    install_src(&ctx, &plugin_src(dir.path(), "hello", "1.0.0", 2, &["vehicle.read", "network"])).unwrap();
+    let v2 = plugin_src(dir.path(), "hello", "1.1.0", 2, &["vehicle.read"]);
+    install_src(&ctx, &v2).unwrap();
+    let grants_before = grants_text(&f);
+    block_current(&f, "hello");
+    let _ = err(install::rollback(&ctx, "hello"));
+    assert_eq!(fs::read(plugin_jar(&f, "hello")).unwrap(), fs::read(v2.join("hello.jar")).unwrap());
+    assert_eq!(grants_text(&f), grants_before);
+    assert_eq!(State::load(&f.layout).unwrap().packages["hello"].version, "1.1.0");
+}
+
+/// Minor 3: the manifest decides, not only the index's `kind`.
+#[test]
+fn seed_skips_a_plugin_whose_index_entry_has_no_kind() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path()); // so the plugin would install
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let srcs = vec![plugin_src(dir.path(), "hello", "1.0.0", 2, &[]), common::pkg_src(f.root(), "tool", "1.0.0", "exit 0", "")];
+    let coll = common::collection(&f.sd(), "seed", &srcs);
+    let idx = coll.join("index.json");
+    let mut v: serde_json::Value = serde_json::from_str(&read(&idx)).unwrap();
+    for e in v["packages"].as_array_mut().unwrap() {
+        e.as_object_mut().unwrap().remove("kind");
+    }
+    fs::write(&idx, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+    mibpkg::supervisor::seed_once(&ctx, &[f.sd()]).unwrap();
+    let st = State::load(&f.layout).unwrap();
+    assert!(st.packages.contains_key("tool"));
+    assert!(!st.packages.contains_key("hello"));
+}
+
+/// Minor 4: a plugin package whose manifest cannot be read is removed as files, and the result
+/// says how to take the plugin itself off.
+#[test]
+fn plugin_remove_with_an_unreadable_manifest_points_at_sdk_remove() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    install_src(&ctx, &plugin_src(dir.path(), "hello", "1.0.0", 2, &[])).unwrap();
+    fs::write(f.layout.pkg_dir("hello").join("1.0.0/manifest.toml"), "garbage [").unwrap();
+    let msg = install::remove(&ctx, "hello", false).unwrap();
+    assert!(msg.contains("run: mibpkg sdk remove hello"), "{msg}");
+    assert!(!installed_pkg(&f, "hello"));
+    plugin_pkg::remove_id(&ctx, "hello", false).unwrap();
+    assert!(!plugin_jar(&f, "hello").exists());
+}
+
+/// The runtime logs `token=<tok>`: the marker's first 4096 bytes as Latin-1, only bytes
+/// 0x21-0x7e kept, at most 64 chars. mibpkg compares against the same form.
+#[test]
+fn ack_token_is_the_runtimes_sanitised_form_of_the_marker() {
+    assert_eq!(ack::token_of(b"1700000000-123-4\n"), "1700000000-123-4");
+    assert_eq!(ack::token_of(b" a b\tc\r\n\x7f\xe9d"), "abcd");
+    assert_eq!(ack::token_of(&[b'x'; 100]), "x".repeat(64));
+    let mut late = vec![b' '; 4096];
+    late.extend(b"zz");
+    assert_eq!(ack::token_of(&late), "");
+}
+
+/// mibpkg's own marker tokens round-trip exactly: printable ASCII, no spaces, at most 64 chars.
+#[test]
+fn plugin_marker_token_round_trips_through_the_runtime_form() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    install_src(&ctx, &plugin_src(dir.path(), "hello", "1.0.0", 2, &[])).unwrap();
+    running(&f);
+    plugin_pkg::activate_with(&ctx, "hello", Duration::ZERO);
+    let raw = fs::read(marker(&f, "hello")).unwrap();
+    let tok = ack::token_of(&raw);
+    assert_eq!(format!("{tok}\n").as_bytes(), raw.as_slice());
+    assert!(!tok.is_empty() && tok.len() <= 64);
 }

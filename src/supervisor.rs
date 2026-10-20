@@ -662,8 +662,7 @@ pub fn seed_once(ctx: &Ctx, media: &[PathBuf]) -> Result<()> {
         for name in names {
             // Never seeded: an SDK changes the HMI bundle list and a plugin needs an explicit
             // permission approval; both are installed by hand (the marker is still written).
-            let by_hand = coll.index.packages.iter().any(|e| e.name == name && matches!(e.kind.as_deref(), Some("sdk" | "plugin")));
-            if by_hand {
+            if by_hand(&coll, &name) {
                 println!("mibpkg: seed {name}: skipped: SDK and plugin packages are installed by hand (they change the HMI bundle list / need permission approval)");
                 continue;
             }
@@ -678,6 +677,21 @@ pub fn seed_once(ctx: &Ctx, media: &[PathBuf]) -> Result<()> {
     fs::create_dir_all(ctx.layout.state_dir())?;
     atomic_write(&marker, b"")?;
     Ok(())
+}
+
+/// A package of `coll` named `name` is an SDK or plugin package: by its index entry's `kind`, or,
+/// for an entry without one, by the manifest in its archive (an index need not carry `kind`). An
+/// archive that cannot be read is left to the install, which refuses it anyway.
+fn by_hand(coll: &crate::index::Collection, name: &str) -> bool {
+    coll.index.packages.iter().filter(|e| e.name == name).any(|e| match e.kind.as_deref() {
+        Some(_) => true,
+        None => match coll.location(e) {
+            crate::index::Location::Local(p) => {
+                crate::archive::Package::read(&p).is_ok_and(|pkg| pkg.manifest.kind() != crate::manifest::Kind::Plain)
+            }
+            crate::index::Location::Remote(_) => true,
+        },
+    })
 }
 
 /// Enable the GEM dev-mode flag once, on the first supervised boot. The install.sh call runs

@@ -282,6 +282,8 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
     let mut cfg = config::Report::default();
     let mut sdk_notes = Vec::new();
     let mut plugin_notes = Vec::new();
+    // Dropped before `rw` (declared after it): an error return undoes the plugin's deploy.
+    let mut plugin_deployed = None;
     let staged = if repair {
         Ok(())
     } else {
@@ -293,16 +295,17 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
             // From the staged copy just extracted: the jars verified are the jars written.
             sdk_notes = sdk_pkg::deploy(ctx, &pkg.manifest, &ver_dir, prev_dir.as_deref())?;
         }
-        if let Some(a) = &approval {
-            // As for the SDK: verified and installed from the staged copy.
-            plugin_notes = plugin_pkg::deploy(ctx, &pkg.manifest, &ver_dir, a)?;
-        }
         cfg = config::import(layout, media, &pkg.manifest, ctx.config_choice)?;
         if let Some(s) = &pkg.manifest.scripts.post_install {
             (ctx.progress)("running post_install");
             ctx.sys
                 .run_script(&ver_dir.join(s), &[], &script_env(layout, name, &ver_dir, &version), SCRIPT_TIMEOUT)
                 .context("post_install script failed")?;
+        }
+        if let Some(a) = &approval {
+            // Last, so little can fail after it; until the commit below, an error puts the jar and
+            // grants line back. As for the SDK: verified and installed from the staged copy.
+            plugin_deployed = Some(plugin_pkg::deploy(ctx, &pkg.manifest, &ver_dir, a)?);
         }
         Ok(())
         })()
@@ -333,6 +336,9 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
     );
     state.collections.insert(coll_id.to_string(), coll_name.to_string());
     state.save(layout)?;
+    if let Some(d) = plugin_deployed.take() {
+        plugin_notes = d.commit();
+    }
 
     let mut msg = match &old_version {
         _ if repair => format!("repaired {name} {} (an earlier install was interrupted)", version),
@@ -491,7 +497,10 @@ pub fn remove(ctx: &Ctx, name: &str, purge: bool) -> Result<String> {
     if !state.packages.contains_key(name) {
         bail!("{name} is not installed");
     }
-    let is_plugin = current_manifest(layout, name).is_ok_and(|m| m.kind() == Kind::Plugin);
+    let manifest = current_manifest(layout, name);
+    let is_plugin = manifest.as_ref().is_ok_and(|m| m.kind() == Kind::Plugin);
+    // Unreadable manifest: if a plugin of that id is on the unit, say how to take it off.
+    let plugin_left = manifest.is_err() && plugin_pkg::on_unit(layout, name);
     let rw = ctx.mounts.rw("/mnt/app")?;
     cleanup_stale(layout)?;
     // The SDK first puts the stock bundle list back (or refuses, changing nothing). A mibsdk whose
@@ -534,6 +543,11 @@ pub fn remove(ctx: &Ctx, name: &str, purge: bool) -> Result<String> {
         });
     }
     let mut msg = format!("removed {name}{}", if purge { " and its config" } else { "" });
+    if plugin_left {
+        msg.push_str(&format!(
+            "\nthe manifest of {name} could not be read, but its plugin is still on the unit; to take it off, run: mibpkg sdk remove {name}"
+        ));
+    }
     if sdk_note.is_some() {
         // Only now: until the package is recorded as removed, a rerun needs the stock backups.
         if let Err(e) = sdk_pkg::forget_backups(ctx) {
@@ -579,9 +593,11 @@ pub fn rollback(ctx: &Ctx, name: &str) -> Result<String> {
         // On failure this deploys the current version again; `current` is not switched.
         sdk_notes = sdk_pkg::deploy(ctx, &m, &prev_dir, current_dir(layout, name).as_deref())?;
     }
-    if let Some(a) = &approval {
-        plugin_notes = plugin_pkg::deploy(ctx, &m, &prev_dir, a)?;
-    }
+    // Until the commit below, an error puts the current jar and grants line back.
+    let plugin_deployed = match &approval {
+        Some(a) => Some(plugin_pkg::deploy(ctx, &m, &prev_dir, a)?),
+        None => None,
+    };
     (ctx.progress)(&format!("switching {name} back to {prev}"));
     atomic_write(&layout.pkg_dir(name).join("current"), prev.as_bytes())?;
     bootd::write_for_package(layout, name, &bootd::entries(&m))?;
@@ -594,6 +610,9 @@ pub fn rollback(ctx: &Ctx, name: &str) -> Result<String> {
     entry.services = m.services.iter().map(|s| format!("{name}.{}", s.name)).collect();
     entry.uses_scripts = m.uses_scripts();
     state.save(layout)?;
+    if let Some(d) = plugin_deployed {
+        plugin_notes = d.commit();
+    }
     control::request_reload(layout)?;
     let suffix = if kind == Kind::Sdk { SDK_START } else { "" };
     let notes: String = sdk_notes.iter().map(|n| format!("\n{n}")).collect();
