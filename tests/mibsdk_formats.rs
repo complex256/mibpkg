@@ -476,3 +476,311 @@ fn put_success_removes_a_temp_left_by_a_no_op_rename() {
     assert_eq!(ops.renames.borrow().len(), 1);
     assert!(!temp_of(&ctx, TARGET).exists());
 }
+
+// ---- permission catalog, grants and toggles files, approval, ledger v2 ----
+
+use mibpkg::mibsdk::{catalog, grants, ledger, propsline, toggles};
+use std::collections::BTreeSet;
+
+/// Writes `text` at the on-unit path `abs` inside the fixture, creating its directory.
+fn write_at(f: &common::Fixture, abs: &str, text: &str) {
+    let p = f.layout.p(abs);
+    fs::create_dir_all(p.parent().unwrap()).unwrap();
+    fs::write(p, text).unwrap();
+}
+
+fn set(ids: &[&str]) -> BTreeSet<String> {
+    ids.iter().map(|s| s.to_string()).collect()
+}
+
+fn strs(ids: &[&str]) -> Vec<String> {
+    ids.iter().map(|s| s.to_string()).collect()
+}
+
+// was: GRANTS_PY set (cmd_grant)
+#[test]
+fn propsline_set_rewrites_one_line_and_keeps_others_and_comments() {
+    let text = "# hello=commented\nhello=a\nother = x,y\r\nhello=again\n  hello  =  b\n";
+    assert_eq!(
+        propsline::set(text, "hello", "vehicle.read,network"),
+        "# hello=commented\nhello=vehicle.read,network\nother = x,y\r\n"
+    );
+}
+
+#[test]
+fn propsline_set_appends_when_absent() {
+    assert_eq!(propsline::set("", "hello", "vehicle.read"), "hello=vehicle.read\n");
+    assert_eq!(propsline::set("other=x", "hello", ""), "other=x\nhello=\n", "the last line gains its newline");
+    assert_eq!(propsline::set("bike-rack=x\n", "bike", "y"), "bike-rack=x\nbike=y\n");
+}
+
+// was: test_leaves_a_plugin_with_a_longer_id_alone
+#[test]
+fn propsline_drop_exact_key_only() {
+    let text = "bike=vehicle.read\nbike-rack=vehicle.read\nbike=twice\n";
+    assert_eq!(propsline::drop(text, "bike"), ("bike-rack=vehicle.read\n".to_string(), true));
+    assert_eq!(propsline::drop(text, "bik"), (text.to_string(), false));
+    assert_eq!(propsline::drop("bike=x\n", "bike"), (String::new(), true), "no lines left: empty output");
+    assert_eq!(propsline::drop("", "bike"), (String::new(), false));
+}
+
+#[test]
+fn propsline_comment_line_is_never_a_key() {
+    let text = "#hello=x\n   # hello=y\nhello\n";
+    assert_eq!(propsline::drop(text, "hello"), (text.to_string(), false), "a line without = has no key either");
+    assert_eq!(propsline::set(text, "#hello", "z"), format!("{text}#hello=z\n"));
+}
+
+// was: test_drops_the_plugins_off_switch
+#[test]
+fn toggles_drop_removes_only_that_off_line() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    assert!(!toggles::drop(&ctx, "hello").unwrap(), "no file: nothing dropped");
+    assert!(!f.layout.p(mibsdk::TOGGLES).exists(), "and nothing written");
+
+    write_at(&f, mibsdk::TOGGLES, "hello.off=true\nhello-2.off=true\nother.off=true\n");
+    assert!(toggles::drop(&ctx, "hello").unwrap());
+    assert_eq!(fs::read_to_string(f.layout.p(mibsdk::TOGGLES)).unwrap(), "hello-2.off=true\nother.off=true\n");
+    assert!(!toggles::drop(&ctx, "hello").unwrap());
+    assert!(sys.calls.borrow().is_empty(), "PERSIST needs no remount: {:?}", sys.calls.borrow());
+}
+
+#[test]
+fn toggles_off_ids_reads_off_true_lines() {
+    let f = common::fixture();
+    assert!(toggles::off_ids(&f.layout).is_empty(), "no file: every plugin on");
+    write_at(
+        &f,
+        mibsdk::TOGGLES,
+        "hello.off=true\n bike-rack.off = true \nother.off=false\n# gone.off=true\nBad_Id.off=true\nx.off=true\nnot-a-toggle=true\n",
+    );
+    assert_eq!(toggles::off_ids(&f.layout), set(&["bike-rack", "hello"]));
+
+    // Unreadable reads as empty, as UserToggles does.
+    fs::remove_file(f.layout.p(mibsdk::TOGGLES)).unwrap();
+    fs::create_dir(f.layout.p(mibsdk::TOGGLES)).unwrap();
+    assert!(toggles::off_ids(&f.layout).is_empty());
+}
+
+#[test]
+fn toggles_off_ids_falls_back_to_the_temp_file() {
+    // UserToggles: the runtime died between delete and rename; the temp file is the file.
+    let f = common::fixture();
+    write_at(&f, &format!("{}.tmp", mibsdk::TOGGLES), "hello.off=true\n");
+    assert_eq!(toggles::off_ids(&f.layout), set(&["hello"]));
+}
+
+// was: test_removes_the_jar_and_grant_and_requests_a_reload, test_leaves_a_plugin_with_a_longer_id_alone
+#[test]
+fn grants_set_and_drop_line_write_only_that_plugins_line() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    assert!(grants::read(&f.layout).unwrap().is_empty(), "missing file = no grants");
+    write_at(&f, mibsdk::GRANTS, "# kept\nbike-rack=vehicle.read\n");
+    let _rw = ctx.mounts.rw("/mnt/app").unwrap();
+
+    grants::set(&ctx, "bike", &set(&["vehicle.read", "hooks.parking"])).unwrap();
+    assert_eq!(
+        fs::read_to_string(f.layout.p(mibsdk::GRANTS)).unwrap(),
+        "# kept\nbike-rack=vehicle.read\nbike=hooks.parking,vehicle.read\n"
+    );
+    let g = grants::read(&f.layout).unwrap();
+    assert_eq!(g["bike"], set(&["hooks.parking", "vehicle.read"]));
+    assert_eq!(g["bike-rack"], set(&["vehicle.read"]));
+    assert_eq!(g.len(), 2, "comments are not plugins: {g:?}");
+
+    grants::set(&ctx, "bike", &BTreeSet::new()).unwrap();
+    assert!(grants::read(&f.layout).unwrap()["bike"].is_empty(), "an empty list revokes all");
+
+    assert!(grants::drop_line(&ctx, "bike").unwrap());
+    assert!(!grants::drop_line(&ctx, "bike").unwrap());
+    assert_eq!(fs::read_to_string(f.layout.p(mibsdk::GRANTS)).unwrap(), "# kept\nbike-rack=vehicle.read\n");
+}
+
+#[test]
+fn grants_read_parses_like_java_properties_and_unreadable_is_err() {
+    let f = common::fixture();
+    write_at(&f, mibsdk::GRANTS, "! bang comment\n\n  hello = vehicle.read , , network \nhello=ui.slot.carmenu\n");
+    let g = grants::read(&f.layout).unwrap();
+    assert_eq!(g.len(), 1);
+    assert_eq!(g["hello"], set(&["ui.slot.carmenu"]), "the last line wins");
+
+    fs::remove_file(f.layout.p(mibsdk::GRANTS)).unwrap();
+    fs::create_dir(f.layout.p(mibsdk::GRANTS)).unwrap();
+    assert!(grants::read(&f.layout).is_err());
+}
+
+#[test]
+fn plan_fresh_install_asks_everything() {
+    let a = grants::plan(&strs(&["vehicle.read", "network"]), None, &BTreeSet::new());
+    assert_eq!(a.ask, strs(&["vehicle.read", "network"]), "in declared order");
+    assert_eq!(a.grant, set(&["network", "vehicle.read"]));
+    assert!(grants::missing(&strs(&["vehicle.read", "network"]), &a.grant).is_empty());
+
+    // A stale grants line of a pushed jar is no approval of a fresh package install.
+    let a = grants::plan(&strs(&["vehicle.read"]), None, &set(&["vehicle.read"]));
+    assert_eq!(a.ask, strs(&["vehicle.read"]));
+}
+
+#[test]
+fn plan_update_asks_only_new_and_keeps_revocation() {
+    let a = grants::plan(&strs(&["a", "b", "c"]), Some(&strs(&["a", "b"])), &set(&["b"]));
+    assert_eq!(a.ask, strs(&["c"]));
+    assert_eq!(a.grant, set(&["b", "c"]));
+    assert_eq!(grants::missing(&strs(&["a", "b", "c"]), &a.grant), strs(&["a"]));
+}
+
+#[test]
+fn plan_dropped_permission_is_removed_from_grant() {
+    let a = grants::plan(&strs(&["a"]), Some(&strs(&["a", "b"])), &set(&["a", "b"]));
+    assert!(a.ask.is_empty());
+    assert_eq!(a.grant, set(&["a"]));
+}
+
+#[test]
+fn catalog_parses_the_sdk_permissions_json() {
+    let json = fs::read_to_string(Path::new(FIXTURES).join("permissions.json")).unwrap();
+    let cat = catalog::parse(&json).unwrap();
+    let ids: Vec<&str> = cat.iter().map(|p| p.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "vehicle.read",
+            "vehicle.parking.write",
+            "hooks.parking",
+            "ui.slot.carmenu",
+            "ui.slot.statusbar",
+            "network",
+            "platform.unrestricted"
+        ]
+    );
+    let loud: Vec<&str> = cat.iter().filter(|p| p.loud).map(|p| p.id.as_str()).collect();
+    assert_eq!(loud, ["platform.unrestricted"]);
+    assert_eq!(cat[0].group, "Vehicle");
+
+    assert!(catalog::parse(&json.replace("\"format\":1", "\"format\":2")).is_err(), "unknown format");
+    assert!(catalog::parse(&json.replace("\"network\"", "\"net work\"")).is_err(), "bad permission id");
+    assert!(catalog::parse("{").is_err());
+
+    // installed(): BASE/permissions.json, None when absent or unparsable.
+    let f = common::fixture();
+    assert!(catalog::installed(&f.layout).is_none());
+    write_at(&f, mibsdk::PERMISSIONS, &json);
+    assert_eq!(catalog::installed(&f.layout).unwrap().len(), 7);
+    write_at(&f, mibsdk::PERMISSIONS, "not json");
+    assert!(catalog::installed(&f.layout).is_none());
+}
+
+#[test]
+fn catalog_describe_marks_loud_and_unknown() {
+    let json = fs::read_to_string(Path::new(FIXTURES).join("permissions.json")).unwrap();
+    let cat = catalog::parse(&json).unwrap();
+    let ids = strs(&["vehicle.read", "platform.unrestricted", "teleport"]);
+    assert_eq!(
+        catalog::describe(Some(&cat), &ids),
+        [
+            "Read vehicle state: ignition, gear, parking sensors (vehicle.read)",
+            "WARNING: Unrestricted: may use reflection and stock HMI classes; the SDK cannot contain it (platform.unrestricted)",
+            "teleport (unknown to the installed SDK)",
+        ]
+    );
+    assert_eq!(catalog::describe(None, &strs(&["vehicle.read"])), ["vehicle.read (unknown to the installed SDK)"]);
+}
+
+const ENTRY: &str = "parking.soundDirections=bike-rack|PERSISTENT|F1R1L1X1|F0R0L0X0|A\n";
+const OTHER: &str = "parking.soundLevel=bike-rack|PERSISTENT|F1R1L1X1|F0R0L0X0|A\n";
+
+#[test]
+fn ledger_reads_v2_state_and_legacy_four_field_as_held() {
+    let f = common::fixture();
+    assert!(ledger::read(&f.layout).unwrap().is_empty(), "no ledger at all");
+    write_at(&f, mibsdk::LEDGER, "a.key=bike|PERSISTENT|F1|F0|R\n\n  \nb.key=bike-rack|PERSISTENT|F1|F0\n");
+    let e = ledger::read(&f.layout).unwrap();
+    assert_eq!(e.len(), 2, "blank lines are skipped: {e:?}");
+    assert_eq!((e[0].key.as_str(), e[0].plugin.as_str(), e[0].state), ("a.key", "bike", 'R'));
+    assert_eq!(e[0].line, "a.key=bike|PERSISTENT|F1|F0|R");
+    assert_eq!(e[0].source, f.layout.p(mibsdk::LEDGER));
+    assert_eq!((e[1].key.as_str(), e[1].plugin.as_str(), e[1].state), ("b.key", "bike-rack", 'A'));
+}
+
+// was: test_refuses_on_an_override_left_in_the_old_ledger_location
+#[test]
+fn ledger_reads_old_base_ledger_too() {
+    let f = common::fixture();
+    write_at(&f, mibsdk::OLD_LEDGER, ENTRY);
+    let e = ledger::read(&f.layout).unwrap();
+    assert_eq!(e.len(), 1);
+    assert_eq!(e[0].line, ENTRY.trim());
+    assert_eq!(e[0].source, f.layout.p(mibsdk::OLD_LEDGER));
+
+    write_at(&f, mibsdk::LEDGER, OTHER);
+    let lines: Vec<String> = ledger::read(&f.layout).unwrap().into_iter().map(|e| e.line).collect();
+    assert_eq!(lines, [OTHER.trim(), ENTRY.trim()], "PERSIST first, then the old ledger");
+}
+
+// was: test_leaves_a_plugin_with_a_longer_id_alone
+#[test]
+fn ledger_of_matches_exact_id() {
+    let f = common::fixture();
+    write_at(&f, mibsdk::LEDGER, "a.key=bike|PERSISTENT|F1|F0|R\nb.key=bike-rack|PERSISTENT|F1|F0|A\n");
+    let e = ledger::read(&f.layout).unwrap();
+    let bike: Vec<&str> = ledger::of(&e, "bike").iter().map(|e| e.line.as_str()).collect();
+    assert_eq!(bike, ["a.key=bike|PERSISTENT|F1|F0|R"]);
+    assert_eq!(ledger::of(&e, "bike-rack").len(), 1);
+    assert!(ledger::of(&e, "bik").is_empty());
+}
+
+#[test]
+fn ledger_unparsable_line_still_counts() {
+    let f = common::fixture();
+    write_at(&f, mibsdk::LEDGER, "garbage\nk=p|PERSISTENT|x\nk2=p|PERSISTENT|F1|F0|Z\n=|||\n");
+    let e = ledger::read(&f.layout).unwrap();
+    assert_eq!(e.len(), 4, "{e:?}");
+    for x in &e {
+        assert_eq!((x.plugin.as_str(), x.state), ("", 'A'), "{x:?}");
+    }
+    assert_eq!(e[0].line, "garbage");
+}
+
+#[test]
+fn ledger_read_unreadable_is_err() {
+    let f = common::fixture();
+    fs::create_dir_all(f.layout.p(mibsdk::LEDGER)).unwrap();
+    assert!(ledger::read(&f.layout).is_err(), "fail closed");
+}
+
+// was: test_old_ledger_entries_are_merged_into_an_existing_ledger, test_old_ledger_entry_that_conflicts_is_kept_where_it_is
+#[test]
+fn ledger_merge_keeps_both_and_reports_conflicts() {
+    assert_eq!(ledger::merge(ENTRY, OTHER), (format!("{OTHER}{ENTRY}"), vec![]));
+    assert_eq!(ledger::merge(ENTRY, ""), (ENTRY.to_string(), vec![]));
+    assert_eq!(
+        ledger::merge(ENTRY, OTHER.trim_end()),
+        (format!("{OTHER}{ENTRY}"), vec![]),
+        "the current ledger gains its final newline"
+    );
+
+    let newer = "parking.soundDirections=bike-rack|PERSISTENT|F0R0L0X0|F1R1L1X1|A\n";
+    let (new, conflicts) = ledger::merge(&format!("{ENTRY}{OTHER}"), newer);
+    assert_eq!(new, format!("{newer}{OTHER}"), "the newer value is kept, the rest merged");
+    assert_eq!(conflicts, [ENTRY.trim()]);
+
+    // Same key and value (whitespace aside) is no conflict; a repeated old key is merged once;
+    // an unparsable old line is an entry too.
+    let (new, conflicts) = ledger::merge(&format!("  {ENTRY}garbage\ngarbage\n\n"), ENTRY);
+    assert_eq!(new, format!("{ENTRY}garbage\n"));
+    assert!(conflicts.is_empty());
+}
+
+#[test]
+fn ledger_contains_all() {
+    let newer = "parking.soundDirections=bike-rack|PERSISTENT|F0R0L0X0|F1R1L1X1|A\n";
+    assert!(ledger::contains_all(ENTRY, &format!("{OTHER}{ENTRY}")));
+    assert!(ledger::contains_all(&format!(" {ENTRY}\n"), ENTRY), "trimmed lines compare");
+    assert!(ledger::contains_all("", ""));
+    assert!(!ledger::contains_all(ENTRY, newer));
+    assert!(!ledger::contains_all(ENTRY, OTHER));
+}

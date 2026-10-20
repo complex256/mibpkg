@@ -1,7 +1,12 @@
 //! The mibsdk plugin SDK on the unit: its paths, whether it is installed and running, and the
 //! verified writes every change to its files goes through. Nothing else in mibpkg names an SDK
 //! path.
+pub mod catalog;
+pub mod grants;
+pub mod ledger;
+pub mod propsline;
 pub mod stamp;
+pub mod toggles;
 
 use crate::ctx::Ctx;
 use crate::fsutil;
@@ -33,6 +38,16 @@ pub const VERSION_INFO: &str = "/ifs/version_info.txt";
 /// The SDK runtime's log; it exists once the runtime has started this boot.
 pub const LOG: &str = "/tmp/mibsdk.log";
 pub const SDK_PKG: &str = crate::manifest::SDK_PACKAGE;
+/// The installed SDK's permission catalog (`api/permissions.json`).
+pub const PERMISSIONS: &str = "/mnt/app/eso/hmi/lsd/mibsdk/permissions.json";
+/// `<id>=<perm>,<perm>` per plugin, read by the runtime's `Grants.load`.
+pub const GRANTS: &str = "/mnt/app/eso/hmi/lsd/mibsdk/grants.properties";
+/// The user's on/off switches: one `<id>.off=true` line per plugin switched off (`UserToggles`).
+pub const TOGGLES: &str = "/mnt/persist/mibsdk/plugins.properties";
+/// `OverrideLedger`'s file: the overrides of vehicle state the runtime still has to restore.
+pub const LEDGER: &str = "/mnt/persist/mibsdk/ledger.properties";
+/// Where installs from before the move to PERSIST kept the ledger.
+pub const OLD_LEDGER: &str = "/mnt/app/eso/hmi/lsd/mibsdk/ledger.properties";
 /// boot.state after a (re)install: no unhealthy boots counted against the new runtime.
 pub const BOOT_STATE_RESET: &str = "unhealthyBoots=0\nlastShutdownClean=true\nwrapBoots=0\n";
 
