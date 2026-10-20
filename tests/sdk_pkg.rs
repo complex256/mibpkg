@@ -1279,3 +1279,181 @@ fn uninstall_self_refuses_while_mibsdk_installed() {
     let e = format!("{:#}", run(&f2).unwrap_err());
     assert!(e.contains("bike-rack"), "{e}");
 }
+
+// ---- fix round 1 ----
+
+/// A failure after the bundle list was restored keeps both backups and the package, and the
+/// retry finishes the removal (Important 1).
+#[test]
+fn sdk_remove_failure_after_restoring_bundles_keeps_backups_and_a_retry_finishes() {
+    let (f, _dir) = installed(None);
+    let jar = p(&f, &format!("{}/mibsdk-adapter-hqc.jar", mibsdk::JARS));
+    fs::remove_file(&jar).unwrap();
+    write(&jar.join("blocker"), b"x"); // a non-empty directory: removing it as a file fails
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    assert!(install::remove(&ctx, "mibsdk", false).is_err());
+    assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), stock(), "restored first");
+    assert!(backups::has_backup(&f.layout, mibsdk::BUNDLES), "the stock backup is not forgotten");
+    assert!(backups::has_backup(&f.layout, mibsdk::MARKER));
+    assert!(State::load(&f.layout).unwrap().packages.contains_key("mibsdk"));
+    fs::remove_dir_all(&jar).unwrap();
+    let msg = install::remove(&ctx, "mibsdk", false).unwrap();
+    assert!(msg.ends_with(REBOOT_REMOVE), "{msg}");
+    assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), stock());
+    assert!(!p(&f, mibsdk::MARKER).exists());
+    assert!(!backups::has_backup(&f.layout, mibsdk::BUNDLES));
+    assert!(!backups::has_backup(&f.layout, mibsdk::MARKER));
+    assert!(!State::load(&f.layout).unwrap().packages.contains_key("mibsdk"));
+}
+
+/// Interrupted after the SDK files and the package dir went but before the state was saved:
+/// the retry finishes (live is stock, jars gone, manifest gone).
+#[test]
+fn sdk_remove_retry_after_the_package_files_went_finishes() {
+    let (f, _dir) = installed(None);
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    {
+        let _rw = ctx.mounts.rw("/mnt/app").unwrap();
+        sdk_pkg::undeploy(&ctx, false).unwrap();
+    }
+    assert!(backups::has_backup(&f.layout, mibsdk::BUNDLES), "undeploy leaves forgetting to its caller");
+    fs::remove_dir_all(f.layout.pkg_dir("mibsdk")).unwrap();
+    install::remove(&ctx, "mibsdk", false).unwrap();
+    assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), stock());
+    assert!(!backups::has_backup(&f.layout, mibsdk::BUNDLES));
+    assert!(!State::load(&f.layout).unwrap().packages.contains_key("mibsdk"));
+}
+
+/// StdOps, except that reading the backup of the bundle list returns other bytes.
+struct BadBackupRead;
+
+impl FileOps for BadBackupRead {
+    fn write(&self, p: &Path, b: &[u8], mode: u32) -> io::Result<()> {
+        StdOps.write(p, b, mode)
+    }
+    fn read(&self, p: &Path) -> io::Result<Vec<u8>> {
+        let mut b = StdOps.read(p)?;
+        if p.to_string_lossy().contains("state/backups") {
+            b.extend(b"corrupted");
+        }
+        Ok(b)
+    }
+    fn rename(&self, a: &Path, b: &Path) -> io::Result<()> {
+        StdOps.rename(a, b)
+    }
+    fn remove(&self, p: &Path) -> io::Result<()> {
+        StdOps.remove(p)
+    }
+}
+
+/// A backup that does not match the stock file is dropped and the live bundle list is never
+/// written (Important 2).
+#[test]
+fn sdk_deploy_backup_mismatch_leaves_the_live_bundle_list_untouched() {
+    use std::os::unix::fs::MetadataExt;
+    let (f, dir) = unit();
+    let src = sdk_src(dir.path(), "0.1.0");
+    let m = Manifest::parse(&fs::read_to_string(src.join("manifest.toml")).unwrap()).unwrap();
+    let ino = fs::metadata(p(&f, mibsdk::BUNDLES)).unwrap().ino();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let e = {
+        let _rw = ctx.mounts.rw("/mnt/app").unwrap();
+        format!("{:#}", sdk_pkg::deploy_with(&ctx, &m, &src, None, &BadBackupRead).unwrap_err())
+    };
+    assert!(e.contains("does not match the stock file"), "{e}");
+    assert_eq!(fs::metadata(p(&f, mibsdk::BUNDLES)).unwrap().ino(), ino, "the live bundle list was rewritten");
+    assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), stock());
+    assert!(!backups::has_backup(&f.layout, mibsdk::BUNDLES), "the bad backup is dropped");
+    assert!(!backups::has_backup(&f.layout, mibsdk::MARKER));
+    assert!(p(&f, mibsdk::MARKER).exists());
+    assert!(sdk_jars_present(&f).is_empty());
+}
+
+/// An adoption whose deploy fails puts the unit back to stock and says so (Minor 1); a fresh
+/// install's undo never suggests removing a package that is not installed.
+#[test]
+fn sdk_adoption_failure_returns_the_unit_to_stock_and_says_so() {
+    let (f, dir) = unit();
+    write(&p(&f, mibsdk::BUNDLES), &bundles::generate(&stock(), &spec(), false).unwrap());
+    let st = format!("{}/stock", mibsdk::BASE);
+    write(&p(&f, &format!("{st}/bundles_dsitracer_enabled.properties")), &stock());
+    write(&p(&f, &format!("{st}/bundles.mode")), b"777\n");
+    write(&p(&f, &format!("{st}/tracer.was")), b"false\n");
+    fs::create_dir_all(p(&f, &format!("{}/mibsdk-adapter-hqc.jar", mibsdk::JARS))).unwrap();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let e = err(install_sdk(&ctx, dir.path(), "0.1.0"));
+    assert!(e.contains("the unit was returned to the stock bundle list"), "{e}");
+    assert!(!e.contains("remove mibsdk"), "{e}");
+    assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), stock());
+    assert_eq!(mode(&p(&f, mibsdk::BUNDLES)), 0o777);
+    assert!(!p(&f, mibsdk::MARKER).exists(), "tracer.was said it was absent");
+    assert!(!backups::has_backup(&f.layout, mibsdk::BUNDLES));
+
+    let (f, dir) = unit();
+    fs::create_dir_all(p(&f, &format!("{}/mibsdk-adapter-hqc.jar", mibsdk::JARS))).unwrap();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let e = err(install_sdk(&ctx, dir.path(), "0.1.0"));
+    assert!(e.contains("the install was undone"), "{e}");
+    assert!(!e.contains("remove mibsdk"), "{e}");
+}
+
+/// Deploy notes (adoption, the ledger-conflict WARNING) reach the result (Minor 3).
+#[test]
+fn sdk_install_result_carries_the_deploy_notes() {
+    let (f, dir) = unit();
+    write(&p(&f, mibsdk::BUNDLES), &bundles::generate(&stock(), &spec(), true).unwrap());
+    let st = format!("{}/stock", mibsdk::BASE);
+    write(&p(&f, &format!("{st}/bundles_dsitracer_enabled.properties")), &stock());
+    write(&p(&f, &format!("{st}/tracer.was")), b"true\n");
+    let newer = "parking.soundDirections=bike-rack|PERSISTENT|F0R0L0X0|F1R1L1X1|A\n";
+    write(&p(&f, mibsdk::LEDGER), newer.as_bytes());
+    write(&p(&f, mibsdk::OLD_LEDGER), ENTRY.as_bytes());
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let msg = install_sdk(&ctx, dir.path(), "0.1.0").unwrap();
+    assert!(msg.starts_with(&format!("installed mibsdk 0.1.0{REBOOT_START}")), "{msg}");
+    assert!(msg.contains("using the stock mode 777"), "{msg}");
+    assert!(msg.contains("adopted the mibsdk-dev stock backup"), "{msg}");
+    assert!(msg.contains(&format!("WARNING: kept {}: these overrides conflict with", mibsdk::OLD_LEDGER)), "{msg}");
+    assert!(msg.contains(&format!("\n  {}", ENTRY.trim())), "{msg}");
+}
+
+/// With --force, the ledger WARNING comes first, then the pushed-plugins one (Minor 4).
+#[test]
+fn sdk_force_remove_puts_the_ledger_warning_first() {
+    let (f, _dir) = installed(Some(ENTRY));
+    write(&p(&f, &format!("{}/plugins/hello.jar", mibsdk::BASE)), b"pushed");
+    let sys = RecordingSys::default();
+    let mut ctx = Ctx::new(f.layout.clone(), &sys);
+    ctx.force = true;
+    let msg = install::remove(&ctx, "mibsdk", false).unwrap();
+    let lines: Vec<&str> = msg.lines().collect();
+    assert_eq!(lines[0], "WARNING: --force: uninstalling while these overrides of vehicle state are still in force:");
+    assert!(lines[2].starts_with("WARNING: nothing will restore"), "{msg}");
+    assert_eq!(lines[3], "WARNING: --force: uninstalling while these pushed plugins remain: hello");
+}
+
+/// /mnt/app removals re-assert read-write first and retry once (Minor 5).
+#[test]
+fn on_app_reasserts_and_retries_once() {
+    let (f, _dir) = unit();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let _rw = ctx.mounts.rw("/mnt/app").unwrap();
+    let n = std::cell::Cell::new(0);
+    sdk_pkg::on_app(&ctx, "test", &mut || {
+        n.set(n.get() + 1);
+        if n.get() == 1 { Err(io::Error::other("read-only file system")) } else { Ok(()) }
+    })
+    .unwrap();
+    assert_eq!(n.get(), 2);
+    let rw = sys.calls.borrow().iter().filter(|c| *c == "rw /mnt/app").count();
+    assert_eq!(rw, 3, "the hold, then a re-assert before each attempt: {:?}", sys.calls.borrow());
+    let e = format!("{:#}", sdk_pkg::on_app(&ctx, "removing x", &mut || Err(io::Error::other("nope"))).unwrap_err());
+    assert!(e.contains("removing x"), "{e}");
+}

@@ -303,6 +303,8 @@ struct Plan {
     dir: PathBuf,
     adopt: Option<Adopt>,
     stock: Vec<u8>,
+    /// The stock list's mode (the backup's, the recorded one, or the live file's).
+    stock_mode: u32,
     bundles: Vec<u8>,
     props: Vec<u8>,
 }
@@ -334,9 +336,10 @@ fn plan(ctx: &Ctx, m: &Manifest, dir: &Path, notes: &mut Vec<String>) -> Result<
             l.p(MARKER).exists()
         }
     };
-    let (stock, adopt, tracer) = if backups::has_backup(l, BUNDLES) {
+    let (stock, stock_mode, adopt, tracer) = if backups::has_backup(l, BUNDLES) {
         let bk = backups::backup_path(l, BUNDLES);
-        (fs::read(&bk).with_context(|| format!("the stock backup {} is unreadable", bk.display()))?, None, marker_tracer())
+        let stock = fs::read(&bk).with_context(|| format!("the stock backup {} is unreadable", bk.display()))?;
+        (stock, mode_of(&bk)?, None, marker_tracer())
     } else if l.p(&format!("{st}/tracer.was")).exists() {
         let was = read_word(l, &format!("{st}/tracer.was"))?;
         let tracer_was = match was.as_str() {
@@ -359,63 +362,110 @@ fn plan(ctx: &Ctx, m: &Manifest, dir: &Path, notes: &mut Vec<String>) -> Result<
         };
         let src = format!("{st}/bundles_dsitracer_enabled.properties");
         let stock = fs::read(l.p(&src)).with_context(|| format!("the stock backup {src} is unreadable; nothing changed"))?;
-        (stock, Some(Adopt { tracer_was, mode }), tracer_was)
+        (stock, mode, Some(Adopt { tracer_was, mode }), tracer_was)
     } else {
         let live = fs::read(l.p(BUNDLES)).with_context(|| format!("cannot read {BUNDLES}; nothing changed"))?;
         if live.windows(6).any(|w| w == b"mibsdk") {
             bail!("{BUNDLES} already references mibsdk but no stock backup exists; restore the stock file by hand; nothing changed");
         }
-        (live, None, marker_tracer())
+        (live, mode_of(&l.p(BUNDLES))?, None, marker_tracer())
     };
     // check_hmicar before generate (its HMICar= reading is the stricter one).
     bundles::check_hmicar(&stock, "the stock bundles file", &[&hmicar_lines(&spec).0])?;
     let generated = bundles::generate(&stock, &spec, tracer).map_err(|e| anyhow!("{e:#}; nothing changed"))?;
     let props = bundles::sdk_properties(&spec, tracer);
-    Ok(Plan { dir: dir.to_path_buf(), adopt, stock, bundles: generated, props, spec })
+    Ok(Plan { dir: dir.to_path_buf(), adopt, stock, stock_mode, bundles: generated, props, spec })
 }
 
-/// Record the stock bundle list and marker: adopt `mibsdk-dev`'s backup, or back up the live files.
-fn back_up(ctx: &Ctx, plan: &Plan, notes: &mut Vec<String>) -> Result<()> {
+/// Run `f`, a write or removal under /mnt/app, judged by its result: re-assert read-write first
+/// (another process may have remounted it read-only), and on failure re-assert and retry once, as
+/// `put` does. The caller holds /mnt/app read-write.
+#[doc(hidden)]
+pub fn on_app<E: Into<anyhow::Error>>(ctx: &Ctx, what: &str, f: &mut dyn FnMut() -> std::result::Result<(), E>) -> Result<()> {
+    ctx.mounts.reassert("/mnt/app").with_context(|| what.to_string())?;
+    let first: anyhow::Error = match f() {
+        Ok(()) => return Ok(()),
+        Err(e) => e.into(),
+    };
+    ctx.mounts
+        .reassert("/mnt/app")
+        .with_context(|| format!("{what} failed ({first:#}); re-asserting read-write failed"))?;
+    f().map_err(|e| anyhow!("{what}: {:#} (and before the retry: {first:#})", e.into()))
+}
+
+/// Remove the on-unit file `abs` under /mnt/app if it is there.
+fn remove_on_app(ctx: &Ctx, abs: &str) -> Result<()> {
+    let p = ctx.layout.p(abs);
+    on_app(ctx, &format!("cannot remove {abs}"), &mut || remove_if_present(&p))
+}
+
+/// What a deploy has done so far, for the undo of a fresh install.
+#[derive(Default)]
+struct Done {
+    /// The bundle-list / marker backups did not exist before this run.
+    created_bundles_backup: bool,
+    created_marker_backup: bool,
+    /// The bundle-list backup was read back equal to the stock bytes of the plan.
+    backup_verified: bool,
+    /// The marker or the bundle list may have been written.
+    activating: bool,
+    /// Jars this run put into JARS.
+    jars: Vec<String>,
+}
+
+/// Record the stock bundle list and marker: adopt `mibsdk-dev`'s backup, or back up the live
+/// files. The backup is read back (through `ops`) and must equal the plan's stock bytes.
+fn back_up(ctx: &Ctx, plan: &Plan, ops: &dyn FileOps, done: &mut Done, notes: &mut Vec<String>) -> Result<()> {
     let l = &ctx.layout;
     let bk = backups::backup_path(l, BUNDLES);
-    if let Some(a) = &plan.adopt {
-        let st = stock_dir();
-        crate::fsutil::copy_atomic(&l.p(&format!("{st}/bundles_dsitracer_enabled.properties")), &bk, a.mode)
-            .context("adopting the mibsdk-dev stock backup")?;
-        if a.tracer_was {
-            backups::backup_once(l, MARKER)?;
+    let st = stock_dir();
+    let (had_bundles, had_marker) = (backups::has_backup(l, BUNDLES), backups::has_backup(l, MARKER));
+    let r = (|| -> Result<()> {
+        if let Some(a) = &plan.adopt {
+            let src = l.p(&format!("{st}/bundles_dsitracer_enabled.properties"));
+            on_app(ctx, "adopting the mibsdk-dev stock backup", &mut || crate::fsutil::copy_atomic(&src, &bk, a.mode))?;
+            if a.tracer_was {
+                on_app(ctx, "backing up the marker", &mut || backups::backup_once(l, MARKER).map(|_| ()))?;
+            } else {
+                on_app(ctx, "recording the marker as absent", &mut || backups::record_absent(l, MARKER))?;
+            }
         } else {
-            backups::record_absent(l, MARKER)?;
+            on_app(ctx, "backing up the bundle list", &mut || backups::backup_once(l, BUNDLES).map(|_| ()))?;
+            on_app(ctx, "backing up the marker", &mut || backups::backup_once(l, MARKER).map(|_| ()))?;
         }
-    } else {
-        backups::backup_once(l, BUNDLES)?;
-        backups::backup_once(l, MARKER)?;
-    }
-    if fs::read(&bk).context("reading back the stock backup")? != plan.stock {
+        Ok(())
+    })();
+    done.created_bundles_backup = !had_bundles && backups::has_backup(l, BUNDLES);
+    done.created_marker_backup = !had_marker && backups::has_backup(l, MARKER);
+    r?;
+    if ops.read(&bk).context("reading back the stock backup")? != plan.stock {
         bail!("the backup of {BUNDLES} does not match the stock file; aborting");
     }
+    done.backup_verified = true;
     if plan.adopt.is_some() {
-        let st = stock_dir();
-        fs::remove_dir_all(l.p(&st)).with_context(|| format!("removing {st}"))?;
+        let dir = l.p(&st);
+        on_app(ctx, &format!("removing {st}"), &mut || fs::remove_dir_all(&dir))?;
         notes.push(format!("adopted the mibsdk-dev stock backup from {st}"));
     }
     Ok(())
 }
 
-/// The writes, in order; `written` collects the jars this run put into JARS.
-fn apply(ctx: &Ctx, plan: &Plan, written: &mut Vec<String>, notes: &mut Vec<String>) -> Result<()> {
+/// The writes, in order, recording progress in `done`.
+fn apply(ctx: &Ctx, plan: &Plan, ops: &dyn FileOps, done: &mut Done, notes: &mut Vec<String>) -> Result<()> {
     let l = &ctx.layout;
-    back_up(ctx, plan, notes)?;
+    back_up(ctx, plan, ops, done, notes)?;
     for d in [format!("{BASE}/plugins"), PERSIST.to_string()] {
-        fs::create_dir_all(l.p(&d)).with_context(|| format!("cannot create {d}"))?;
+        let p = l.p(&d);
+        on_app(ctx, &format!("cannot create {d}"), &mut || fs::create_dir_all(&p))?;
     }
     notes.extend(migrate_state(ctx)?);
     for j in &plan.spec.jars {
-        written.push(j.clone());
+        done.jars.push(j.clone());
         put_file(ctx, &format!("{JARS}/{j}"), &plan.dir.join(j), 0o644)?;
     }
     put(ctx, &format!("{BASE}/sdk.properties"), &plan.props, 0o644)?;
     put_file(ctx, PERMISSIONS, &plan.dir.join(&plan.spec.permissions), 0o644)?;
+    done.activating = true;
     // Only if absent: lsd.sh reads the on-disk bundle list only with the marker, and touching an
     // existing one would change the stock file.
     if !l.p(MARKER).exists() {
@@ -430,75 +480,115 @@ fn apply(ctx: &Ctx, plan: &Plan, written: &mut Vec<String>, notes: &mut Vec<Stri
 
 /// Install the SDK version unpacked in `ver_dir`: verify its stamp, record the stock files,
 /// migrate old state, then write the jars, sdk.properties, permissions.json, the marker and, last,
-/// the bundle list. All or undo: on failure `prev_dir` (the version being replaced) is deployed
-/// again, or on a fresh install the bundle list and marker are restored and the jars written are
-/// deleted; the original error is returned. The caller holds /mnt/app read-write.
-pub fn deploy(ctx: &Ctx, m: &Manifest, ver_dir: &Path, prev_dir: Option<&Path>) -> Result<()> {
-    let mut notes = Vec::new();
-    let plan = plan(ctx, m, ver_dir, &mut notes)?; // nothing written yet
-    let mut written = Vec::new();
-    let r = apply(ctx, &plan, &mut written, &mut notes);
-    for n in &notes {
-        (ctx.progress)(n);
-    }
-    let Err(e) = r else { return Ok(()) };
-    let undo = match prev_dir {
-        Some(prev) => redeploy(ctx, prev, &written),
-        None => undo_fresh(ctx, &written),
-    };
-    match undo {
-        Ok(()) => Err(e),
-        Err(u) => Err(anyhow!("{e:#}; undoing it failed too ({u:#}); install again or remove mibsdk")),
-    }
+/// the bundle list. Returns notes for the user. All or undo: on failure `prev_dir` (the version
+/// being replaced) is deployed again, or a fresh install is undone (the stock bundle list and
+/// marker back, the jars written deleted); the error says which. The caller holds /mnt/app
+/// read-write.
+pub fn deploy(ctx: &Ctx, m: &Manifest, ver_dir: &Path, prev_dir: Option<&Path>) -> Result<Vec<String>> {
+    deploy_with(ctx, m, ver_dir, prev_dir, &StdOps)
 }
 
-fn redeploy(ctx: &Ctx, prev: &Path, written: &[String]) -> Result<()> {
+/// `deploy`, reading the backup back through `ops` (tests stand in for a bad read-back).
+#[doc(hidden)]
+pub fn deploy_with(ctx: &Ctx, m: &Manifest, ver_dir: &Path, prev_dir: Option<&Path>, ops: &dyn FileOps) -> Result<Vec<String>> {
+    let mut notes = Vec::new();
+    let plan = plan(ctx, m, ver_dir, &mut notes)?; // nothing written yet
+    let mut done = Done::default();
+    let Err(e) = apply(ctx, &plan, ops, &mut done, &mut notes) else { return Ok(notes) };
+    let undo = match prev_dir {
+        Some(prev) => redeploy(ctx, prev, &done.jars),
+        None => undo_fresh(ctx, &plan, &done),
+    };
+    Err(match undo {
+        Ok(said) => anyhow!("{e:#}; {said}"),
+        Err(u) if prev_dir.is_some() => anyhow!("{e:#}; deploying the previous version again failed too ({u:#}); install again or remove mibsdk"),
+        Err(u) => anyhow!("{e:#}; undoing it failed too ({u:#}); the stock backup is kept: run the install again"),
+    })
+}
+
+fn redeploy(ctx: &Ctx, prev: &Path, written: &[String]) -> Result<String> {
     let m = Manifest::parse(&fs::read_to_string(prev.join("manifest.toml"))?)?;
     let mut notes = Vec::new();
     let plan = plan(ctx, &m, prev, &mut notes)?;
-    apply(ctx, &plan, &mut Vec::new(), &mut notes)?;
+    apply(ctx, &plan, &StdOps, &mut Done::default(), &mut notes)?;
     for j in written.iter().filter(|j| !plan.spec.jars.contains(j)) {
-        remove_if_present(&ctx.layout.p(&format!("{JARS}/{j}")))?;
+        remove_on_app(ctx, &format!("{JARS}/{j}"))?;
     }
-    Ok(())
+    Ok(format!("mibsdk {} was deployed again", m.package.version))
 }
 
-fn undo_fresh(ctx: &Ctx, written: &[String]) -> Result<()> {
-    if backups::has_backup(&ctx.layout, BUNDLES) {
-        restore_bundles(ctx)?;
-    }
-    restore_marker(ctx)?;
-    for j in written {
-        remove_if_present(&ctx.layout.p(&format!("{JARS}/{j}")))?;
-    }
-    Ok(())
-}
-
-/// The stock bundle list back, bytes and mode, then the backup forgotten.
-fn restore_bundles(ctx: &Ctx) -> Result<()> {
+/// Undo a fresh install. The live bundle list is written only with the plan's (verified) stock
+/// bytes, and only if this run may have changed it or adopted a backup of a generated one; a
+/// backup is forgotten only once the live list is stock.
+fn undo_fresh(ctx: &Ctx, plan: &Plan, done: &Done) -> Result<String> {
     let l = &ctx.layout;
-    let bk = backups::backup_path(l, BUNDLES);
+    if !done.backup_verified {
+        // Nothing but backups was written: drop the ones this run made (a bad copy included).
+        if done.created_bundles_backup {
+            backups::forget(l, BUNDLES)?;
+        }
+        if done.created_marker_backup {
+            backups::forget(l, MARKER)?;
+        }
+        return Ok("the install was undone".into());
+    }
+    let live_stock = if done.activating || plan.adopt.is_some() {
+        put(ctx, BUNDLES, &plan.stock, plan.stock_mode)?;
+        true
+    } else {
+        // Untouched: stock if this run backed it up, unknown if the backup is an older one.
+        done.created_bundles_backup
+    };
+    if done.activating || plan.adopt.is_some() || done.created_marker_backup {
+        restore_marker(ctx)?;
+    }
+    for j in &done.jars {
+        // A directory in the jar's place was never written (put cannot replace one): not ours.
+        let abs = format!("{JARS}/{j}");
+        if !l.p(&abs).is_dir() {
+            remove_on_app(ctx, &abs)?;
+        }
+    }
+    if live_stock {
+        forget_backups(l)?;
+    }
+    Ok(if plan.adopt.is_some() {
+        "the unit was returned to the stock bundle list (the earlier mibsdk-dev install is no longer active); install again to retry".into()
+    } else {
+        "the install was undone".into()
+    })
+}
+
+/// Drop the bundle-list and marker backups: after an uninstall has finished (the caller saved
+/// the state), or an undo left the stock files live.
+pub fn forget_backups(layout: &Layout) -> Result<()> {
+    backups::forget(layout, BUNDLES)?;
+    backups::forget(layout, MARKER)
+}
+
+/// The stock bundle list back from the backup, bytes and mode. The backup is kept.
+fn restore_bundles(ctx: &Ctx) -> Result<()> {
+    let bk = backups::backup_path(&ctx.layout, BUNDLES);
     let bytes = fs::read(&bk).with_context(|| format!("reading the stock backup of {BUNDLES}"))?;
-    put(ctx, BUNDLES, &bytes, mode_of(&bk)?)?;
-    backups::forget(l, BUNDLES)
+    put(ctx, BUNDLES, &bytes, mode_of(&bk)?)
 }
 
 /// The marker as it was: removed if it was absent; an existing one is left alone (touching it
-/// would change the stock file); a missing one put back.
+/// would change the stock file); a missing one put back. The backup is kept.
 fn restore_marker(ctx: &Ctx) -> Result<()> {
     let l = &ctx.layout;
     if backups::is_tombstone(l, MARKER) {
-        remove_if_present(&l.p(MARKER)).with_context(|| format!("cannot remove {MARKER}"))?;
+        remove_on_app(ctx, MARKER)?;
     } else if backups::has_backup(l, MARKER) && !l.p(MARKER).exists() {
         let bk = backups::backup_path(l, MARKER);
         put(ctx, MARKER, &fs::read(&bk)?, mode_of(&bk)?)?;
     }
-    backups::forget(l, MARKER)
+    Ok(())
 }
 
-fn remove_tree(l: &Layout, abs: &str) -> Result<()> {
+fn remove_tree(l: &Layout, abs: &str) -> std::io::Result<()> {
     match fs::remove_dir_all(l.p(abs)) {
-        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e).with_context(|| format!("cannot remove {abs}")),
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
         _ => Ok(()),
     }
 }
@@ -507,10 +597,11 @@ fn remove_tree(l: &Layout, abs: &str) -> Result<()> {
 /// overrides of vehicle state (unless `--force`, spec I2) remain; then restore the stock bundle
 /// list (first, so nothing references the jars once they are gone) and marker, and remove the
 /// jars and the SDK's own files. Without `purge` the grants, plugins/ and PERSIST stay. Returns
-/// any warnings (one per line) and, last, a note. The caller holds /mnt/app read-write.
+/// any warnings (one per line) and, last, a note. The backups are kept: the caller forgets them
+/// (`forget_backups`) once the package is recorded as removed, so a run that fails anywhere can
+/// be run again. The caller holds /mnt/app read-write.
 pub fn undeploy(ctx: &Ctx, purge: bool) -> Result<String> {
     let l = &ctx.layout;
-    let (_, spec, _) = installed_sdk(l).context("cannot read the installed mibsdk package; restore the stock bundle list by hand")?;
     let plugins: Vec<String> = plugin_packages(l)?.into_iter().map(|(id, _)| id).collect();
     if !plugins.is_empty() {
         bail!("remove these plugins first: {}", plugins.join(", "));
@@ -520,16 +611,13 @@ pub fn undeploy(ctx: &Ctx, purge: bool) -> Result<String> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => Vec::new(),
         Err(e) => bail!("cannot list {BASE}/plugins ({e}); refusing to uninstall"),
     };
-    let mut warnings = Vec::new();
-    if !pushed.is_empty() {
-        if !ctx.force {
-            bail!(
-                "these plugins were pushed by mibsdk-dev: {}; remove them first (mibpkg sdk remove <id>) or add --force",
-                pushed.join(", ")
-            );
-        }
-        warnings.push(format!("WARNING: --force: uninstalling while these pushed plugins remain: {}", pushed.join(", ")));
+    if !pushed.is_empty() && !ctx.force {
+        bail!(
+            "these plugins were pushed by mibsdk-dev: {}; remove them first (mibpkg sdk remove <id>) or add --force",
+            pushed.join(", ")
+        );
     }
+    let mut warnings = Vec::new();
     let entries = ledger::read(l).context("refusing to uninstall")?;
     if !entries.is_empty() {
         let lines: Vec<String> = entries.iter().map(|e| format!("  {}", e.line)).collect();
@@ -548,27 +636,41 @@ pub fn undeploy(ctx: &Ctx, purge: bool) -> Result<String> {
         warnings.extend(lines);
         warnings.push("WARNING: nothing will restore their prior values; the car keeps the overridden settings until you change them back by hand (format: key=plugin|scope|prior|active|A or R).".into());
     }
+    if !pushed.is_empty() {
+        warnings.push(format!("WARNING: --force: uninstalling while these pushed plugins remain: {}", pushed.join(", ")));
+    }
     if !backups::has_backup(l, BUNDLES) || backups::is_tombstone(l, BUNDLES) {
         bail!("no stock backup of {BUNDLES}; refusing to guess. Restore it by hand");
     }
+    let Some((_, spec, _)) = installed_sdk(l) else {
+        // A run interrupted after the package files went: finish it if the stock list is live.
+        let bk = fs::read(backups::backup_path(l, BUNDLES)).context("reading the stock backup")?;
+        if fs::read(l.p(BUNDLES)).ok().as_deref() != Some(bk.as_slice()) {
+            bail!("cannot read the installed mibsdk package and {BUNDLES} is not stock; restore it by hand");
+        }
+        restore_marker(ctx)?;
+        warnings.push("the SDK files were already removed by an earlier run".into());
+        return Ok(warnings.join("\n"));
+    };
 
     restore_bundles(ctx)?;
     restore_marker(ctx)?;
     for j in &spec.jars {
-        let abs = format!("{JARS}/{j}");
-        remove_if_present(&l.p(&abs)).with_context(|| format!("cannot remove {abs}"))?;
+        remove_on_app(ctx, &format!("{JARS}/{j}"))?;
     }
     for abs in [format!("{BASE}/sdk.properties"), PERMISSIONS.to_string()] {
-        remove_if_present(&l.p(&abs)).with_context(|| format!("cannot remove {abs}"))?;
+        remove_on_app(ctx, &abs)?;
     }
     let note = if purge {
-        for abs in [BASE, PERSIST, RAM] {
-            remove_tree(l, abs)?;
+        on_app(ctx, &format!("cannot remove {BASE}"), &mut || remove_tree(l, BASE))?;
+        for abs in [PERSIST, RAM] {
+            remove_tree(l, abs).with_context(|| format!("cannot remove {abs}"))?;
         }
         format!("removed {BASE}, {PERSIST} and {RAM}")
     } else {
         // Only when empty: grants.properties and plugins/ stay.
-        let _ = fs::remove_dir(l.p(BASE));
+        let base = l.p(BASE);
+        let _ = on_app(ctx, "", &mut || fs::remove_dir(&base));
         format!("kept plugin data in {PERSIST} (remove it with: mibpkg remove mibsdk --purge)")
     };
     crate::fsutil::atomic_write(&reboot_flag(l), b"").context("writing the reboot flag")?;

@@ -273,6 +273,7 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
         fs::remove_dir_all(&ver_dir)?;
     }
     let mut cfg = config::Report::default();
+    let mut sdk_notes = Vec::new();
     let staged = if repair {
         Ok(())
     } else {
@@ -282,7 +283,7 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
         fs::rename(&new_dir, &ver_dir)?;
         if kind == Kind::Sdk {
             // From the staged copy just extracted: the jars verified are the jars written.
-            sdk_pkg::deploy(ctx, &pkg.manifest, &ver_dir, prev_dir.as_deref())?;
+            sdk_notes = sdk_pkg::deploy(ctx, &pkg.manifest, &ver_dir, prev_dir.as_deref())?;
         }
         cfg = config::import(layout, media, &pkg.manifest, ctx.config_choice)?;
         if let Some(s) = &pkg.manifest.scripts.post_install {
@@ -357,6 +358,10 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
     }
     if kind == Kind::Sdk {
         msg.push_str(SDK_START);
+        for n in &sdk_notes {
+            msg.push('\n');
+            msg.push_str(n);
+        }
     }
     (ctx.progress)("starting services");
     control::request_reload(layout)?;
@@ -490,7 +495,13 @@ pub fn remove(ctx: &Ctx, name: &str, purge: bool) -> Result<String> {
     }
     state.packages.remove(name);
     state.save(layout)?;
-    let msg = format!("removed {name}{}", if purge { " and its config" } else { "" });
+    let mut msg = format!("removed {name}{}", if purge { " and its config" } else { "" });
+    if sdk_note.is_some() {
+        // Only now: until the package is recorded as removed, a rerun needs the stock backups.
+        if let Err(e) = sdk_pkg::forget_backups(layout) {
+            msg.push_str(&format!(" (warning: could not drop the stock backups: {e:#})"));
+        }
+    }
     Ok(match sdk_note {
         // Warnings (one per line) come first, the note last.
         Some(note) => match note.rsplit_once('\n') {
@@ -512,6 +523,7 @@ pub fn rollback(ctx: &Ctx, name: &str) -> Result<String> {
             .with_context(|| format!("{name} {prev} is no longer on the unit"))?,
     )?;
     let kind = m.kind();
+    let mut sdk_notes = Vec::new();
     if kind == Kind::Sdk {
         sdk_pkg::check(ctx, &m, current_dir(layout, name).as_deref())?;
     }
@@ -519,7 +531,7 @@ pub fn rollback(ctx: &Ctx, name: &str) -> Result<String> {
     cleanup_stale(layout)?;
     if kind == Kind::Sdk {
         // On failure this deploys the current version again; `current` is not switched.
-        sdk_pkg::deploy(ctx, &m, &prev_dir, current_dir(layout, name).as_deref())?;
+        sdk_notes = sdk_pkg::deploy(ctx, &m, &prev_dir, current_dir(layout, name).as_deref())?;
     }
     (ctx.progress)(&format!("switching {name} back to {prev}"));
     atomic_write(&layout.pkg_dir(name).join("current"), prev.as_bytes())?;
@@ -535,5 +547,6 @@ pub fn rollback(ctx: &Ctx, name: &str) -> Result<String> {
     state.save(layout)?;
     control::request_reload(layout)?;
     let suffix = if kind == Kind::Sdk { SDK_START } else { "" };
-    Ok(format!("rolled back {name} {} -> {prev}{suffix}", inst.version))
+    let notes: String = sdk_notes.iter().map(|n| format!("\n{n}")).collect();
+    Ok(format!("rolled back {name} {} -> {prev}{suffix}{notes}", inst.version))
 }
