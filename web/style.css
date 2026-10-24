@@ -591,6 +591,35 @@ button {
   font-size: 14px;
 }
 
+/* Plugin permissions: the approval sheet, the read-only list, the grants editor. */
+.perms {
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.perms li {
+  margin-bottom: 6px;
+  padding: 8px 12px;
+  border-radius: var(--radius-small);
+  background: var(--surface-2);
+  font-size: 14px;
+}
+
+.perms small,
+.perm-editor .choice small {
+  display: block;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.perms li.warn,
+.perm-editor .choice.warn {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
 /* ---------------------------------------------------------------------------
    6. Job log
    ------------------------------------------------------------------------- */

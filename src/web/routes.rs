@@ -347,6 +347,9 @@ fn upload_install(app: &App, req: &Request, id: &str) -> Response {
     #[serde(deny_unknown_fields)]
     struct Body {
         collection: String,
+        /// The plugin permissions approved on the sheet.
+        #[serde(default)]
+        approve: Vec<String>,
     }
     let Some(path) = app.uploads.path(id) else {
         return Response::error(404, "that upload is gone (uploads expire after 10 minutes); upload the file again");
@@ -371,6 +374,12 @@ fn upload_install(app: &App, req: &Request, id: &str) -> Response {
     } else {
         return Response::error(400, format!("{:?} is not a known collection", b.collection));
     };
+    let approve = match super::actions::approve_flag(&b.approve) {
+        Ok(f) => f,
+        Err(e) => return Response::error(400, e),
+    };
     let verb = if i.kind.as_deref() == Some("upgrade") { "Update" } else { "Install" };
-    start_job(app, format!("{verb} {name} from file"), Some(name.clone()), vec!["install-file".into(), name, id.to_string(), coll])
+    let mut argv = vec!["install-file".into(), name.clone(), id.to_string(), coll];
+    argv.extend(approve);
+    start_job(app, format!("{verb} {name} from file"), Some(name), argv)
 }

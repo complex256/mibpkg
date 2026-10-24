@@ -1,0 +1,6 @@
+format=1
+kind=plugin
+checks=classVersion48,linkCheck,permissionScan
+plugin.id=hello
+plugin.unrestricted=false
+sha256.hello.jar=d6f24338ca3f17f05b602ce6374f10c974a9070a54ad1146de2b0ce2e3196490

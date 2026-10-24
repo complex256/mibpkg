@@ -5,7 +5,7 @@ use crate::manifest::valid_name;
 use crate::paths::Layout;
 use crate::state::State;
 use serde::Deserialize;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "action", rename_all = "kebab-case", deny_unknown_fields)]
@@ -14,12 +14,17 @@ pub enum Action {
     Rescan {},
     Check {},
     UpdateAll {},
-    Install { package: String, collection: Option<String> },
-    Rollback { package: String },
+    /// `approve`: the plugin permissions the user approved on the sheet (`--approve=…`).
+    Install { package: String, collection: Option<String>, #[serde(default)] approve: Vec<String> },
+    /// `approve`: permissions only the previous version declares, approved on the sheet.
+    Rollback { package: String, #[serde(default)] approve: Vec<String> },
     Restart { package: String },
     Remove { package: String, #[serde(default)] purge: bool },
     ConfigResolve { package: String, config: usize, choice: String },
     UninstallSelf { #[serde(default)] purge: bool },
+    /// Set an installed plugin's grants to exactly `permissions` (empty revokes all).
+    /// `declared`: the plugin's declared permissions the page showed; refused if they changed.
+    Grant { id: String, permissions: Vec<String>, declared: Vec<String> },
 }
 
 /// Names that exist right now, so a request can only name real things.
@@ -28,6 +33,8 @@ pub struct Known {
     pub installed: BTreeSet<String>,
     pub available: BTreeSet<String>,
     pub collections: BTreeSet<String>,
+    /// Installed `[plugin]` packages and the permissions each declares.
+    pub plugins: BTreeMap<String, Vec<String>>,
 }
 
 impl Known {
@@ -38,6 +45,11 @@ impl Known {
             installed: state.packages.keys().cloned().collect(),
             available: colls.iter().flat_map(|c| c.index.packages.iter().map(|e| e.name.clone())).collect(),
             collections: colls.iter().map(|c| c.id().to_string()).collect(),
+            plugins: state
+                .packages
+                .keys()
+                .filter_map(|n| Some((n.clone(), crate::install::current_manifest(layout, n).ok()?.plugin?.permissions)))
+                .collect(),
         }
     }
 }
@@ -62,6 +74,28 @@ fn installed(known: &Known, name: &str) -> Result<String, String> {
     }
 }
 
+/// A permission id the web passes on: `[A-Za-z0-9._-]+`, starting with a letter or digit so it
+/// can never read as an option, and short.
+fn permission(p: &str) -> Result<&str, String> {
+    if p.len() <= 64 && crate::mibsdk::catalog::is_permission(p) && p.as_bytes()[0].is_ascii_alphanumeric() {
+        Ok(p)
+    } else {
+        Err(format!("{p:?} is not a permission"))
+    }
+}
+
+/// `perms` validated and joined with commas, as `--approve=` and `sdk grant` take them.
+fn permission_list(perms: &[String]) -> Result<String, String> {
+    Ok(perms.iter().map(|p| permission(p)).collect::<Result<Vec<_>, _>>()?.join(","))
+}
+
+/// The `--approve=…` argument for an approval list; None for an empty list (the install then
+/// asks rather than approving nothing).
+pub fn approve_flag(perms: &[String]) -> Result<Option<String>, String> {
+    let list = permission_list(perms)?;
+    Ok((!list.is_empty()).then(|| format!("--approve={list}")))
+}
+
 pub fn validate(a: &Action, known: &Known) -> Result<Validated, String> {
     let v = |label: String, package: Option<&str>, argv: Vec<&str>| Validated {
         label,
@@ -72,7 +106,7 @@ pub fn validate(a: &Action, known: &Known) -> Result<Validated, String> {
         Action::Rescan {} => v("Rescan SD card".into(), None, vec!["rescan"]),
         Action::Check {} => v("Check for updates".into(), None, vec!["check"]),
         Action::UpdateAll {} => v("Update all".into(), None, vec!["update-all"]),
-        Action::Install { package, collection } => {
+        Action::Install { package, collection, approve } => {
             if !valid_name(package) || !known.available.contains(package) {
                 return Err(format!("{package:?} is not offered by any collection"));
             }
@@ -83,12 +117,17 @@ pub fn validate(a: &Action, known: &Known) -> Result<Validated, String> {
                 }
                 argv.push(c);
             }
+            let flag = approve_flag(approve)?;
+            argv.extend(flag.as_deref());
             let verb = if known.installed.contains(package) { "Update" } else { "Install" };
             v(format!("{verb} {package}"), Some(package), argv)
         }
-        Action::Rollback { package } => {
+        Action::Rollback { package, approve } => {
             let p = installed(known, package)?;
-            v(format!("Roll back {p}"), Some(&p), vec!["rollback", &p])
+            let flag = approve_flag(approve)?;
+            let mut argv = vec!["rollback", p.as_str()];
+            argv.extend(flag.as_deref());
+            v(format!("Roll back {p}"), Some(&p), argv)
         }
         Action::Restart { package } => {
             let p = installed(known, package)?;
@@ -119,6 +158,21 @@ pub fn validate(a: &Action, known: &Known) -> Result<Validated, String> {
             }
             let label = if *purge { "Remove mibpkg and delete all its files" } else { "Remove mibpkg" };
             v(label.into(), None, argv)
+        }
+        Action::Grant { id, permissions, declared } => {
+            let p = installed(known, id)?;
+            let Some(has) = known.plugins.get(&p) else {
+                return Err(format!("{p} is not a plugin package"));
+            };
+            let set = |v: &[String]| v.iter().cloned().collect::<BTreeSet<String>>();
+            if set(declared) != set(has) {
+                return Err(format!("the permissions {p} asks for changed; reload the page"));
+            }
+            if let Some(x) = permissions.iter().find(|x| !has.contains(x)) {
+                return Err(format!("{p} does not declare {x:?}"));
+            }
+            let list = permission_list(permissions)?;
+            v(format!("Change permissions of {p}"), Some(&p), vec!["sdk", "grant", &p, &list])
         }
     })
 }

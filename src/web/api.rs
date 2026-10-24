@@ -6,7 +6,7 @@ use crate::install::{current_dir, current_manifest, updates_available};
 use crate::state::State;
 use serde_json::json;
 use std::fs;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::Read;
 use std::sync::atomic::Ordering;
 
 /// Largest log tail and config file the API returns.
@@ -63,6 +63,40 @@ pub fn logs(app: &App) -> Response {
     Response::json(200, &list)
 }
 
+/// The last `want` bytes of `r`, starting at a line boundary. Reads strictly forward and never
+/// seeks (lseek fails with EINVAL on the unit's QNX 6.5 std port), keeping only the newest `want`
+/// bytes (plus one read chunk) in memory, so a huge log costs bounded memory.
+pub fn tail_lines<R: Read>(mut r: R, want: u64) -> Vec<u8> {
+    let want = want as usize;
+    let mut buf: Vec<u8> = Vec::new();
+    let mut chunk = [0u8; 16 * 1024];
+    let mut dropped = false;
+    loop {
+        match r.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                buf.extend_from_slice(&chunk[..n]);
+                if buf.len() > want {
+                    buf.drain(..buf.len() - want);
+                    dropped = true;
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => break,
+        }
+    }
+    // Started mid-line: drop the partial first line.
+    if dropped {
+        match buf.iter().position(|b| *b == b'\n') {
+            Some(i) => {
+                buf.drain(..=i);
+            }
+            None => buf.clear(),
+        }
+    }
+    buf
+}
+
 /// GET /api/logs/<id>?bytes=N — the last N bytes, starting at a line boundary.
 pub fn log_tail(app: &App, id: &str, bytes: u64) -> Response {
     if !known_logs(app).iter().any(|(k, _)| k == id) {
@@ -70,23 +104,7 @@ pub fn log_tail(app: &App, id: &str, bytes: u64) -> Response {
     }
     let path = if id == "mibpkg" { app.layout.run("log") } else { app.layout.run(&format!("{id}.log")) };
     let want = bytes.clamp(1, MAX_TAIL);
-    let mut text = Vec::new();
-    if let Ok(mut f) = fs::File::open(&path) {
-        let len = f.metadata().map(|m| m.len()).unwrap_or(0);
-        let start = len.saturating_sub(want);
-        if f.seek(SeekFrom::Start(start)).is_ok() {
-            let _ = f.take(want).read_to_end(&mut text);
-        }
-        // Started mid-line: drop the partial first line.
-        if start > 0 {
-            match text.iter().position(|b| *b == b'\n') {
-                Some(i) => {
-                    text.drain(..=i);
-                }
-                None => text.clear(),
-            }
-        }
-    }
+    let text = fs::File::open(&path).map(|f| tail_lines(f, want)).unwrap_or_default();
     Response::new(200, "text/plain; charset=utf-8", String::from_utf8_lossy(&text).into_owned().into_bytes())
 }
 
@@ -186,4 +204,44 @@ pub fn settings(app: &App) -> Response {
             "warning": app.settings_warning,
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Cursor, Seek, SeekFrom};
+
+    /// Like the unit's files: reads work, every seek fails.
+    struct NoSeek<R>(R);
+    impl<R: Read> Read for NoSeek<R> {
+        fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
+            self.0.read(b)
+        }
+    }
+    impl<R> Seek for NoSeek<R> {
+        fn seek(&mut self, _: SeekFrom) -> std::io::Result<u64> {
+            Err(std::io::Error::from_raw_os_error(22))
+        }
+    }
+
+    #[test]
+    fn tail_short_log_is_whole() {
+        assert_eq!(tail_lines(NoSeek(Cursor::new(b"a\nb\n".to_vec())), 100), b"a\nb\n");
+    }
+
+    #[test]
+    fn tail_long_log_starts_at_a_line_and_is_bounded() {
+        let log: String = (0..50_000).map(|i| format!("line {i}\n")).collect();
+        let t = tail_lines(NoSeek(Cursor::new(log.clone().into_bytes())), 1000);
+        assert!(t.len() <= 1000 && t.len() > 900);
+        assert!(log.as_bytes().ends_with(&t));
+        assert!(t.starts_with(b"line "));
+        assert!(!log.is_empty() && t.ends_with(b"line 49999\n"));
+    }
+
+    #[test]
+    fn tail_without_newline_is_empty_and_empty_log_is_empty() {
+        assert!(tail_lines(NoSeek(Cursor::new(vec![b'x'; 5000])), 100).is_empty());
+        assert!(tail_lines(NoSeek(Cursor::new(Vec::new())), 100).is_empty());
+    }
 }

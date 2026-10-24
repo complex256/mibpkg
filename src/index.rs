@@ -1,7 +1,7 @@
 //! A collection = a directory with index.json + packages/*.mpk.
 use crate::archive::{sha256_file, Package};
 use crate::fsutil::atomic_write;
-use crate::manifest::{safe_rel, valid_name, Compat};
+use crate::manifest::{safe_rel, valid_name, Compat, Manifest};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -42,6 +42,30 @@ pub struct IndexEntry {
     pub compat: Compat,
     #[serde(default)]
     pub uses_scripts: bool,
+    /// "plugin" or "sdk"; absent for plain packages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// A plugin's declared permissions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub permissions: Vec<String>,
+}
+
+impl IndexEntry {
+    /// The entry for a package whose archive is `file` (a path or URL).
+    pub fn new(m: &Manifest, file: String, sha256: String, size: u64) -> IndexEntry {
+        IndexEntry {
+            name: m.package.name.clone(),
+            version: m.package.version.clone(),
+            file,
+            sha256,
+            size,
+            description: m.package.description.clone(),
+            compat: m.compat.clone(),
+            uses_scripts: m.uses_scripts(),
+            kind: m.kind().name(),
+            permissions: m.plugin.as_ref().map(|p| p.permissions.clone()).unwrap_or_default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -187,16 +211,7 @@ fn index_dir(pkgs: &Path, id: &str, name: &str, prefix: &str) -> Result<Index> {
             bail!("{fname} holds {} {}; it must be named {want}", m.package.name, m.package.version);
         }
         let (sha256, size) = sha256_file(&f)?;
-        packages.push(IndexEntry {
-            name: m.package.name.clone(),
-            version: m.package.version.clone(),
-            file: format!("{prefix}{fname}"),
-            sha256,
-            size,
-            description: m.package.description.clone(),
-            compat: m.compat.clone(),
-            uses_scripts: m.uses_scripts(),
-        });
+        packages.push(IndexEntry::new(m, format!("{prefix}{fname}"), sha256, size));
     }
     Ok(Index {
         format: FORMAT,

@@ -1,0 +1,22 @@
+[package]
+name = "mibsdk"
+version = "0.1.0"
+description = "mibsdk runtime for the MIB2 head unit"
+
+[compat]
+units = ["MHI2Q"]
+
+[sdk]
+api = 2
+min_api = 1
+hmi = ["HMI_AU_MIB2_HQC_NAR_G22_C10_180803"]
+jars = ["mibsdk-runtime.jar", "mibsdk-adapter-hqc.jar", "mibsdk-rt-retrotranslator.jar"]
+stamp = "mibsdk-unit.stamp"
+configurator = "mibsdk.adapter.hqc.ChainingConfigurator"
+bundle = "MibSdk=mibsdk.adapter.hqc.SdkBundleActivator"
+tracer_configurator = "de.audi.tghu.dsitrace.TraceConfigurator"
+hmicar_stock = "de.audi.tghu.car.hmi.Activator"
+hmicar = "mibsdk.adapter.hqc.ui.SdkCarActivator"
+owned = ["de/audi/tghu/car/hmi/", "de/audi/atip/model/CarModelBank"]
+properties = ["hook.services=org.dsi.ifc.carparkingsystem.DSICarParkingSystem", "ui.enabled=true"]
+permissions = "permissions.json"

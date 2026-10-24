@@ -3,7 +3,9 @@
 
   1. Pick   choose (or drop) a .mpk; it uploads to the car's memory with a progress bar.
   2. Check  the car opens the file and says what it is: name, version, new or upgrade,
-            whether it fits this car, whether it runs scripts. Nothing is installed yet.
+            whether it fits this car, whether it runs scripts, what a plugin may do.
+            Nothing is installed yet. A plugin asking for new permissions shows the
+            approval sheet before it installs.
   3. Install the live log, then ✓ or ✕.
 
   "Updates come from" is folded away unless the user really has to choose
@@ -12,6 +14,7 @@
 import { api, uploadFile } from '../api.js';
 import { backLink, formatSize, h, pageHead, replace, toast } from '../dom.js';
 import { packageIcon } from '../icons.js';
+import { approvalSheet, permissionList } from '../permissions.js';
 import { isSelfUpdate, jobView, waitForRestart } from '../jobs.js';
 
 export async function render() {
@@ -117,19 +120,36 @@ function confirmStep(page, i) {
   const source = i.kind === 'fresh' ? sourceChoice(i) : null;
   const installButton = h('button', { class: 'button', type: 'button', disabled: i.problems.length > 0 }, i.kind === 'upgrade' ? `Upgrade to ${i.version}` : 'Install');
 
-  installButton.addEventListener('click', async () => {
+  async function install(approve) {
     const collection = source ? source.value() : '-';
     try {
-      const reply = await api('POST', `/api/uploads/${i.upload_id}/install`, { collection });
+      const reply = await api('POST', `/api/uploads/${i.upload_id}/install`, { collection, approve });
       replace(page, installStep(i, reply.job));
     } catch (e) {
       toast(e.message, { error: true });
     }
+  }
+
+  // A plugin that asks for new permissions: the sheet first; Cancel sends nothing.
+  const sheetArea = h('div', {});
+  installButton.addEventListener('click', () => {
+    const asked = i.permissions.filter((p) => i.needs_approval.includes(p.id));
+    if (!asked.length) {
+      install([]);
+      return;
+    }
+    installButton.hidden = true;
+    const blocked = i.permissions.filter((p) => i.stays_blocked.includes(p.id));
+    replace(sheetArea, approvalSheet(asked, (ids) => install(ids), { blocked, onCancel: () => (installButton.hidden = false) }));
   });
+
+  const perms = i.permissions.length
+    ? h('div', {}, h('div', { class: 'section-head' }, h('h2', {}, 'Permissions')), permissionList(i.permissions))
+    : null;
 
   const upgradeNote = i.kind === 'upgrade' ? h('p', { class: 'muted' }, `Keeps getting updates from ${i.installed_collection}.`) : null;
 
-  return h('div', {}, cancel, head, i.description ? h('p', {}, i.description) : null, facts, problems, upgradeNote, source ? source.node : null, installButton);
+  return h('div', {}, cancel, head, i.description ? h('p', {}, i.description) : null, facts, perms, problems, upgradeNote, source ? source.node : null, installButton, sheetArea);
 }
 
 /**

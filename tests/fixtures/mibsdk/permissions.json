@@ -1,0 +1,8 @@
+{"format":1,"api":2,"min_api":1,"permissions":[
+ {"id":"vehicle.read","group":"Vehicle","text":"Read vehicle state: ignition, gear, parking sensors","loud":false},
+ {"id":"vehicle.parking.write","group":"Vehicle","text":"Change parking-sensor settings, for example mute the rear tones","loud":false},
+ {"id":"hooks.parking","group":"Hooks","text":"Watch and override parking-system messages","loud":false},
+ {"id":"ui.slot.carmenu","group":"Screen","text":"Add a row to the Car menu","loud":false},
+ {"id":"ui.slot.statusbar","group":"Screen","text":"Show an item in the status bar","loud":false},
+ {"id":"network","group":"Network","text":"Open network connections (local network or internet)","loud":false},
+ {"id":"platform.unrestricted","group":"Danger","text":"Unrestricted: may use reflection and stock HMI classes; the SDK cannot contain it","loud":true}]}

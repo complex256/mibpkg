@@ -3,12 +3,13 @@
 use crate::config::missing_required;
 use crate::index::{cmp_versions, Collection};
 use crate::install::current_manifest;
+use crate::mibsdk::catalog::PermInfo;
 use crate::paths::Layout;
 use crate::state::State;
 use crate::unit::UnitInfo;
 use serde::Serialize;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
@@ -25,6 +26,42 @@ pub struct Avail {
     pub compatible: bool,
     pub uses_scripts: bool,
     pub sha256: String,
+    /// "plugin" or "sdk"; None for a plain package.
+    pub kind: Option<String>,
+    /// A plugin's declared permissions, in plain words.
+    pub permissions: Vec<Perm>,
+}
+
+/// One declared permission as the web shows it. One entry per id, so an "optional" flag can be
+/// added later without changing the shape.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Perm {
+    pub id: String,
+    /// The installed SDK's plain-words text, or a note that the SDK does not know it.
+    pub text: String,
+    /// Shown as a warning: what the catalog marks loud, `platform.unrestricted` always, and any
+    /// permission the installed SDK does not know (its risk cannot be told).
+    pub loud: bool,
+    /// Installed plugins only: whether `grants.properties` grants it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub granted: Option<bool>,
+}
+
+/// Loud whatever the catalog says: it may be any code in the HMI.
+const ALWAYS_LOUD: &str = "platform.unrestricted";
+
+/// `ids` described by the installed SDK's catalog (`None`: no readable catalog), with `granted`
+/// filled in when a grant set is given.
+pub fn permissions(cat: Option<&[PermInfo]>, ids: &[String], grant: Option<&BTreeSet<String>>) -> Vec<Perm> {
+    ids.iter()
+        .map(|id| {
+            let (text, loud) = match cat.and_then(|c| c.iter().find(|p| &p.id == id)) {
+                Some(p) => (p.text.clone(), p.loud || id == ALWAYS_LOUD),
+                None => (format!("{id}: not known to the installed SDK"), true),
+            };
+            Perm { id: id.clone(), text, loud, granted: grant.map(|g| g.contains(id)) }
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -56,6 +93,17 @@ pub struct Inst {
     pub missing_config: Vec<String>,
     pub last_result: Option<String>,
     pub configs: Vec<ConfigInfo>,
+    /// "plugin" or "sdk"; None for a plain package (or an unreadable manifest).
+    pub kind: Option<String>,
+    /// A plugin's declared permissions, each with `granted`.
+    pub permissions: Vec<Perm>,
+    /// Declared permissions not granted: non-empty means the runtime blocks the plugin.
+    pub blocked: Vec<String>,
+    /// What the kept previous version declares (a rollback asks for those the current one
+    /// does not).
+    pub previous_permissions: Vec<Perm>,
+    /// `grants.properties` could not be read: `granted` is unknown (None) and `blocked` empty.
+    pub grants_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -143,6 +191,10 @@ pub fn build(layout: &Layout, unit: &UnitInfo) -> Vec<PkgView> {
     let state = State::load(layout).unwrap_or_default();
     let status = crate::status::read(layout);
     let srcs = sources(layout);
+    // A missing or unreadable catalog describes every permission as unknown.
+    let cat = crate::mibsdk::catalog::installed(layout).ok().flatten();
+    let cat = cat.as_deref();
+    let grants = crate::mibsdk::grants::read(layout).map_err(|e| format!("{e:#}"));
 
     // name -> what each collection offers (its newest version that fits, else its newest).
     let mut offered: BTreeMap<String, Vec<Avail>> = BTreeMap::new();
@@ -162,6 +214,8 @@ pub fn build(layout: &Layout, unit: &UnitInfo) -> Vec<PkgView> {
                 compatible: e.compat.matches(unit),
                 uses_scripts: e.uses_scripts,
                 sha256: e.sha256.clone(),
+                kind: e.kind.clone(),
+                permissions: permissions(cat, &e.permissions, None),
             });
         }
     }
@@ -178,6 +232,15 @@ pub fn build(layout: &Layout, unit: &UnitInfo) -> Vec<PkgView> {
             let available = offered.remove(&name).unwrap_or_default();
             let manifest = current_manifest(layout, &name).ok();
             let installed = state.packages.get(&name).map(|i| {
+                let declared = manifest.as_ref().and_then(|m| m.plugin.as_ref()).map(|p| p.permissions.clone()).unwrap_or_default();
+                let grant = grants.as_ref().ok().map(|g| g.get(&name).cloned().unwrap_or_default());
+                let previous_declared = i
+                    .previous
+                    .as_ref()
+                    .and_then(|v| std::fs::read_to_string(layout.pkg_dir(&name).join(v).join("manifest.toml")).ok())
+                    .and_then(|t| crate::manifest::Manifest::parse(&t).ok())
+                    .and_then(|m| m.plugin.map(|p| p.permissions))
+                    .unwrap_or_default();
                 let services = i
                     .services
                     .iter()
@@ -211,6 +274,14 @@ pub fn build(layout: &Layout, unit: &UnitInfo) -> Vec<PkgView> {
                     missing_config: manifest.as_ref().map(|m| missing_required(layout, m)).unwrap_or_default(),
                     last_result: state.results.get(&name).cloned(),
                     configs,
+                    kind: manifest.as_ref().and_then(|m| m.kind().name()),
+                    permissions: permissions(cat, &declared, grant.as_ref()),
+                    blocked: grant.as_ref().map(|g| crate::mibsdk::grants::missing(&declared, g)).unwrap_or_default(),
+                    previous_permissions: permissions(cat, &previous_declared, None),
+                    grants_error: match &grants {
+                        Err(e) if !declared.is_empty() => Some(e.clone()),
+                        _ => None,
+                    },
                 }
             });
             let newer_in = |id: &str, inst: &Inst| {

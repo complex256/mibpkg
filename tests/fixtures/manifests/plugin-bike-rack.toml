@@ -1,0 +1,12 @@
+[package]
+name = "bike-rack"
+version = "1.0.0"
+description = "Bike Rack (mibsdk plugin)"
+
+[compat]
+units = ["MHI2Q"]
+
+[plugin]
+jar = "bike-rack.jar"
+api = 2
+permissions = ["vehicle.read", "vehicle.parking.write", "ui.slot.carmenu", "ui.slot.statusbar"]

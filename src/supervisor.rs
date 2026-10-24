@@ -660,6 +660,12 @@ pub fn seed_once(ctx: &Ctx, media: &[PathBuf]) -> Result<()> {
         names.sort();
         names.dedup();
         for name in names {
+            // Never seeded: an SDK changes the HMI bundle list and a plugin needs an explicit
+            // permission approval; both are installed by hand (the marker is still written).
+            if by_hand(&coll, &name) {
+                println!("mibpkg: seed {name}: skipped: SDK and plugin packages are installed by hand (they change the HMI bundle list / need permission approval)");
+                continue;
+            }
             match install::install(ctx, media, &coll, &name) {
                 Ok(m) => println!("mibpkg: seed {name}: {m}"),
                 Err(e) => println!("mibpkg: seed {name}: FAILED {e:#}"),
@@ -671,6 +677,21 @@ pub fn seed_once(ctx: &Ctx, media: &[PathBuf]) -> Result<()> {
     fs::create_dir_all(ctx.layout.state_dir())?;
     atomic_write(&marker, b"")?;
     Ok(())
+}
+
+/// A package of `coll` named `name` is an SDK or plugin package: by its index entry's `kind`, or,
+/// for an entry without one, by the manifest in its archive (an index need not carry `kind`). An
+/// archive that cannot be read is left to the install, which refuses it anyway.
+fn by_hand(coll: &crate::index::Collection, name: &str) -> bool {
+    coll.index.packages.iter().filter(|e| e.name == name).any(|e| match e.kind.as_deref() {
+        Some(_) => true,
+        None => match coll.location(e) {
+            crate::index::Location::Local(p) => {
+                crate::archive::Package::read(&p).is_ok_and(|pkg| pkg.manifest.kind() != crate::manifest::Kind::Plain)
+            }
+            crate::index::Location::Remote(_) => true,
+        },
+    })
 }
 
 /// Enable the GEM dev-mode flag once, on the first supervised boot. The install.sh call runs
@@ -687,6 +708,39 @@ pub fn gem_once(ctx: &Ctx) -> Result<()> {
     fs::create_dir_all(ctx.layout.state_dir())?;
     atomic_write(&marker, b"")?;
     Ok(())
+}
+
+/// The supervisor's mount upkeep, at its start and on every tick: retry this process's failed
+/// releases (`Mounts::retry_releases`), then sweep both mounts (dead holders, and a withdrawn hold
+/// once no live holder and no action remain) without waiting for the remount lock: a busy lock
+/// skips this turn. Failures are never fatal; an error is reported once until it changes or clears.
+#[derive(Default)]
+pub struct MountUpkeep {
+    /// The last error reported per step, so a repeated one is not logged every tick.
+    last: std::collections::BTreeMap<&'static str, String>,
+}
+
+impl MountUpkeep {
+    /// One round; the lines worth logging (new errors only).
+    pub fn run(&mut self, ctx: &Ctx) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut note = |step: &'static str, r: Result<()>| match r {
+            Ok(()) => {
+                self.last.remove(step);
+            }
+            Err(e) => {
+                let text = format!("mibpkg: {step}: {e:#}");
+                if self.last.get(step) != Some(&text) {
+                    out.push(text.clone());
+                    self.last.insert(step, text);
+                }
+            }
+        };
+        note("retrying a read-only remount", ctx.mounts.retry_releases());
+        note("sweeping /mnt/app holders", crate::rwhold::sweep_waiting(&ctx.layout, ctx.sys, "/mnt/app", Duration::ZERO));
+        note("sweeping /mnt/system holders", crate::rwhold::sweep_waiting(&ctx.layout, ctx.sys, "/mnt/system", Duration::ZERO));
+        out
+    }
 }
 
 pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
@@ -710,17 +764,22 @@ pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
         let _ = fs::remove_file(layout.run("pid"));
         return Ok(());
     }
+    // The supervisor's one Ctx (one Mounts per process): its failed releases are retried on
+    // every tick, so a mount never stays read-write on the supervisor's account.
+    let ctx = Ctx::new(layout.clone(), sys);
+    // Holders a crashed process left behind (and a withdrawn hold) from before this boot's start.
+    let mut upkeep = MountUpkeep::default();
+    for line in upkeep.run(&ctx) {
+        eprintln!("{line}");
+    }
     // First boot only: install any seed collection the install card carried. Best-effort;
     // a failure here must not stop the supervisor from starting the rest.
-    {
-        let ctx = Ctx::new(layout.clone(), sys);
-        if let Err(e) = seed_once(&ctx, &media::roots(layout)) {
-            println!("mibpkg: seed install skipped: {e:#}");
-        }
-        // Retry the GEM enable that the SWDL-time install.sh call could not complete.
-        if let Err(e) = gem_once(&ctx) {
-            println!("mibpkg: gem enable skipped: {e:#}");
-        }
+    if let Err(e) = seed_once(&ctx, &media::roots(layout)) {
+        println!("mibpkg: seed install skipped: {e:#}");
+    }
+    // Retry the GEM enable that the SWDL-time install.sh call could not complete.
+    if let Err(e) = gem_once(&ctx) {
+        println!("mibpkg: gem enable skipped: {e:#}");
     }
     let mut sup = Supervisor::new(layout, sys, timing.clone());
     sup.reload();
@@ -765,6 +824,9 @@ pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
             sup.restart(&id);
         }
         sup.tick(Instant::now());
+        for line in upkeep.run(&ctx) {
+            eprintln!("{line}");
+        }
         // Background online checks, only on the unit (host tests never spawn them). The log is
         // opened twice: File::try_clone fails with EINVAL on QNX 6.5.
         if layout.root == Path::new("/") {

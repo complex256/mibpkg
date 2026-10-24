@@ -120,3 +120,17 @@ swdl-card <out> --payload DIR [--seed DIR] --version V`, and `mibpkg verify <car
   first boot (marker `state/seeded`).
 - CI smoke-gate to wire at go-public: `mibpkg swdl-card … && mibpkg verify out/card`. No dormant
   test workflow exists today (only host-release.yml); not added to the live release plumbing.
+
+## MIB SDK packages (mibpkg 0.8.1)
+| Fact | Value | Verified |
+|---|---|---|
+| HMI build | the first `HMI = ...` line of `/ifs/version_info.txt`, whitespace removed; supported `HMI_AU_MIB2_HQC_NAR_G22_C10_180803` | bench e2e |
+| SDK install root | `/mnt/app/eso/hmi/lsd/mibsdk/`: `sdk.properties`, `grants.properties`, `SAFE_MODE`, `permissions.json`, `plugins/<id>.jar`, `plugins/<id>.reload` | bench e2e |
+| SDK jars | `/mnt/app/eso/hmi/lsd/jars/mibsdk-{runtime,adapter-hqc,rt-retrotranslator}.jar` | bench e2e |
+| Persist root | `/mnt/persist/mibsdk/`: `boot.state`, `ledger.properties`, `plugins.properties`, `data/<id>.properties`; writable without a remount | bench e2e |
+| `plugins.properties` | user on/off, one `<id>.off=true` line per switched-off plugin; mibpkg drops the line on remove | bench e2e |
+| `grants.properties` | `<id>=<perm>,<perm>`; mibpkg rewrites only the exact-key line, all others byte for byte | bench e2e |
+| Ledger v2 | `<key>=<pluginId>\|<scope>\|<prior>\|<active>\|<A or R>` (`A` held, `R` restoring); a 4-field line is legacy, counts as held; read from the persist file and the old install-root file (and its `.tmp`) | bench e2e |
+| rw holder protocol | lock `/tmp/mibpkg.rwlock` (`create_new`, pid inside); holders `/tmp/mibpkg.rw.<app or system>.<pid>`; marker `mibpkg.rw.<tag>.withdrawn` is never a holder; remount read-only only when no live holder remains | bench e2e |
+| `/mnt/app` remounted read-only by others | any process may do so at any time (F8): re-assert `mount -uw` before each write, verify by read-back; a 0.7 supervisor ignores holders | bench e2e F8 |
+| `/tmp` | `/dev/shmem`: files only, no directories | bench e2e |

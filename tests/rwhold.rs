@@ -1,0 +1,342 @@
+mod common;
+use mibpkg::ctx::Mounts;
+use mibpkg::rwhold::{self, RWLOCK_WAIT};
+use mibpkg::sys::RecordingSys;
+use std::fs;
+use std::path::Path;
+use std::process::{Child, Command};
+use std::time::{Duration, Instant};
+
+/// A live process whose pid stands in for another mibpkg; killed and reaped on drop.
+struct Live(Child);
+
+impl Live {
+    fn spawn() -> Live {
+        Live(Command::new("sleep").arg("30").spawn().unwrap())
+    }
+    fn pid(&self) -> u32 {
+        self.0.id()
+    }
+}
+
+impl Drop for Live {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// The pid of a process that has exited and been reaped.
+fn dead_pid() -> u32 {
+    let mut c = Command::new("true").spawn().unwrap();
+    c.wait().unwrap();
+    c.id()
+}
+
+fn holders(tmp: &Path, tag: &str) -> Vec<String> {
+    let prefix = format!("mibpkg.rw.{tag}.");
+    let mut v: Vec<String> = fs::read_dir(tmp)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with(&prefix))
+        .collect();
+    v.sort();
+    v
+}
+
+#[test]
+fn other_live_holder_keeps_app_rw() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let other = Live::spawn();
+    let a = Mounts::new(&sys, &f.layout);
+    let b = Mounts::with_holder(&sys, &f.layout, other.pid());
+    let ga = a.rw("/mnt/app").unwrap();
+    let gb = b.rw("/mnt/app").unwrap();
+    drop(ga);
+    assert_eq!(*sys.calls.borrow(), vec!["rw /mnt/app", "rw /mnt/app"]);
+    assert_eq!(holders(&f.layout.p("/tmp"), "app"), vec![format!("mibpkg.rw.app.{}", other.pid())]);
+    drop(gb);
+    assert_eq!(sys.calls.borrow().last().unwrap(), "ro /mnt/app");
+    assert!(holders(&f.layout.p("/tmp"), "app").is_empty());
+}
+
+#[test]
+fn dead_holder_is_ignored_and_swept() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let stale = f.layout.run(&format!("rw.app.{}", dead_pid()));
+    fs::write(&stale, "").unwrap();
+    let m = Mounts::new(&sys, &f.layout);
+    drop(m.rw("/mnt/app").unwrap());
+    assert_eq!(sys.calls.borrow().last().unwrap(), "ro /mnt/app");
+    assert!(!stale.exists());
+    assert!(holders(&f.layout.p("/tmp"), "app").is_empty());
+}
+
+#[test]
+fn nested_guards_in_one_process_touch_the_registry_once() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let m = Mounts::new(&sys, &f.layout);
+    let own = f.layout.run(&format!("rw.app.{}", std::process::id()));
+    let outer = m.rw("/mnt/app").unwrap();
+    let inner = m.rw("/mnt/app").unwrap();
+    assert!(own.exists());
+    drop(inner);
+    assert!(own.exists());
+    assert_eq!(*sys.calls.borrow(), vec!["rw /mnt/app"]);
+    drop(outer);
+    assert!(!own.exists());
+    assert_eq!(*sys.calls.borrow(), vec!["rw /mnt/app", "ro /mnt/app"]);
+}
+
+#[test]
+fn reassert_remounts_rw_without_touching_holders() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let other = Live::spawn();
+    let a = Mounts::new(&sys, &f.layout);
+    let b = Mounts::with_holder(&sys, &f.layout, other.pid());
+    let _ga = a.rw("/mnt/app").unwrap();
+    let _gb = b.rw("/mnt/app").unwrap();
+    let before = holders(&f.layout.p("/tmp"), "app");
+    assert_eq!(before.len(), 2);
+    a.reassert("/mnt/app").unwrap();
+    assert_eq!(holders(&f.layout.p("/tmp"), "app"), before);
+    assert_eq!(*sys.calls.borrow(), vec!["rw /mnt/app", "rw /mnt/app", "rw /mnt/app"]);
+}
+
+#[test]
+fn reassert_without_a_guard_is_an_error() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let m = Mounts::new(&sys, &f.layout);
+    assert!(m.reassert("/mnt/app").is_err());
+    {
+        let _g = m.rw("/mnt/app").unwrap();
+    }
+    assert!(m.reassert("/mnt/app").is_err());
+    assert_eq!(*sys.calls.borrow(), vec!["rw /mnt/app", "ro /mnt/app"]);
+}
+
+#[test]
+fn remount_lock_held_by_live_pid_times_out_with_busy() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let other = Live::spawn();
+    fs::write(f.layout.run("rwlock"), other.pid().to_string()).unwrap();
+    let m = Mounts::new(&sys, &f.layout);
+    let t = Instant::now();
+    let e = m.rw("/mnt/app").err().expect("rw under a held remount lock must fail");
+    let took = t.elapsed();
+    assert!(format!("{e:#}").contains("busy"), "{e:#}");
+    assert!(took >= RWLOCK_WAIT, "{took:?}");
+    assert!(took < RWLOCK_WAIT + Duration::from_secs(1), "{took:?}");
+    assert!(sys.calls.borrow().is_empty());
+    assert!(holders(&f.layout.p("/tmp"), "app").is_empty());
+    // The failed acquire is not counted: no guard, so reassert still refuses.
+    assert!(m.reassert("/mnt/app").is_err());
+}
+
+#[test]
+fn stale_remount_lock_is_taken_over() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let lock = f.layout.run("rwlock");
+    fs::write(&lock, dead_pid().to_string()).unwrap();
+    rwhold::acquire(&f.layout, &sys, "/mnt/app", std::process::id()).unwrap();
+    assert!(!lock.exists(), "the remount lock is released after use");
+    rwhold::release(&f.layout, &sys, "/mnt/app", std::process::id()).unwrap();
+    assert_eq!(*sys.calls.borrow(), vec!["rw /mnt/app", "ro /mnt/app"]);
+}
+
+#[test]
+fn unknown_mount_is_rejected() {
+    assert_eq!(rwhold::tag("/mnt/app").unwrap(), "app");
+    assert_eq!(rwhold::tag("/mnt/system").unwrap(), "system");
+    assert!(rwhold::tag("/mnt/persist").is_err());
+}
+
+#[test]
+fn failed_rw_remount_leaves_no_holder_file() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    sys.fail_remount_rw.set(true);
+    let m = Mounts::new(&sys, &f.layout);
+    assert!(m.rw("/mnt/app").is_err());
+    assert!(holders(&f.layout.p("/tmp"), "app").is_empty());
+}
+
+#[test]
+fn rw_and_rwlock_are_reserved_package_names() {
+    for n in ["rw", "rwlock"] {
+        assert!(mibpkg::manifest::RESERVED.contains(&n), "{n}");
+    }
+}
+
+#[test]
+fn failed_release_keeps_our_hold_and_a_later_retry_goes_ro() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let m = Mounts::new(&sys, &f.layout);
+    let own = f.layout.run(&format!("rw.app.{}", std::process::id()));
+    let g = m.rw("/mnt/app").unwrap();
+    // Another process sits on the remount lock past every release attempt.
+    let other = Live::spawn();
+    let lock = f.layout.run("rwlock");
+    fs::write(&lock, other.pid().to_string()).unwrap();
+    drop(g);
+    assert!(own.exists(), "our holder stays so the release is retried, not lost");
+    assert_eq!(*sys.calls.borrow(), vec!["rw /mnt/app"]);
+    // Reassert is refused: no guard is alive.
+    assert!(m.reassert("/mnt/app").is_err());
+    fs::remove_file(&lock).unwrap();
+    m.retry_releases().unwrap();
+    assert!(!own.exists());
+    assert_eq!(*sys.calls.borrow(), vec!["rw /mnt/app", "ro /mnt/app"]);
+    // Nothing left to retry.
+    m.retry_releases().unwrap();
+    assert_eq!(sys.calls.borrow().len(), 2);
+}
+
+#[test]
+fn a_new_guard_after_a_failed_release_releases_normally() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let m = Mounts::new(&sys, &f.layout);
+    let g = m.rw("/mnt/app").unwrap();
+    let other = Live::spawn();
+    let lock = f.layout.run("rwlock");
+    fs::write(&lock, other.pid().to_string()).unwrap();
+    drop(g);
+    fs::remove_file(&lock).unwrap();
+    drop(m.rw("/mnt/app").unwrap());
+    assert_eq!(*sys.calls.borrow(), vec!["rw /mnt/app", "rw /mnt/app", "ro /mnt/app"]);
+    assert!(holders(&f.layout.p("/tmp"), "app").is_empty());
+    m.retry_releases().unwrap();
+    assert_eq!(sys.calls.borrow().len(), 3, "the pending release was settled by the new guard");
+}
+
+#[test]
+fn sweep_goes_ro_only_after_removing_dead_holders() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    // Nothing registered: sweep touches nothing.
+    rwhold::sweep(&f.layout, &sys, "/mnt/app").unwrap();
+    assert!(sys.calls.borrow().is_empty());
+    // A holder that died (panic=abort, kill -9) left its file: sweep removes it and goes ro.
+    let stale = f.layout.run(&format!("rw.app.{}", dead_pid()));
+    fs::write(&stale, "").unwrap();
+    rwhold::sweep(&f.layout, &sys, "/mnt/app").unwrap();
+    assert!(!stale.exists());
+    assert_eq!(*sys.calls.borrow(), vec!["ro /mnt/app"]);
+}
+
+#[test]
+fn sweep_leaves_a_live_holder_rw() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let other = Live::spawn();
+    let live = f.layout.run(&format!("rw.app.{}", other.pid()));
+    fs::write(&live, "").unwrap();
+    let stale = f.layout.run(&format!("rw.app.{}", dead_pid()));
+    fs::write(&stale, "").unwrap();
+    let odd = f.layout.run("rw.app.notapid");
+    fs::write(&odd, "").unwrap();
+    rwhold::sweep(&f.layout, &sys, "/mnt/app").unwrap();
+    assert!(live.exists() && !stale.exists());
+    assert!(odd.exists(), "names without a pid are not ours to delete");
+    assert!(sys.calls.borrow().is_empty());
+}
+
+#[test]
+fn dropping_mounts_with_a_stuck_release_withdraws_our_holder() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let own = f.layout.run(&format!("rw.app.{}", std::process::id()));
+    let lock = f.layout.run("rwlock");
+    let blocker = Live::spawn();
+    {
+        let m = Mounts::new(&sys, &f.layout);
+        let g = m.rw("/mnt/app").unwrap();
+        fs::write(&lock, blocker.pid().to_string()).unwrap();
+        drop(g); // release fails: the remount lock is busy
+        assert!(own.exists());
+    } // Mounts dropped while the lock is still busy: its retry fails too
+    assert!(!own.exists(), "a scoped Ctx must not leave our holder keeping /mnt/app rw");
+    assert_eq!(*sys.calls.borrow(), vec!["rw /mnt/app"]);
+    // Once the lock frees, another process's ordinary release goes read-only.
+    fs::remove_file(&lock).unwrap();
+    let other = Live::spawn();
+    let b = Mounts::with_holder(&sys, &f.layout, other.pid());
+    drop(b.rw("/mnt/app").unwrap());
+    assert_eq!(sys.calls.borrow().last().unwrap(), "ro /mnt/app");
+}
+
+#[test]
+fn dropping_mounts_retries_a_pending_release() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let own = f.layout.run(&format!("rw.app.{}", std::process::id()));
+    let lock = f.layout.run("rwlock");
+    let blocker = Live::spawn();
+    let m = Mounts::new(&sys, &f.layout);
+    let g = m.rw("/mnt/app").unwrap();
+    fs::write(&lock, blocker.pid().to_string()).unwrap();
+    drop(g);
+    fs::remove_file(&lock).unwrap();
+    drop(m);
+    assert!(!own.exists());
+    assert_eq!(*sys.calls.borrow(), vec!["rw /mnt/app", "ro /mnt/app"]);
+}
+
+#[test]
+fn sweep_goes_ro_after_a_withdrawn_hold_once_no_action_runs() {
+    // The stuck-rw-without-holder case: a Mounts whose release kept failing withdrew its holder
+    // without remounting, so /mnt/app may be rw with no holder at all. The withdraw leaves a
+    // marker; the next sweep with no live holder and no action running goes read-only.
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let lock = f.layout.run("rwlock");
+    let withdrawn = f.layout.run("rw.app.withdrawn");
+    let blocker = Live::spawn();
+    {
+        let m = Mounts::new(&sys, &f.layout);
+        let g = m.rw("/mnt/app").unwrap();
+        fs::write(&lock, blocker.pid().to_string()).unwrap();
+        drop(g);
+    }
+    fs::remove_file(&lock).unwrap();
+    assert!(withdrawn.exists(), "the withdraw is recorded");
+    // An action holds the action lock: it may be about to write; leave the mount alone.
+    let action = Live::spawn();
+    fs::write(f.layout.run("lock"), action.pid().to_string()).unwrap();
+    rwhold::sweep(&f.layout, &sys, "/mnt/app").unwrap();
+    assert_eq!(*sys.calls.borrow(), vec!["rw /mnt/app"]);
+    // A live holder keeps it rw too.
+    fs::remove_file(f.layout.run("lock")).unwrap();
+    let other = Live::spawn();
+    let held = f.layout.run(&format!("rw.app.{}", other.pid()));
+    fs::write(&held, "").unwrap();
+    rwhold::sweep(&f.layout, &sys, "/mnt/app").unwrap();
+    assert_eq!(*sys.calls.borrow(), vec!["rw /mnt/app"]);
+    fs::remove_file(&held).unwrap();
+    rwhold::sweep(&f.layout, &sys, "/mnt/app").unwrap();
+    assert_eq!(*sys.calls.borrow(), vec!["rw /mnt/app", "ro /mnt/app"]);
+    assert!(!withdrawn.exists());
+    // Settled: the next sweep changes nothing.
+    rwhold::sweep(&f.layout, &sys, "/mnt/app").unwrap();
+    assert_eq!(sys.calls.borrow().len(), 2);
+}
+
+#[test]
+fn an_ordinary_release_to_ro_clears_the_withdrawn_marker() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let withdrawn = f.layout.run("rw.app.withdrawn");
+    fs::write(&withdrawn, "").unwrap();
+    let m = Mounts::new(&sys, &f.layout);
+    drop(m.rw("/mnt/app").unwrap());
+    assert!(!withdrawn.exists());
+}

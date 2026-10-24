@@ -159,6 +159,26 @@ pub struct Inspection {
     pub preselected: Option<String>,
     /// The user must choose (several collections have the name and none matches the file).
     pub ask: bool,
+    /// "plugin" or "sdk"; None for a plain package. (`kind` above is fresh/upgrade/same/older.)
+    pub package_kind: Option<String>,
+    /// A plugin's declared permissions, in plain words.
+    pub permissions: Vec<crate::catalog::Perm>,
+    /// The permissions installing this file asks the user to approve (what it adds over the
+    /// installed version; a revoked one stays revoked and is not asked again).
+    pub needs_approval: Vec<String>,
+    /// Declared permissions the user revoked that stay revoked: the plugin stays blocked after
+    /// installing this until they are granted on its page.
+    pub stays_blocked: Vec<String>,
+}
+
+/// What installing a plugin declaring `declared` asks for, as `plugin_pkg::check` plans it: the
+/// permissions it adds over the installed package's manifest (all of them for a fresh install).
+fn approval_plan(layout: &Layout, name: &str, declared: &[String]) -> crate::mibsdk::grants::Approval {
+    let installed = State::load(layout).unwrap_or_default().packages.contains_key(name);
+    let old = if installed { crate::install::current_manifest(layout, name).ok() } else { None };
+    let declared_old = old.as_ref().and_then(|o| o.plugin.as_ref()).map(|p| p.permissions.as_slice());
+    let current = crate::mibsdk::grants::read(layout).ok().and_then(|mut g| g.remove(name)).unwrap_or_default();
+    crate::mibsdk::grants::plan(declared, declared_old, &current)
 }
 
 /// Official collections win ties when choosing between collections.
@@ -187,6 +207,14 @@ pub fn inspect(layout: &Layout, unit: &UnitInfo, colls: &[Collection], id: &str,
     i.compatible = m.compat.matches(unit);
     i.uses_scripts = m.uses_scripts();
     i.services = m.services.iter().map(|s| format!("{name}.{}", s.name)).collect();
+    i.package_kind = m.kind().name();
+    if let Some(plugin) = &m.plugin {
+        let cat = crate::mibsdk::catalog::installed(layout).ok().flatten();
+        i.permissions = crate::catalog::permissions(cat.as_deref(), &plugin.permissions, None);
+        let plan = approval_plan(layout, &name, &plugin.permissions);
+        i.stays_blocked = crate::mibsdk::grants::missing(&plugin.permissions, &plan.grant);
+        i.needs_approval = plan.ask;
+    }
     if !i.compatible {
         i.problems.push(format!("{name} {} is not compatible with this unit ({})", m.package.version, unit.describe()));
     }
