@@ -121,7 +121,7 @@ swdl-card <out> --payload DIR [--seed DIR] --version V`, and `mibpkg verify <car
 - CI smoke-gate to wire at go-public: `mibpkg swdl-card … && mibpkg verify out/card`. No dormant
   test workflow exists today (only host-release.yml); not added to the live release plumbing.
 
-## MIB SDK packages (mibpkg 0.8.0)
+## MIB SDK packages (mibpkg 0.8.1)
 | Fact | Value | Verified |
 |---|---|---|
 | HMI build | the first `HMI = ...` line of `/ifs/version_info.txt`, whitespace removed; supported `HMI_AU_MIB2_HQC_NAR_G22_C10_180803` | bench e2e |
