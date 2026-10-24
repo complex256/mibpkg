@@ -670,7 +670,9 @@ fn remove_tree(l: &Layout, abs: &str) -> std::io::Result<()> {
 /// Uninstall the SDK runtime: refuse while plugin packages, pushed plugins (unless `--force`) or
 /// overrides of vehicle state (unless `--force`, spec I2) remain; then restore the stock bundle
 /// list (first, so nothing references the jars once they are gone) and marker, and remove the
-/// jars and the SDK's own files. Without `purge` the grants, plugins/ and PERSIST stay. Returns
+/// jars and the SDK's own files. After a firmware update (the live list no longer the generated
+/// one, or an HMI the SDK does not support) the live list and marker are left alone and a note
+/// says so: the records hold the old firmware's files. Without `purge` the grants, plugins/ and PERSIST stay. Returns
 /// any warnings (one per line) and, last, a note. The backups are kept: the caller forgets them
 /// (`forget_backups`) once the package is recorded as removed, so a run that fails anywhere can
 /// be run again. The caller holds /mnt/app read-write.
@@ -719,17 +721,31 @@ pub fn undeploy(ctx: &Ctx, purge: bool) -> Result<String> {
     let Some((_, spec, _)) = installed_sdk(l) else {
         // A run interrupted after the package files went: finish it if the stock list is live.
         let bk = fs::read(backups::backup_path(l, BUNDLES)).context("reading the stock backup")?;
-        if fs::read(l.p(BUNDLES)).ok().as_deref() != Some(bk.as_slice()) {
+        let live = fs::read(l.p(BUNDLES)).ok();
+        if live.as_deref() == Some(bk.as_slice()) {
+            restore_marker(ctx)?;
+        } else if live.is_some_and(|b| !references_sdk(&b, None)) && !sdk_files_present(l) {
+            // An earlier run after a firmware update: it left the firmware's list alone.
+            warnings.push(firmware_changed(crate::unit::hmi_version(l).as_deref(), false));
+        } else {
             bail!("cannot read the installed mibsdk package and {BUNDLES} is not stock; restore it by hand");
         }
-        restore_marker(ctx)?;
         warnings.push("the SDK files were already removed by an earlier run".into());
         warnings.push(remove_sdk_dirs(ctx, purge)?);
         return Ok(warnings.join("\n"));
     };
 
-    restore_bundles(ctx)?;
-    restore_marker(ctx)?;
+    // The records are this firmware's stock only while the live list is still the one the install
+    // generated and the HMI one the SDK supports; after a firmware update replaced lsd/ they would
+    // put the old firmware's list (and marker) onto the new one.
+    let hmi = crate::unit::hmi_version(l);
+    let refs = fs::read(l.p(BUNDLES)).is_ok_and(|live| references_sdk(&live, Some(&spec)));
+    if refs && hmi.as_ref().is_some_and(|v| spec.hmi.contains(v)) {
+        restore_bundles(ctx)?;
+        restore_marker(ctx)?;
+    } else {
+        warnings.push(firmware_changed(hmi.as_deref(), refs));
+    }
     for j in &spec.jars {
         remove_on_app(ctx, &format!("{JARS}/{j}"))?;
     }
@@ -738,6 +754,21 @@ pub fn undeploy(ctx: &Ctx, purge: bool) -> Result<String> {
     }
     warnings.push(remove_sdk_dirs(ctx, purge)?);
     Ok(warnings.join("\n"))
+}
+
+/// The note of an uninstall that left the live bundle list and marker alone (the firmware changed
+/// since the install); `refs`: the live list still references the SDK.
+fn firmware_changed(hmi: Option<&str>, refs: bool) -> String {
+    let mut s = format!(
+        "the firmware changed since mibsdk was installed (HMI {}): left the live bundle list and DSITracer marker as they are and dropped the old firmware's stock records",
+        hmi.unwrap_or("unknown")
+    );
+    if refs {
+        s = format!(
+            "WARNING: {s}; but {BUNDLES} still references the SDK, whose files are now removed: put this firmware's stock bundle list back by hand"
+        );
+    }
+    s
 }
 
 /// With `purge` remove BASE, PERSIST and RAM; else remove BASE only if empty (grants.properties

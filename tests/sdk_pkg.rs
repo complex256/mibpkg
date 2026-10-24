@@ -1642,3 +1642,65 @@ fn uninstall_self_purge_skips_stale_sdk_records() {
     uninstall_self_purge(&f);
     assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), stock());
 }
+
+// ---- final review fixes ----
+
+const NEW_HMI: &[u8] = b"HMI = HMI_AU_MIB2_HQC_NAR_G22_C10_190101\n";
+
+/// A firmware update replaced lsd/ while mibsdk stayed recorded: the removal leaves the live
+/// bundle list and the marker exactly as the firmware has them, still takes the SDK files off,
+/// drops the old firmware's records and says so (final review I1).
+#[test]
+fn sdk_remove_after_a_firmware_update_leaves_the_live_list_and_marker_alone() {
+    let generated = bundles::generate(&stock(), &spec(), false).unwrap();
+    // (live list, new HMI): a new stock list on a new HMI, a new stock list on the same HMI, and
+    // a list still naming the SDK on a new HMI.
+    for (live, new_hmi) in [(new_firmware_stock(), true), (new_firmware_stock(), false), (generated.clone(), true)] {
+        let (f, _dir) = installed(None); // DSITracer was off: the record says "no marker"
+        write(&p(&f, mibsdk::BUNDLES), &live);
+        fs::set_permissions(p(&f, mibsdk::BUNDLES), fs::Permissions::from_mode(0o755)).unwrap();
+        write(&p(&f, mibsdk::MARKER), b"new firmware");
+        if new_hmi {
+            write(&p(&f, mibsdk::VERSION_INFO), NEW_HMI);
+        }
+        let sys = RecordingSys::default();
+        let ctx = Ctx::new(f.layout.clone(), &sys);
+        let msg = install::remove(&ctx, "mibsdk", false).unwrap();
+        let case = format!("new_hmi={new_hmi} generated={}", live == generated);
+        assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), live, "{case}");
+        assert_eq!(mode(&p(&f, mibsdk::BUNDLES)), 0o755, "{case}");
+        assert_eq!(fs::read(p(&f, mibsdk::MARKER)).unwrap(), b"new firmware", "{case}");
+        assert!(sdk_jars_present(&f).is_empty(), "{case}");
+        assert!(!p(&f, &format!("{}/sdk.properties", mibsdk::BASE)).exists(), "{case}");
+        assert!(!p(&f, mibsdk::PERMISSIONS).exists(), "{case}");
+        assert!(!backups::has_backup(&f.layout, mibsdk::BUNDLES), "{case}");
+        assert!(!backups::has_backup(&f.layout, mibsdk::MARKER), "{case}");
+        assert!(!State::load(&f.layout).unwrap().packages.contains_key("mibsdk"), "{case}");
+        assert!(msg.contains("the firmware changed since mibsdk was installed"), "{case}: {msg}");
+        assert!(msg.contains("left the live bundle list and DSITracer marker as they are"), "{case}: {msg}");
+        assert_eq!(msg.contains("WARNING"), live == generated, "{case}: {msg}");
+        assert!(msg.ends_with(REBOOT_REMOVE), "{case}: {msg}");
+    }
+}
+
+/// A removal after a firmware update, interrupted once the package files went, finishes on the
+/// retry without restoring the old firmware's list either.
+#[test]
+fn sdk_remove_retry_after_a_firmware_update_leaves_the_live_list_alone() {
+    let (f, _dir) = installed(None);
+    write(&p(&f, mibsdk::BUNDLES), &new_firmware_stock());
+    write(&p(&f, mibsdk::MARKER), b"new firmware");
+    write(&p(&f, mibsdk::VERSION_INFO), NEW_HMI);
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    {
+        let _rw = ctx.mounts.rw("/mnt/app").unwrap();
+        sdk_pkg::undeploy(&ctx, false).unwrap();
+    }
+    fs::remove_dir_all(f.layout.pkg_dir("mibsdk")).unwrap();
+    install::remove(&ctx, "mibsdk", false).unwrap();
+    assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), new_firmware_stock());
+    assert_eq!(fs::read(p(&f, mibsdk::MARKER)).unwrap(), b"new firmware");
+    assert!(!backups::has_backup(&f.layout, mibsdk::BUNDLES));
+    assert!(!State::load(&f.layout).unwrap().packages.contains_key("mibsdk"));
+}
