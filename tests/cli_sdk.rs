@@ -533,7 +533,7 @@ fn sdk_remove_and_data_clear_work_after_the_sdk_is_gone() {
     let out = String::from_utf8_lossy(&o.stdout);
     assert!(o.status.success(), "{out} {}", String::from_utf8_lossy(&o.stderr));
     assert!(t.elapsed() < Duration::from_secs(10), "waited {:?}", t.elapsed());
-    assert!(out.starts_with("removed hello: plugins/hello.jar and its grants line; the SDK is not installed, so no reload was requested"), "{out}");
+    assert!(out.starts_with("removed hello: plugins/hello.jar and its grants line; the SDK is neither installed nor running, so no reload was requested"), "{out}");
     assert!(out.contains("WARNING: these overrides of hello are not restored yet"), "{out}");
     assert!(!plugin_jar(&f, "hello").exists());
     assert!(!marker(&f, "hello").exists(), "no reload marker without an SDK");

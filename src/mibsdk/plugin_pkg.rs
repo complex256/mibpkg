@@ -5,7 +5,7 @@
 use super::grants::{self, Approval};
 use super::sdk_pkg::on_app;
 use super::{ack, catalog, ledger, stamp, toggles};
-use super::{installed_sdk, put, put_file, sdk_running, BASE, PERMISSIONS, PERSIST};
+use super::{installed_sdk, put, put_file, sdk_running, BASE, LOG, PERMISSIONS, PERSIST};
 use crate::ctx::Ctx;
 use crate::manifest::Manifest;
 use crate::state::State;
@@ -397,12 +397,15 @@ fn remove(ctx: &Ctx, id: &str, purge: bool, ack_timeout: Duration, ledger_wait: 
     if !present {
         bail!("{id} is not installed");
     }
-    // Without the SDK package there is no runtime to answer a reload or to restore the ledger:
-    // no marker is written and nothing is waited for (a leftover jar is still taken off).
-    let sdk = installed_sdk(l).is_some();
-    let running = sdk && sdk_running(l);
-    let ledger_wait = if sdk { ledger_wait } else { Duration::ZERO };
-    let base = if running { ack::baseline(l) } else { ack::Baseline::unknown() };
+    // `up`: the runtime started this boot (its log exists), so it may be running the plugin now,
+    // whatever the package state says (the reboot after `remove mibsdk`, an old mibsdk-dev install
+    // never recorded as a package, lost state) and even while a reboot is pending. `live`: a
+    // runtime can still act on the plugin, now or at the next start. Only with neither (no
+    // package, no runtime log) is nothing written for a runtime and nothing waited for.
+    let up = l.p(LOG).exists();
+    let live = up || installed_sdk(l).is_some();
+    let ledger_wait = if live { ledger_wait } else { Duration::ZERO };
+    let base = if up { ack::baseline(l) } else { ack::Baseline::unknown() };
     let (off_dropped, token) = {
         let _rw = ctx.mounts.rw("/mnt/app")?;
         let p = l.p(&jar);
@@ -413,14 +416,22 @@ fn remove(ctx: &Ctx, id: &str, purge: bool, ack_timeout: Duration, ledger_wait: 
         grants::drop_line(ctx, id)?;
         // Before the marker: the reload must see the plugin switched on again.
         let off_dropped = toggles::drop(ctx, id)?;
-        (off_dropped, if sdk { Some(put_marker(ctx, id)?) } else { None })
+        let token = if live {
+            Some(put_marker(ctx, id)?)
+        } else {
+            // A marker an earlier partial run left would make a later SDK reload a gone plugin.
+            let m = l.p(&marker);
+            on_app(ctx, &format!("cannot remove {marker}"), &mut || remove_if_present(&m))?;
+            None
+        };
+        (off_dropped, token)
     };
     let mut out = vec![format!(
         "removed {id}: plugins/{id}.jar and its grants line{}; {}",
         if off_dropped { format!(" and its {id}.off switch") } else { String::new() },
-        if sdk { "reload requested" } else { "the SDK is not installed, so no reload was requested" }
+        if live { "reload requested" } else { "the SDK is neither installed nor running, so no reload was requested" }
     )];
-    let acked = match (&token, running) {
+    let acked = match (&token, up) {
         (Some(t), true) => ack::wait(l, id, &base, Some(&ack::token_of(t.as_bytes())), ack_timeout).is_some(),
         _ => false,
     };
@@ -444,7 +455,7 @@ fn remove(ctx: &Ctx, id: &str, purge: bool, ack_timeout: Duration, ledger_wait: 
         if waited >= ledger_wait {
             out.push(format!("WARNING: these overrides of {id} are not restored yet:"));
             out.extend(left);
-            out.push(if sdk {
+            out.push(if live {
                 "they are restored when the SDK next starts (the plugin is no longer installed); check /tmp/mibsdk.log".into()
             } else {
                 "nothing restores them while the SDK is not installed; install it again (mibpkg install mibsdk) and its runtime restores them".into()
@@ -455,7 +466,9 @@ fn remove(ctx: &Ctx, id: &str, purge: bool, ack_timeout: Duration, ledger_wait: 
     }
 
     if purge {
-        if acked || !running {
+        // A runtime up this boot (reboot pending or not) may write the data back until it confirms
+        // the unload; with none up, nothing can.
+        if acked || !up {
             for abs in [data.clone(), format!("{data}.tmp")] {
                 remove_if_present(&l.p(&abs)).with_context(|| format!("cannot remove {abs}"))?;
             }

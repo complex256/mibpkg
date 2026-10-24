@@ -1245,3 +1245,68 @@ fn ack_a_token_capable_runtime_is_answered_by_token_only() {
     assert_eq!(ack::answer(&mixed, "hello", &base, Some("9-9-9"), false), None);
     assert_eq!(ack::answer(&mixed, "hello", &base, Some("9-9-9"), true), None);
 }
+
+// ---- removal while the runtime may be live without a package (Task 9 fix round 2) ----
+
+/// The SDK package removed (`--force`, plugins/ kept): the runtime keeps running until the reboot.
+fn sdk_package_gone(f: &common::Fixture, dir: &Path) {
+    with_sdk(f, dir);
+    let sys = RecordingSys::default();
+    let mut ctx = Ctx::new(f.layout.clone(), &sys);
+    ctx.force = true;
+    install::remove(&ctx, "mibsdk", false).unwrap();
+    assert!(mibsdk::installed_sdk(&f.layout).is_none());
+    assert!(mibsdk::reboot_flag(&f.layout).exists(), "the removal waits for the reboot");
+}
+
+#[test]
+fn remove_with_a_live_runtime_reloads_waits_and_keeps_purged_data_without_an_ack() {
+    // A runtime log this boot means a live runtime, whatever the package state or reboot flag says.
+    for case in ["package gone, reboot pending", "package gone, no reboot flag", "package installed, reboot pending"] {
+        let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+        if case.starts_with("package gone") {
+            sdk_package_gone(&f, dir.path());
+        } else {
+            with_sdk(&f, dir.path());
+        }
+        if case.ends_with("no reboot flag") {
+            fs::remove_file(mibsdk::reboot_flag(&f.layout)).unwrap();
+        }
+        write(&p(&f, mibsdk::LOG), b"100 STATUS mibsdk runtime started adapter=hqc safeMode=false\n");
+        pushed(&f, "hello");
+        write(&data(&f, "hello"), b"x=1\n");
+        ledger(&f, &format!("{LINE}\n"));
+        let sys = RecordingSys::default();
+        let ctx = Ctx::new(f.layout.clone(), &sys);
+        let t = Instant::now();
+        let msg = plugin_pkg::remove_id_with(&ctx, "hello", true, Duration::from_millis(200), Duration::from_millis(300)).unwrap();
+        assert!(t.elapsed() >= Duration::from_millis(300), "{case}: the ledger was not waited for");
+        assert!(is_token(&read(&marker(&f, "hello"))), "{case}: no reload requested");
+        assert!(msg.contains("; reload requested"), "{case}: {msg}");
+        assert!(msg.contains("they are restored when the SDK next starts"), "{case}: {msg}");
+        assert!(!msg.contains("nothing restores them"), "{case}: {msg}");
+        assert!(data(&f, "hello").exists(), "{case}: purged before the runtime confirmed the unload");
+        assert!(msg.contains("data kept: the SDK did not confirm the unload"), "{case}: {msg}");
+        assert!(!plugin_jar(&f, "hello").exists());
+    }
+}
+
+#[test]
+fn remove_with_neither_package_nor_runtime_is_immediate_and_drops_a_stale_marker() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    sdk_package_gone(&f, dir.path());
+    assert!(!p(&f, mibsdk::LOG).exists());
+    pushed(&f, "hello");
+    write(&marker(&f, "hello"), b"1-1-1\n"); // left by an earlier partial run
+    write(&data(&f, "hello"), b"x=1\n");
+    ledger(&f, &format!("{LINE}\n"));
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let t = Instant::now();
+    let msg = plugin_pkg::remove_id_with(&ctx, "hello", true, ack::ACK_TIMEOUT, Duration::from_secs(30)).unwrap();
+    assert!(t.elapsed() < Duration::from_secs(5), "waited {:?}", t.elapsed());
+    assert!(msg.starts_with("removed hello: plugins/hello.jar and its grants line; the SDK is neither installed nor running, so no reload was requested"), "{msg}");
+    assert!(msg.contains("nothing restores them while the SDK is not installed"), "{msg}");
+    assert!(!marker(&f, "hello").exists(), "the stale marker is gone");
+    assert!(!plugin_jar(&f, "hello").exists() && !data(&f, "hello").exists());
+}
