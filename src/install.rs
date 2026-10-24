@@ -388,7 +388,12 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
         }
     }
     (ctx.progress)("starting services");
-    control::request_reload(layout)?;
+    if let Err(e) = control::request_reload(layout) {
+        // Committed: the install stands; only the supervisor's pick-up of it is late.
+        msg.push_str(&format!(
+            "\nwarning: could not ask the mibpkg supervisor to reload ({e:#}); it picks {name} up when it next restarts"
+        ));
+    }
     if kind == Kind::Plugin {
         // No /mnt/app read-write guard is held while the runtime is waited for.
         drop(rw);

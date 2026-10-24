@@ -1310,3 +1310,22 @@ fn remove_with_neither_package_nor_runtime_is_immediate_and_drops_a_stale_marker
     assert!(!marker(&f, "hello").exists(), "the stale marker is gone");
     assert!(!plugin_jar(&f, "hello").exists() && !data(&f, "hello").exists());
 }
+
+/// A committed plugin install whose request to the supervisor fails is still installed: success
+/// with a warning, never a failure (final review M5).
+#[test]
+fn plugin_install_reports_success_when_the_reload_request_fails() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    let _ = fs::remove_file(f.layout.run("reload"));
+    write(&f.layout.run("reload").join("blocker"), b"x"); // the request file cannot be written
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let msg = install_src(&ctx, &plugin_src(dir.path(), "hello", "1.0.0", 2, &[])).unwrap();
+    assert!(msg.starts_with("installed hello 1.0.0"), "{msg}");
+    assert!(msg.contains("warning: could not ask the mibpkg supervisor to reload"), "{msg}");
+    assert!(msg.ends_with("the SDK is not running; it loads at the next boot"), "{msg}");
+    assert!(plugin_jar(&f, "hello").exists());
+    assert_eq!(install::current_version(&f.layout, "hello").as_deref(), Some("1.0.0"));
+    assert!(State::load(&f.layout).unwrap().packages.contains_key("hello"));
+}
