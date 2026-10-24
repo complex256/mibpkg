@@ -748,10 +748,10 @@ fn remove_tree(l: &Layout, abs: &str) -> std::io::Result<()> {
 /// list (first, so nothing references the jars once they are gone) and marker, and remove the
 /// jars and the SDK's own files. After a firmware update (the live list no longer the generated
 /// one, or an HMI the SDK does not support) the live list and marker are left alone and a note
-/// says so: the records hold the old firmware's files. Without `purge` the grants, plugins/ and PERSIST stay. Returns
-/// any warnings (one per line) and, last, a note. The backups are kept: the caller forgets them
-/// (`forget_backups`) once the package is recorded as removed, so a run that fails anywhere can
-/// be run again. The caller holds /mnt/app read-write.
+/// says so: the records hold the old firmware's files. Without `purge` the grants, plugins/ and
+/// PERSIST stay. Returns any warnings (one per line) and, last, a note. The backups are kept: the
+/// caller forgets them (`forget_backups`) once the package is recorded as removed, so a run that
+/// fails anywhere can be run again. The caller holds /mnt/app read-write.
 pub fn undeploy(ctx: &Ctx, purge: bool) -> Result<String> {
     let l = &ctx.layout;
     let plugins: Vec<String> = plugin_packages(l)?.into_iter().map(|(id, _)| id).collect();
