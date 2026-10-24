@@ -5,7 +5,7 @@
 use super::grants::{self, Approval};
 use super::sdk_pkg::on_app;
 use super::{ack, catalog, ledger, stamp, toggles};
-use super::{installed_sdk, put, put_file, sdk_running, BASE, LOG, PERMISSIONS, PERSIST};
+use super::{installed_sdk, put, put_file, BASE, LOG, PERMISSIONS, PERSIST};
 use crate::ctx::Ctx;
 use crate::manifest::Manifest;
 use crate::state::State;
@@ -278,6 +278,12 @@ fn seconds(d: Duration) -> String {
     }
 }
 
+/// The SDK runtime started this boot (its log exists), reboot pending or not: it may be running a
+/// plugin and acts on its reload marker.
+fn runtime_up(l: &crate::paths::Layout) -> bool {
+    l.p(LOG).exists()
+}
+
 /// `activate_with` the usual wait (`ack::ACK_TIMEOUT`).
 pub fn activate(ctx: &Ctx, id: &str) -> String {
     activate_with(ctx, id, ack::ACK_TIMEOUT)
@@ -287,7 +293,9 @@ pub fn activate(ctx: &Ctx, id: &str) -> String {
 /// for the result. /mnt/app is held read-write only to write the marker, never while waiting, so
 /// call this after dropping any guard of your own.
 pub fn activate_with(ctx: &Ctx, id: &str, timeout: Duration) -> String {
-    if !sdk_running(&ctx.layout) {
+    // The runtime started this boot (as in `remove`): it runs the plugin now even while a reboot
+    // is pending, so a revoke or an update must reach it.
+    if !runtime_up(&ctx.layout) {
         return "the SDK is not running; it loads at the next boot".into();
     }
     let base = ack::baseline(&ctx.layout);
@@ -330,7 +338,7 @@ pub fn push(ctx: &Ctx, id: &str, jar: &[u8], stamp: Option<&[u8]>) -> Result<Str
     if let Some(w) = verified.warning(id) {
         crate::warn!("{w}");
     }
-    let running = sdk_running(l);
+    let running = runtime_up(l);
     let base = if running { ack::baseline(l) } else { ack::Baseline::unknown() };
     let token = {
         let _rw = ctx.mounts.rw("/mnt/app")?;
@@ -402,7 +410,7 @@ fn remove(ctx: &Ctx, id: &str, purge: bool, ack_timeout: Duration, ledger_wait: 
     // never recorded as a package, lost state) and even while a reboot is pending. `live`: a
     // runtime can still act on the plugin, now or at the next start. Only with neither (no
     // package, no runtime log) is nothing written for a runtime and nothing waited for.
-    let up = l.p(LOG).exists();
+    let up = runtime_up(l);
     let live = up || installed_sdk(l).is_some();
     let ledger_wait = if live { ledger_wait } else { Duration::ZERO };
     let base = if up { ack::baseline(l) } else { ack::Baseline::unknown() };

@@ -853,3 +853,52 @@ fn catalog_shows_previous_permissions_unknown_as_loud_and_unreadable_grants() {
     assert!(inst.permissions.iter().all(|p| p.granted.is_none()), "{:?}", inst.permissions);
     assert!(inst.blocked.is_empty());
 }
+
+// ---- final review fixes: a runtime up while a reboot is pending (I2) ----
+
+/// The runtime started this boot and a reboot is pending (an SDK update waits for it): the
+/// running runtime still acts on reload markers.
+fn up_with_reboot_pending(f: &common::Fixture) {
+    assert!(mibsdk::reboot_flag(&f.layout).exists());
+    write(&p(f, mibsdk::LOG), b"100 STATUS mibsdk runtime started adapter=hqc safeMode=false\n");
+}
+
+#[test]
+fn sdk_grant_revoke_during_a_pending_reboot_reloads_the_running_plugin() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    install_plugin(&f, dir.path(), "hello", &["vehicle.read"]);
+    up_with_reboot_pending(&f);
+    let rt = fake_runtime(&f, "hello", "BLOCKED_PERMISSIONS missing permissions: vehicle.read");
+    let r = ok(&f, &["sdk", "grant", "hello", ""]);
+    assert!(rt.join().unwrap(), "no reload requested");
+    assert!(is_token(&read(&marker(&f, "hello"))));
+    assert_eq!(r.out, "granted hello: <none>\nloaded: BLOCKED_PERMISSIONS missing permissions: vehicle.read\n");
+}
+
+#[test]
+fn plugin_update_during_a_pending_reboot_reloads_the_running_plugin() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    install_plugin(&f, dir.path(), "hello", &["vehicle.read", "network"]);
+    up_with_reboot_pending(&f);
+    let rt = fake_runtime(&f, "hello", "ENABLED ok");
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let msg = install_src(&ctx, &plugin_src(dir.path(), "hello", "1.1.0", &["vehicle.read"])).unwrap();
+    assert!(rt.join().unwrap(), "no reload requested");
+    assert!(is_token(&read(&marker(&f, "hello"))));
+    assert!(msg.ends_with("loaded: ENABLED ok"), "{msg}");
+}
+
+#[test]
+fn sdk_push_during_a_pending_reboot_waits_for_the_running_runtime() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    up_with_reboot_pending(&f);
+    push_upload(&f, dir.path(), "hello", "v1", Some(("hello", false)));
+    let rt = fake_runtime(&f, "hello", "ENABLED ok");
+    let r = ok(&f, &["sdk", "push", "hello"]);
+    assert!(rt.join().unwrap(), "no reload requested");
+    assert_eq!(r.out, "pushed hello; reload requested\nloaded: ENABLED ok\n");
+}
