@@ -61,9 +61,9 @@ fn data_abs(id: &str) -> String {
     format!("{PERSIST}/data/{id}.properties")
 }
 
-/// Whether `id` may be removed: as `mibsdk-dev`'s `check_id` (`[A-Za-z0-9][A-Za-z0-9._-]*`), so
-/// a pushed id the runtime accepts can always be taken off.
-fn check_id(id: &str) -> Result<()> {
+/// Whether `id` may be pushed, removed or have its data cleared: as `mibsdk-dev`'s `check_id`
+/// (`[A-Za-z0-9][A-Za-z0-9._-]*`), so a pushed id the runtime accepts can always be taken off.
+pub fn check_id(id: &str) -> Result<()> {
     let b = id.as_bytes();
     if b.is_empty() || !b[0].is_ascii_alphanumeric() || !b.iter().all(|c| c.is_ascii_alphanumeric() || b"._-".contains(c)) {
         bail!("invalid plugin id '{id}'");
@@ -299,10 +299,47 @@ pub fn activate_with(ctx: &Ctx, id: &str, timeout: Duration) -> String {
         Ok(t) => t,
         Err(e) => return format!("could not request a reload ({e:#}); it loads at the next HMI start"),
     };
-    match ack::wait(&ctx.layout, id, &base, Some(&ack::token_of(token.as_bytes())), timeout) {
+    await_load(ctx, id, &base, &token, timeout)
+}
+
+/// The note for the runtime's answer to the reload request `token`.
+fn await_load(ctx: &Ctx, id: &str, base: &ack::Baseline, token: &str, timeout: Duration) -> String {
+    match ack::wait(&ctx.layout, id, base, Some(&ack::token_of(token.as_bytes())), timeout) {
         Some((state, reason)) => format!("loaded: {state} {reason}").trim_end().to_string(),
         None => format!("reload requested; the SDK did not confirm within {} (it loads at the next HMI start)", seconds(timeout)),
     }
+}
+
+/// `mibsdk-dev push` on the unit: install `jar` as `plugins/<id>.jar` once `stamp` vouches for it
+/// (both are one snapshot of the uploaded files, so the bytes checked are the bytes written), keep
+/// the grants line as it is, and request a reload with a fresh token (always: the runtime reloads
+/// once per new marker content). An id an installed package owns is refused. The unrestricted
+/// warning goes to stderr at once.
+///
+/// Caller contract: holds the action lock and no /mnt/app read-write guard; the SDK is installed.
+pub fn push(ctx: &Ctx, id: &str, jar: &[u8], stamp: Option<&[u8]>) -> Result<String> {
+    check_id(id)?;
+    let l = &ctx.layout;
+    if State::load(l)?.packages.contains_key(id) {
+        bail!("{id} is installed as a package; remove it first or install a newer version");
+    }
+    let name = format!("{id}.jar");
+    let verified = stamp::verify_bytes(stamp, stamp::StampKind::Plugin, Some(id), &[(&name, jar)]).map_err(|e| {
+        anyhow!("{name} has no valid check stamp ({e:#}); only jars built by the mibsdk.plugin convention can be pushed: ./gradlew :<project>:mibPluginJar (M7)")
+    })?;
+    if let Some(w) = verified.warning(id) {
+        crate::warn!("{w}");
+    }
+    let running = sdk_running(l);
+    let base = if running { ack::baseline(l) } else { ack::Baseline::unknown() };
+    let token = {
+        let _rw = ctx.mounts.rw("/mnt/app")?;
+        ensure_plugins_dir(ctx)?;
+        put(ctx, &jar_abs(id), jar, JAR_MODE)?;
+        put_marker(ctx, id)?
+    };
+    let note = if running { await_load(ctx, id, &base, &token, ack::ACK_TIMEOUT) } else { "the SDK is not running; it loads at the next boot".into() };
+    Ok(format!("pushed {id}; reload requested\n{note}"))
 }
 
 /// `MIBPKG_SDK_REMOVE_WAIT_S` as `mibsdk-dev` reads `MIBSDK_REMOVE_WAIT_S`: digits only, else 30.

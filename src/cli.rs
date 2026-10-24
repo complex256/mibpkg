@@ -14,6 +14,7 @@ use crate::install;
 use crate::lock::Lock;
 use crate::manifest::Manifest;
 use crate::media;
+use crate::mibsdk::plugin_pkg::NeedsApproval;
 use crate::paths::Layout;
 use crate::state::{Installed, State};
 use crate::status::{self, now_secs};
@@ -31,7 +32,11 @@ const USAGE: &str = "usage:
   mibpkg verify <github:owner/repo|index.json|release-dir> [--latest] [--unit MHI2Q]
   mibpkg new <name> [--dir DIR]
   mibpkg [--root DIR] [--no-supervisor] <command>
-    supervise | status | list | install <pkg> [collection] | remove <pkg> [--purge]
+    supervise | status | list | install <pkg> [collection] | remove <pkg> [--purge|--purge-data] [--force]
+    install-file <pkg> <upload-id> [collection|-]
+    (install, install-file and gem install/install-file take --approve=<perm,...> for a plugin's permissions)
+    sdk status | sdk grant <id> <perm,...> | sdk push <id> | sdk remove <id> [--purge|--purge-data]
+    sdk safe-mode on|off | sdk boot-state set-wrap <n> | sdk data-clear <id>
     rollback <pkg> | restart <pkg> | rescan | update-all | gem <action> [args..]
     config-resolve <pkg> keep|card [config]
     (install, rescan and update-all take --config=keep|card to settle config conflicts)
@@ -68,6 +73,11 @@ pub fn run(args: &[String]) -> Result<i32> {
             config_choice = Some(config::Choice::parse(&rest.remove(i)["--config=".len()..])?);
         }
     }
+    // --approve/--force/--purge(-data) of the verbs that install or remove packages and plugins.
+    let flags = match flag_scope(&rest) {
+        true => take_action_flags(&mut rest),
+        false => Ok(ActionFlags::default()),
+    };
     let args = &rest[1..];
     match cmd.as_str() {
         "build" => return host_build(args),
@@ -94,6 +104,23 @@ pub fn run(args: &[String]) -> Result<i32> {
         ctx.fetcher = Box::new(crate::fetch::CurlFetcher::for_unit(&ctx.layout, crate::clock::read_offset(&ctx.layout)));
     }
     ctx.config_choice = config_choice;
+    // A malformed flag fails the action; the gem arm records it as FAILED (gem never fails).
+    let (flags, flags_err) = match flags {
+        Ok(f) => (f, None),
+        Err(e) => (ActionFlags::default(), Some(e)),
+    };
+    if cmd != "gem" {
+        if let Some(e) = flags_err {
+            return Err(e);
+        }
+    }
+    if cmd == "update-all" && flags.approved.is_some() {
+        // One list for every package would approve on the user's behalf for the ones it covers.
+        bail!("update-all never approves permissions; approve each plugin update with: mibpkg install <pkg> --approve=<perm,...>");
+    }
+    ctx.approved = flags.approved.clone();
+    ctx.force = flags.force;
+    let purge = flags.purge;
     let ctx = ctx;
     // The shims append every action's output to /tmp/mibpkg.log (RAM): keep it bounded.
     let _ = fsutil::cap_file(&ctx.layout.run("log"), supervisor::LOG_CAP);
@@ -157,14 +184,23 @@ pub fn run(args: &[String]) -> Result<i32> {
             print_list(&ctx)?;
             Ok(0)
         }
-        "install" | "remove" | "rollback" | "restart" | "rescan" | "update-all" | "config-resolve" => {
+        "install" | "install-file" | "remove" | "rollback" | "restart" | "rescan" | "update-all" | "config-resolve" => {
             // One lock across the action, the screens and the result: a second action changes nothing.
             let _lock = Lock::acquire(&ctx.layout, ctx.sys)?;
-            let r = action(&ctx, &cmd, args);
+            let r = action(&ctx, &cmd, args, purge);
             after(&ctx);
-            crate::say!("{}", r?);
-            Ok(0)
+            match r {
+                Ok(m) => {
+                    crate::say!("{m}");
+                    Ok(0)
+                }
+                Err(e) => match e.downcast_ref::<NeedsApproval>() {
+                    Some(n) => Ok(print_needs_approval(n)),
+                    None => Err(e),
+                },
+            }
         }
+        "sdk" => sdk(&ctx, args, purge, &after),
         "gem" => {
             let verb = args.first().context("gem needs an action")?.clone();
             let _lock = match Lock::acquire(&ctx.layout, ctx.sys) {
@@ -185,7 +221,11 @@ pub fn run(args: &[String]) -> Result<i32> {
                 }
                 _ => "_".into(),
             };
-            let text = match action(&ctx, &verb, &args[1..]) {
+            let r = match flags_err {
+                Some(e) => Err(e),
+                None => action(&ctx, &verb, &args[1..], purge),
+            };
+            let text = match r {
                 Ok(m) => format!("OK: {m}"),
                 Err(e) => format!("FAILED: {e:#}"),
             };
@@ -354,8 +394,8 @@ fn pkg_arg<'a>(args: &'a [String], i: usize) -> Result<&'a str> {
     Ok(name)
 }
 
-/// Caller holds the action lock.
-fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
+/// Caller holds the action lock. `purge`: `--purge`/`--purge-data` was given.
+fn action(ctx: &Ctx, verb: &str, args: &[String], purge: bool) -> Result<String> {
     let media_roots = media::roots(&ctx.layout);
     let mut colls: Vec<Collection> = media::loaded(&media::scan(&ctx.layout));
     colls.extend(crate::online::collections(&ctx.layout));
@@ -366,7 +406,7 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
             let coll = install::pick_collection(&state, &colls, name, args.get(1).map(|s| s.as_str()), &ctx.unit)?;
             install::install(ctx, &media_roots, coll, name)
         }
-        "remove" => install::remove(ctx, pkg_arg(args, 0)?, args.iter().any(|a| a == "--purge")),
+        "remove" => install::remove(ctx, pkg_arg(args, 0)?, purge),
         "rollback" => install::rollback(ctx, pkg_arg(args, 0)?),
         "restart" => {
             let name = pkg_arg(args, 0)?;
@@ -396,7 +436,7 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
         "install-file" => {
             let name = pkg_arg(args, 0)?;
             let id = id_arg(args, 1)?;
-            let coll = arg(args, 2, "collection")?;
+            let coll = args.get(2).map(String::as_str).unwrap_or("-");
             if coll != "-" && !crate::manifest::valid_name(coll) {
                 bail!("invalid collection {coll:?}");
             }
@@ -545,6 +585,360 @@ fn action(ctx: &Ctx, verb: &str, args: &[String]) -> Result<String> {
             uninstall_self(ctx, purge)
         }
         other => bail!("unknown action {other:?}"),
+    }
+}
+
+/// `--approve=`, `--force`, `--purge`/`--purge-data` of an install or removal.
+#[derive(Default)]
+struct ActionFlags {
+    /// None: no `--approve` given (ask instead of installing); `--approve=` approves nothing.
+    approved: Option<Vec<String>>,
+    force: bool,
+    purge: bool,
+}
+
+/// The command words that take `ActionFlags`.
+fn flag_scope(rest: &[String]) -> bool {
+    let w = |i: usize| rest.get(i).map(String::as_str);
+    match w(0) {
+        Some("install" | "install-file" | "update-all" | "remove") => true,
+        Some("gem") => matches!(w(1), Some("install" | "install-file" | "remove")),
+        Some("sdk") => w(1) == Some("remove"),
+        _ => false,
+    }
+}
+
+/// Take the action flags out of `rest` (anywhere after the command word).
+fn take_action_flags(rest: &mut Vec<String>) -> Result<ActionFlags> {
+    let mut f = ActionFlags::default();
+    let mut err = None;
+    let mut first = true;
+    rest.retain(|a| {
+        if std::mem::take(&mut first) {
+            return true; // the command word
+        }
+        match a.as_str() {
+            "--force" => f.force = true,
+            "--purge" | "--purge-data" => f.purge = true,
+            _ => match a.strip_prefix("--approve=") {
+                Some(list) => {
+                    let mut v = f.approved.take().unwrap_or_default();
+                    for p in list.split(',').filter(|p| !p.is_empty()) {
+                        if !crate::mibsdk::catalog::is_permission(p) {
+                            err.get_or_insert_with(|| anyhow::anyhow!("invalid permission {p:?} in --approve (1 or more of [A-Za-z0-9._-])"));
+                        }
+                        v.push(p.to_string());
+                    }
+                    f.approved = Some(v);
+                }
+                None => return true,
+            },
+        }
+        false
+    });
+    err.map_or(Ok(f), Err)
+}
+
+/// Exit code 3: what to approve, one line per permission, then how.
+fn print_needs_approval(n: &NeedsApproval) -> i32 {
+    crate::warn!("mibpkg: {} {} needs these permissions approved:", n.package, n.version);
+    for l in &n.lines {
+        crate::say!("{l}");
+    }
+    crate::say!("approve with: --approve={}", n.ask.join(","));
+    3
+}
+
+const SDK_USAGE: &str = "usage:
+  mibpkg sdk status
+  mibpkg sdk grant <id> <perm,...>        (an empty list revokes all)
+  mibpkg sdk push <id>                    (/tmp/mibpkg.push.<id>.jar and its .stamp, from mibsdk-dev push)
+  mibpkg sdk remove <id> [--purge|--purge-data]
+  mibpkg sdk safe-mode on|off
+  mibpkg sdk boot-state set-wrap <n>
+  mibpkg sdk data-clear <id>";
+
+/// `boot-state set-wrap`'s count: 1 to 6 digits.
+fn wrap_count(n: &str) -> bool {
+    (1..=6).contains(&n.len()) && n.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// `mibpkg sdk <verb>`. Every verb but `status` runs under the action lock (each writes through
+/// `mibsdk::put`) and needs the SDK installed; `status` only reads, so it runs while an action
+/// holds the lock and exits 0 whatever it finds.
+fn sdk(ctx: &Ctx, args: &[String], purge: bool, after: &dyn Fn(&Ctx)) -> Result<i32> {
+    let verb = args.first().map(String::as_str).unwrap_or("");
+    let rest = args.get(1..).unwrap_or(&[]);
+    let w = |i: usize| rest.get(i).map(String::as_str);
+    let well_formed = match verb {
+        "status" | "grant" | "push" | "remove" | "data-clear" => true,
+        "safe-mode" => matches!(w(0), Some("on" | "off")),
+        "boot-state" => w(0) == Some("set-wrap") && w(1).is_some_and(wrap_count),
+        _ => false,
+    };
+    if !well_formed {
+        crate::warn!("{SDK_USAGE}");
+        return Ok(2);
+    }
+    if verb == "status" {
+        sdk_status(ctx);
+        return Ok(0);
+    }
+    // The pushed files are read once and deleted, whatever happens next (the lock included).
+    let snapshot = if verb == "push" { Some(push_snapshot(ctx, rest)?) } else { None };
+    let _lock = Lock::acquire(&ctx.layout, ctx.sys)?;
+    let r = need_sdk(ctx).and_then(|()| match snapshot {
+        Some((id, jar, stamp)) => crate::mibsdk::plugin_pkg::push(ctx, &id, &jar, stamp.as_deref()),
+        None => sdk_action(ctx, verb, rest, purge),
+    });
+    after(ctx);
+    crate::say!("{}", r?);
+    Ok(0)
+}
+
+fn need_sdk(ctx: &Ctx) -> Result<()> {
+    if crate::mibsdk::installed_sdk(&ctx.layout).is_none() {
+        bail!("mibsdk is not installed (run: mibpkg install mibsdk, or mibsdk-dev install)");
+    }
+    Ok(())
+}
+
+/// `sdk push <id>`: the id and one read of `/tmp/mibpkg.push.<id>.jar` and its `.stamp` (None:
+/// no stamp); both files are deleted before this returns.
+fn push_snapshot(ctx: &Ctx, rest: &[String]) -> Result<(String, Vec<u8>, Option<Vec<u8>>)> {
+    let id = arg(rest, 0, "plugin id")?;
+    crate::mibsdk::plugin_pkg::check_id(id)?;
+    let (jar_p, stamp_p) = (ctx.layout.run(&format!("push.{id}.jar")), ctx.layout.run(&format!("push.{id}.jar.stamp")));
+    let (jar, stamp) = (fs::read(&jar_p), fs::read(&stamp_p).ok());
+    let _ = fs::remove_file(&jar_p);
+    let _ = fs::remove_file(&stamp_p);
+    let jar = jar.with_context(|| format!("reading {} (upload it first: mibsdk-dev push <plugin.jar>)", ctx.layout.unit_path(&jar_p)))?;
+    Ok((id.to_string(), jar, stamp))
+}
+
+fn remove_if_present(p: &Path) -> std::io::Result<()> {
+    match fs::remove_file(p) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
+/// The `sdk` verbs that change something; the caller holds the action lock and checked the SDK.
+fn sdk_action(ctx: &Ctx, verb: &str, rest: &[String], purge: bool) -> Result<String> {
+    use crate::mibsdk::{plugin_pkg, BASE, BOOT_STATE_RESET, PERSIST};
+    let l = &ctx.layout;
+    let boot_state = format!("{PERSIST}/boot.state");
+    match verb {
+        "grant" => {
+            let id = pkg_arg(rest, 0)?;
+            let list = arg(rest, 1, "permission list (empty to revoke all)")?;
+            if !list.bytes().all(|b| b.is_ascii_alphanumeric() || b"._,-".contains(&b)) {
+                bail!("invalid permission list {list:?}");
+            }
+            let perms: std::collections::BTreeSet<String> = list.split(',').filter(|p| !p.is_empty()).map(String::from).collect();
+            {
+                let _rw = ctx.mounts.rw("/mnt/app")?;
+                crate::mibsdk::grants::set(ctx, id, &perms)?;
+            }
+            let shown = if perms.is_empty() { "<none>".to_string() } else { perms.iter().cloned().collect::<Vec<_>>().join(",") };
+            Ok(format!("granted {id}: {shown}\n{}", plugin_pkg::activate(ctx, id)))
+        }
+        "remove" => {
+            let id = arg(rest, 0, "plugin id")?;
+            plugin_pkg::check_id(id)?;
+            if id == crate::mibsdk::SDK_PKG {
+                bail!("mibsdk is the SDK itself; remove it with: mibpkg remove mibsdk");
+            }
+            if !State::load(l)?.packages.contains_key(id) {
+                return plugin_pkg::remove_id(ctx, id, purge);
+            }
+            if install::current_manifest(l, id).is_ok_and(|m| m.kind() != crate::manifest::Kind::Plugin) {
+                bail!("{id} is not a plugin package; remove it with: mibpkg remove {id}");
+            }
+            install::remove(ctx, id, purge)
+        }
+        "safe-mode" if rest[0] == "on" => {
+            let _rw = ctx.mounts.rw("/mnt/app")?;
+            crate::mibsdk::put(ctx, &format!("{BASE}/SAFE_MODE"), b"", 0o644)?;
+            Ok("safe mode marker set; it takes effect on the next HMI restart".into())
+        }
+        "safe-mode" => {
+            {
+                let _rw = ctx.mounts.rw("/mnt/app")?;
+                let marker = l.p(&format!("{BASE}/SAFE_MODE"));
+                crate::mibsdk::sdk_pkg::on_app(ctx, "cannot remove SAFE_MODE", &mut || remove_if_present(&marker))?;
+            }
+            // PERSIST is writable without a remount.
+            fs::create_dir_all(l.p(PERSIST)).with_context(|| format!("creating {PERSIST}"))?;
+            crate::mibsdk::put(ctx, &boot_state, BOOT_STATE_RESET.as_bytes(), 0o644)?;
+            Ok("safe mode off: SAFE_MODE removed and boot.state reset (unhealthyBoots=0, wrapBoots=0: plugins load and\n\
+                DSI services are wrapped again).\n\
+                It takes effect on the next HMI restart; recommended: restart the HMI (mibsdk-dev restart).\n\
+                Note: if the runtime is currently running in normal mode it may rewrite boot.state from cached state;\n      \
+                restart promptly (or run this with the HMI stopped) so the reset sticks."
+                .into())
+        }
+        "boot-state" => {
+            let n = &rest[1];
+            let old = match fs::read(l.p(&boot_state)) {
+                Ok(b) => b,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => BOOT_STATE_RESET.as_bytes().to_vec(),
+                Err(e) => return Err(e).with_context(|| format!("reading {boot_state}")),
+            };
+            fs::create_dir_all(l.p(PERSIST)).with_context(|| format!("creating {PERSIST}"))?;
+            crate::mibsdk::put(ctx, &boot_state, &set_wrap(&old, n), 0o644)?;
+            Ok(format!("boot.state: wrapBoots={n} (other keys kept); it is read on the next HMI start"))
+        }
+        "data-clear" => {
+            let id = arg(rest, 0, "plugin id")?;
+            plugin_pkg::check_id(id)?;
+            let data = format!("{PERSIST}/data/{id}.properties");
+            let tmp = format!("{data}.tmp");
+            if !l.p(&data).exists() && !l.p(&tmp).exists() {
+                return Ok(format!("no data for {id} in {PERSIST}/data; nothing to clear"));
+            }
+            for abs in [&data, &tmp] {
+                remove_if_present(&l.p(abs)).with_context(|| format!("cannot remove {abs}"))?;
+            }
+            Ok(format!(
+                "cleared the data of {id} ({data})\nRestart the HMI now: a running {id} may write its data back, and the storage cap frees the space only from the next runtime start."
+            ))
+        }
+        other => bail!("unknown sdk verb {other:?}"),
+    }
+}
+
+/// `boot.state` with every `wrapBoots=` line set to `n` (appended when there is none), CRs
+/// stripped, every other line kept (as `mibsdk-dev boot-state set-wrap`).
+fn set_wrap(old: &[u8], n: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut found = false;
+    let mut lines: Vec<&[u8]> = old.split(|&b| b == b'\n').collect();
+    if lines.last().is_some_and(|l| l.is_empty()) {
+        lines.pop();
+    }
+    for line in lines {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line.starts_with(b"wrapBoots=") {
+            out.extend_from_slice(format!("wrapBoots={n}").as_bytes());
+            found = true;
+        } else {
+            out.extend_from_slice(line);
+        }
+        out.push(b'\n');
+    }
+    if !found {
+        out.extend_from_slice(format!("wrapBoots={n}\n").as_bytes());
+    }
+    out
+}
+
+/// ISO-8859-1 text of a runtime file (every byte is the code point of the same value).
+fn latin1(b: &[u8]) -> String {
+    b.iter().map(|&c| c as char).collect()
+}
+
+/// `sdk status`: the live `HMICar=` line first, the SDK and its plugins, the ledger, then the
+/// runtime's STATUS lines. Never fails: what cannot be read is said on stderr.
+fn sdk_status(ctx: &Ctx) {
+    use crate::mibsdk::{grants, installed_sdk, ledger, reboot_flag, sdk_running, toggles, BASE, BUNDLES, LOG};
+    let l = &ctx.layout;
+    match fs::read(l.p(BUNDLES)) {
+        Ok(b) => {
+            let t = latin1(&b);
+            let line = t.split('\n').map(|x| x.strip_suffix('\r').unwrap_or(x)).find(|x| x.starts_with("HMICar="));
+            crate::say!("{}", line.unwrap_or("HMICar=<missing>"));
+        }
+        Err(e) => {
+            crate::warn!("warning: cannot read {BUNDLES} ({e})");
+            crate::say!("HMICar=<missing>");
+        }
+    }
+    let sdk = installed_sdk(l);
+    let hmi = crate::unit::hmi_version(l);
+    let hmi_name = hmi.clone().unwrap_or_else(|| "unknown".into());
+    let mut unsupported = false;
+    match &sdk {
+        Some((version, spec, _)) => {
+            unsupported = !hmi.as_ref().is_some_and(|v| spec.hmi.contains(v));
+            crate::say!("sdk: {version}");
+            crate::say!("api: {}..{}", spec.min_api, spec.api);
+            crate::say!("hmi: {hmi_name} ({})", if unsupported { "UNSUPPORTED" } else { "supported" });
+        }
+        None => {
+            crate::say!("sdk: not installed");
+            crate::say!("api: -");
+            crate::say!("hmi: {hmi_name}");
+        }
+    }
+    let yes = |b: bool| if b { "yes" } else { "no" };
+    crate::say!("running: {}", yes(sdk_running(l)));
+    crate::say!("reboot needed: {}", yes(reboot_flag(l).exists()));
+
+    // Packages (version, declared permissions) and pushed jars (no package), by id.
+    let mut plugins: std::collections::BTreeMap<String, (String, Option<Vec<String>>)> = Default::default();
+    if let Ok(st) = State::load(l) {
+        for (name, inst) in &st.packages {
+            if let Some(pl) = install::current_manifest(l, name).ok().and_then(|m| m.plugin) {
+                plugins.insert(name.clone(), (inst.version.clone(), Some(pl.permissions)));
+            }
+        }
+    }
+    if let Ok(rd) = fs::read_dir(l.p(&format!("{BASE}/plugins"))) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if let Some(id) = name.strip_suffix(".jar") {
+                plugins.entry(id.to_string()).or_insert_with(|| ("pushed".into(), None));
+            }
+        }
+    }
+    let granted = grants::read(l).unwrap_or_else(|e| {
+        crate::warn!("warning: {e:#}");
+        Default::default()
+    });
+    let off = toggles::off_ids(l);
+    for (id, (version, declared)) in &plugins {
+        let g = granted.get(id).cloned().unwrap_or_default();
+        let mut line = format!("plugin {id} {version} grants={}", g.iter().cloned().collect::<Vec<_>>().join(","));
+        if off.contains(id) {
+            line.push_str(" off");
+        }
+        let missing = declared.as_deref().map(|d| grants::missing(d, &g)).unwrap_or_default();
+        if !missing.is_empty() {
+            line.push_str(&format!(" blocked: {}", missing.join(",")));
+        }
+        crate::say!("{line}");
+    }
+
+    match ledger::read(l) {
+        Ok(entries) => {
+            crate::say!("ledger: {} override(s)", entries.len());
+            for e in &entries {
+                crate::say!("{}", e.line);
+            }
+            if !entries.is_empty() {
+                // Spec 6.1.
+                crate::say!("WARNING: vehicle overrides are in force; disable their plugins before a firmware update (a firmware without a matching adapter cannot restore them)");
+                if unsupported {
+                    crate::say!("WARNING: the SDK is off on this firmware and cannot restore these overrides");
+                }
+            }
+        }
+        Err(e) => crate::say!("ledger: unreadable ({e:#})"),
+    }
+
+    match fs::read(l.p(LOG)) {
+        Ok(b) => {
+            let t = latin1(&b);
+            let status: Vec<&str> = t.lines().filter(|x| x.contains(" STATUS ")).collect();
+            if status.is_empty() {
+                crate::warn!("no STATUS lines in {LOG} yet");
+            }
+            for s in status {
+                crate::say!("{s}");
+            }
+        }
+        Err(_) => crate::warn!("{LOG} not found (the SDK has not started this boot)"),
     }
 }
 
