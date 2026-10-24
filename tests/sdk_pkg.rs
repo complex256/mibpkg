@@ -1704,3 +1704,21 @@ fn sdk_remove_retry_after_a_firmware_update_leaves_the_live_list_alone() {
     assert!(!backups::has_backup(&f.layout, mibsdk::BUNDLES));
     assert!(!State::load(&f.layout).unwrap().packages.contains_key("mibsdk"));
 }
+
+/// The undo of a fresh install also takes off the sdk.properties and permissions.json it wrote,
+/// so the records it leaves can go stale once the live list is stock again (final review M1).
+#[test]
+fn sdk_deploy_failure_undo_removes_sdk_properties_and_permissions() {
+    let (f, dir) = unit();
+    // The last step (the reboot flag) fails: everything else was written.
+    write(&mibsdk::reboot_flag(&f.layout).join("blocker"), b"x");
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let e = err(install_sdk(&ctx, dir.path(), "0.1.0"));
+    assert!(e.contains("the install was undone"), "{e}");
+    assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), stock());
+    assert!(sdk_jars_present(&f).is_empty());
+    assert!(!p(&f, &format!("{}/sdk.properties", mibsdk::BASE)).exists());
+    assert!(!p(&f, mibsdk::PERMISSIONS).exists());
+    assert!(!backups::has_backup(&f.layout, mibsdk::BUNDLES));
+}

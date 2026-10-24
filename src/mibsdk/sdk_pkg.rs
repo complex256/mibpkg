@@ -472,6 +472,8 @@ struct Done {
     bundles_written: bool,
     /// Jars this run put into JARS.
     jars: Vec<String>,
+    /// The SDK's own files (sdk.properties, permissions.json) this run may have written.
+    files: Vec<String>,
 }
 
 /// Record the stock bundle list and marker: adopt `mibsdk-dev`'s backup, or back up the live
@@ -530,7 +532,10 @@ fn apply(ctx: &Ctx, plan: &Plan, ops: &dyn FileOps, done: &mut Done, notes: &mut
         done.jars.push(j.clone());
         put_file(ctx, &format!("{JARS}/{j}"), &plan.dir.join(j), 0o644)?;
     }
-    put(ctx, &format!("{BASE}/sdk.properties"), &plan.props, 0o644)?;
+    let props = format!("{BASE}/sdk.properties");
+    done.files.push(props.clone());
+    put(ctx, &props, &plan.props, 0o644)?;
+    done.files.push(PERMISSIONS.to_string());
     put_file(ctx, PERMISSIONS, &plan.dir.join(&plan.spec.permissions), 0o644)?;
     done.activating = true;
     // Only if absent: lsd.sh reads the on-disk bundle list only with the marker, and touching an
@@ -610,9 +615,9 @@ fn undo_fresh(ctx: &Ctx, plan: &Plan, done: &Done) -> Result<String> {
     if done.activating || plan.adopt.is_some() || done.created_marker_backup {
         restore_marker(ctx)?;
     }
-    for j in &done.jars {
-        // A directory in the jar's place was never written (put cannot replace one): not ours.
-        let abs = format!("{JARS}/{j}");
+    // sdk.properties too: an SDK file left behind would keep the records from going stale.
+    for abs in done.jars.iter().map(|j| format!("{JARS}/{j}")).chain(done.files.iter().cloned()) {
+        // A directory in the file's place was never written (put cannot replace one): not ours.
         if !l.p(&abs).is_dir() {
             remove_on_app(ctx, &abs)?;
         }
