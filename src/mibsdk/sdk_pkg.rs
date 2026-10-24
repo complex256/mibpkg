@@ -235,7 +235,7 @@ fn check_owned_classes(l: &Layout, sdk: &SdkSpec, jars: &[String]) -> Result<()>
         if name.contains(char::is_whitespace) {
             bail!("{abs} has a space in its name; the ownership check cannot handle it; nothing changed");
         }
-        let entries = zipnames::list(&path).map_err(|_| anyhow!("cannot list {abs} (not a zip?); nothing changed"))?;
+        let entries = zipnames::list(&path).map_err(|e| anyhow!("cannot list {abs} (not a zip?: {e:#}); nothing changed"))?;
         for prefix in &sdk.owned {
             if let Some(e) = entries.iter().find(|e| e.starts_with(prefix.as_str()) && e.ends_with(".class")) {
                 bail!("{name} defines {e}, which the SDK owns; nothing changed");

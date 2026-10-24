@@ -3,8 +3,7 @@
 //! closed, so anything this reader does not understand (zip64, a truncated or inconsistent
 //! directory) is an error, never an empty list.
 use anyhow::{bail, Context, Result};
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::fs;
 use std::path::Path;
 
 const EOCD_SIG: u32 = 0x0605_4b50;
@@ -23,18 +22,25 @@ fn u32_at(b: &[u8], i: usize) -> u32 {
 }
 
 /// Every central-directory entry name of the zip at `path`, in directory order.
+///
+/// Reads the whole file and never seeks: on the unit (QNX 6.5 std port) `lseek` fails with
+/// EINVAL, so a seek-and-read reader could not list any jar there (bench, Plan 3 Task 15). The
+/// jars it reads are at most a few MB.
 pub fn list(path: &Path) -> Result<Vec<String>> {
-    let mut f = File::open(path).with_context(|| format!("opening {}", path.display()))?;
-    let len = f.metadata()?.len();
+    let data = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    list_bytes(&data)
+}
+
+/// [`list`] over a zip already in memory.
+fn list_bytes(data: &[u8]) -> Result<Vec<String>> {
+    let len = data.len() as u64;
     let tail_len = len.min(TAIL);
     let tail_start = len - tail_len;
-    f.seek(SeekFrom::Start(tail_start))?;
-    let mut tail = vec![0u8; tail_len as usize];
-    f.read_exact(&mut tail)?;
+    let tail = &data[tail_start as usize..];
     // The last end record whose comment fits in the file.
     let eocd = (0..tail.len().saturating_sub(EOCD_LEN - 1))
         .rev()
-        .find(|&i| u32_at(&tail, i) == EOCD_SIG && i + EOCD_LEN + u16_at(&tail, i + 20) <= tail.len())
+        .find(|&i| u32_at(tail, i) == EOCD_SIG && i + EOCD_LEN + u16_at(tail, i + 20) <= tail.len())
         .context("no end of central directory record (not a zip)")?;
     let e = &tail[eocd..];
     let (disk, cd_disk) = (u16_at(e, 4), u16_at(e, 6));
@@ -50,17 +56,15 @@ pub fn list(path: &Path) -> Result<Vec<String>> {
     if cd_off + cd_size > eocd_pos {
         bail!("the central directory lies outside the file");
     }
-    f.seek(SeekFrom::Start(cd_off))?;
-    let mut cd = vec![0u8; cd_size as usize];
-    f.read_exact(&mut cd)?;
+    let cd = &data[cd_off as usize..(cd_off + cd_size) as usize];
     let mut names = Vec::with_capacity(total);
     let mut i = 0;
     for _ in 0..total {
-        if i + CDH_LEN > cd.len() || u32_at(&cd, i) != CDH_SIG {
+        if i + CDH_LEN > cd.len() || u32_at(cd, i) != CDH_SIG {
             bail!("bad central directory entry {}", names.len());
         }
-        let n = u16_at(&cd, i + 28);
-        let end = i + CDH_LEN + n + u16_at(&cd, i + 30) + u16_at(&cd, i + 32);
+        let n = u16_at(cd, i + 28);
+        let end = i + CDH_LEN + n + u16_at(cd, i + 30) + u16_at(cd, i + 32);
         if end > cd.len() {
             bail!("central directory entry {} runs past the directory", names.len());
         }

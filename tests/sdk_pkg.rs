@@ -799,7 +799,7 @@ fn check_guard_only_looks_at_jars() {
 fn check_guard_fails_closed_on_an_unreadable_jar() {
     let (f, dir) = unit();
     write(&p(&f, &format!("{}/broken.jar", mibsdk::JARS)), b"not a zip");
-    assert_refused_untouched(&f, dir.path(), "cannot list /mnt/app/eso/hmi/lsd/jars/broken.jar (not a zip?)");
+    assert_refused_untouched(&f, dir.path(), "cannot list /mnt/app/eso/hmi/lsd/jars/broken.jar (not a zip?: no end of central directory record");
 }
 
 // was: test_guard_refuses_a_symlinked_jar
