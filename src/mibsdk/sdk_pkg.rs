@@ -748,7 +748,8 @@ fn remove_tree(l: &Layout, abs: &str) -> std::io::Result<()> {
 /// list (first, so nothing references the jars once they are gone) and marker, and remove the
 /// jars and the SDK's own files. After a firmware update (the live list no longer the generated
 /// one, or an HMI the SDK does not support) the live list and marker are left alone and a note
-/// says so: the records hold the old firmware's files. Without `purge` the grants, plugins/ and
+/// says so: the records hold the old firmware's files. A live list that still references the
+/// SDK on an unsupported HMI is refused (nothing changed) unless `--force`. Without `purge` the grants, plugins/ and
 /// PERSIST stay. Returns any warnings (one per line) and, last, a note. The backups are kept: the
 /// caller forgets them (`forget_backups`) once the package is recorded as removed, so a run that
 /// fails anywhere can be run again. The caller holds /mnt/app read-write.
@@ -816,7 +817,21 @@ pub fn undeploy(ctx: &Ctx, purge: bool) -> Result<String> {
     // put the old firmware's list (and marker) onto the new one.
     let hmi = crate::unit::hmi_version(l);
     let refs = fs::read(l.p(BUNDLES)).is_ok_and(|live| references_sdk(&live, Some(&spec)));
-    if refs && hmi.as_ref().is_some_and(|v| spec.hmi.contains(v)) {
+    let supported = hmi.as_ref().is_some_and(|v| spec.hmi.contains(v));
+    if refs && !supported && !ctx.force {
+        bail!(
+            "refusing to uninstall: the firmware changed since mibsdk was installed (HMI {}; this SDK supports {}), \
+             but {BUNDLES} still references the SDK.\n\
+             the stock backup is from the older firmware: restoring it, or removing the SDK jars this list still loads, \
+             could stop the HMI booting.\n\
+             put this firmware's stock bundle list back first (reinstall the firmware, or install a mibsdk that supports \
+             this HMI), then run the removal again.\n\
+             to remove the SDK files anyway and leave the bundle list as it is, add --force; nothing changed",
+            hmi.as_deref().unwrap_or("unknown"),
+            spec.hmi.join(", ")
+        );
+    }
+    if refs && supported {
         restore_bundles(ctx)?;
         restore_marker(ctx)?;
     } else {

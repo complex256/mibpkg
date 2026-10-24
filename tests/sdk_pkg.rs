@@ -1664,7 +1664,8 @@ fn sdk_remove_after_a_firmware_update_leaves_the_live_list_and_marker_alone() {
             write(&p(&f, mibsdk::VERSION_INFO), NEW_HMI);
         }
         let sys = RecordingSys::default();
-        let ctx = Ctx::new(f.layout.clone(), &sys);
+        let mut ctx = Ctx::new(f.layout.clone(), &sys);
+        ctx.force = live == generated; // refused without --force (the next test)
         let msg = install::remove(&ctx, "mibsdk", false).unwrap();
         let case = format!("new_hmi={new_hmi} generated={}", live == generated);
         assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), live, "{case}");
@@ -1807,4 +1808,22 @@ fn uninstall_self_refuses_while_an_unrecorded_sdk_is_active() {
     let e = format!("{:#}", uninstall_self(&f, false).unwrap_err());
     assert!(e.contains("mibpkg uninstall-self --purge"), "{e}");
     assert!(f.layout.home().exists());
+}
+
+/// A live list still naming the SDK on an HMI the SDK does not support: the stock backup is from
+/// older firmware, so the removal refuses, changing nothing, unless --force (controller ruling on I1).
+#[test]
+fn sdk_remove_refuses_when_the_hmi_changed_but_the_list_still_names_the_sdk() {
+    let (f, _dir) = installed(None);
+    write(&p(&f, mibsdk::VERSION_INFO), NEW_HMI);
+    let before = tree(f.root());
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let e = format!("{:#}", install::remove(&ctx, "mibsdk", false).unwrap_err());
+    assert!(e.contains("the firmware changed since mibsdk was installed"), "{e}");
+    assert!(e.contains("could stop the HMI booting"), "{e}");
+    assert!(e.contains("--force"), "{e}");
+    assert!(e.ends_with("nothing changed"), "{e}");
+    assert_eq!(tree(f.root()), before);
+    assert_still_installed(&f);
 }
