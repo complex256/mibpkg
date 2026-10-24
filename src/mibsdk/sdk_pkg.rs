@@ -528,6 +528,7 @@ fn apply(ctx: &Ctx, plan: &Plan, ops: &dyn FileOps, done: &mut Done, notes: &mut
         on_app(ctx, &format!("cannot create {d}"), &mut || fs::create_dir_all(&p))?;
     }
     notes.extend(migrate_state(ctx)?);
+    track_jars(l, &plan.spec.jars)?;
     for j in &plan.spec.jars {
         done.jars.push(j.clone());
         put_file(ctx, &format!("{JARS}/{j}"), &plan.dir.join(j), 0o644)?;
@@ -552,8 +553,9 @@ fn apply(ctx: &Ctx, plan: &Plan, ops: &dyn FileOps, done: &mut Done, notes: &mut
 }
 
 /// Install the SDK version unpacked in `ver_dir`: verify its stamp, record the stock files,
-/// migrate old state, then write the jars, sdk.properties, permissions.json, the marker and, last,
-/// the bundle list. Returns notes for the user. All or undo: on failure `prev_dir` (the version
+/// migrate old state, then write the jars, sdk.properties, permissions.json, the marker and the
+/// bundle list; last, remove the SDK jars an earlier version deployed that this one no longer
+/// lists. Returns notes for the user. All or undo: on failure `prev_dir` (the version
 /// being replaced) is deployed again, or a fresh install is undone (the stock bundle list and
 /// marker back, the jars written deleted); the error says which. The caller holds /mnt/app
 /// read-write.
@@ -567,7 +569,9 @@ pub fn deploy_with(ctx: &Ctx, m: &Manifest, ver_dir: &Path, prev_dir: Option<&Pa
     let mut notes = Vec::new();
     let plan = plan(ctx, m, ver_dir, &mut notes)?; // nothing written yet
     let mut done = Done::default();
-    let Err(e) = apply(ctx, &plan, ops, &mut done, &mut notes) else { return Ok(notes) };
+    // Last, so a failure redeploys the replaced version with all its jars.
+    let r = apply(ctx, &plan, ops, &mut done, &mut notes).and_then(|()| drop_unlisted_jars(ctx, &plan.spec));
+    let Err(e) = r else { return Ok(notes) };
     let undo = match prev_dir {
         Some(prev) => redeploy(ctx, prev, &done.jars),
         None => undo_fresh(ctx, &plan, &done),
@@ -588,6 +592,46 @@ fn redeploy(ctx: &Ctx, prev: &Path, written: &[String]) -> Result<String> {
         remove_on_app(ctx, &format!("{JARS}/{j}"))?;
     }
     Ok(format!("mibsdk {} was deployed again", m.package.version))
+}
+
+/// Where mibpkg records every jar name an `[sdk]` version it deployed listed, one per line (in
+/// mibpkg's own package directory, which an uninstall removes).
+fn deployed_jars_file(l: &Layout) -> PathBuf {
+    l.pkg_dir(SDK_PKG).join("deployed-jars")
+}
+
+/// The SDK jar names mibpkg deployed: only `mibsdk-*.jar` names (as `[sdk] jars` must be), so a
+/// damaged record never names another jar.
+fn deployed_jars(l: &Layout) -> Result<Vec<String>> {
+    let text = match fs::read_to_string(deployed_jars_file(l)) {
+        Ok(t) => t,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e).context("reading the record of the deployed SDK jars"),
+    };
+    Ok(text
+        .lines()
+        .filter(|n| n.starts_with("mibsdk-") && n.ends_with(".jar") && !n.contains('/'))
+        .map(String::from)
+        .collect())
+}
+
+/// Add `jars` to the record of the deployed SDK jars.
+fn track_jars(l: &Layout, jars: &[String]) -> Result<()> {
+    let mut all = deployed_jars(l)?;
+    all.extend(jars.iter().cloned());
+    all.sort();
+    all.dedup();
+    fs::create_dir_all(l.pkg_dir(SDK_PKG))?;
+    crate::fsutil::atomic_write(&deployed_jars_file(l), (all.join("\n") + "\n").as_bytes())
+        .context("recording the deployed SDK jars")
+}
+
+/// Remove the SDK jars an earlier version deployed that `spec` no longer lists.
+fn drop_unlisted_jars(ctx: &Ctx, spec: &SdkSpec) -> Result<()> {
+    for j in deployed_jars(&ctx.layout)?.iter().filter(|j| !spec.jars.contains(j)) {
+        remove_on_app(ctx, &format!("{JARS}/{j}"))?;
+    }
+    Ok(())
 }
 
 /// Undo a fresh install. The live bundle list is written only with the plan's (verified) stock
@@ -751,7 +795,12 @@ pub fn undeploy(ctx: &Ctx, purge: bool) -> Result<String> {
     } else {
         warnings.push(firmware_changed(hmi.as_deref(), refs));
     }
-    for j in &spec.jars {
+    // Every SDK jar an installed version listed, not only the current version's.
+    let mut jars = deployed_jars(l)?;
+    jars.extend(spec.jars.iter().cloned());
+    jars.sort();
+    jars.dedup();
+    for j in &jars {
         remove_on_app(ctx, &format!("{JARS}/{j}"))?;
     }
     for abs in [format!("{BASE}/sdk.properties"), PERMISSIONS.to_string()] {

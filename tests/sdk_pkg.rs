@@ -1722,3 +1722,52 @@ fn sdk_deploy_failure_undo_removes_sdk_properties_and_permissions() {
     assert!(!p(&f, mibsdk::PERMISSIONS).exists());
     assert!(!backups::has_backup(&f.layout, mibsdk::BUNDLES));
 }
+
+fn jar_present(f: &common::Fixture, name: &str) -> bool {
+    p(f, &format!("{}/{name}", mibsdk::JARS)).is_file()
+}
+
+/// An update or rollback takes off the jars of the replaced version that the new one no longer
+/// lists; never a jar no installed version listed (final review M2).
+#[test]
+fn sdk_update_and_rollback_remove_jars_the_new_version_no_longer_lists() {
+    let (f, dir) = unit();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let mut jars = SDK_JARS.to_vec();
+    jars.push("mibsdk-extra.jar");
+    install_src(&ctx, &sdk_src_with(dir.path(), "0.1.0", &jars, 1, 2)).unwrap();
+    assert!(jar_present(&f, "mibsdk-extra.jar"));
+    write(&p(&f, &format!("{}/mibsdk-foreign.jar", mibsdk::JARS)), b"not ours");
+    install_sdk(&ctx, dir.path(), "0.2.0").unwrap();
+    assert!(!jar_present(&f, "mibsdk-extra.jar"), "0.2.0 does not list it");
+    assert_eq!(sdk_jars_present(&f), SDK_JARS.to_vec());
+    install::rollback(&ctx, "mibsdk").unwrap();
+    assert!(jar_present(&f, "mibsdk-extra.jar"), "0.1.0 lists it again");
+    install::rollback(&ctx, "mibsdk").unwrap();
+    assert!(!jar_present(&f, "mibsdk-extra.jar"));
+    assert!(jar_present(&f, "mibsdk-foreign.jar"), "never listed: not ours");
+    assert!(jar_present(&f, "stock.jar"));
+}
+
+/// The uninstall takes off every SDK jar an installed version listed, not only the current
+/// version's; never a jar none listed (final review M2).
+#[test]
+fn sdk_remove_takes_off_every_jar_an_installed_version_listed() {
+    let (f, dir) = unit();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let mut jars = SDK_JARS.to_vec();
+    jars.push("mibsdk-extra.jar");
+    install_src(&ctx, &sdk_src_with(dir.path(), "0.1.0", &jars, 1, 2)).unwrap();
+    install_sdk(&ctx, dir.path(), "0.2.0").unwrap();
+    install_sdk(&ctx, dir.path(), "0.3.0").unwrap(); // 0.1.0's directory is pruned
+    // Left by an update that could not remove it.
+    write(&p(&f, &format!("{}/mibsdk-extra.jar", mibsdk::JARS)), b"left behind");
+    write(&p(&f, &format!("{}/mibsdk-foreign.jar", mibsdk::JARS)), b"not ours");
+    install::remove(&ctx, "mibsdk", false).unwrap();
+    assert!(sdk_jars_present(&f).is_empty());
+    assert!(!jar_present(&f, "mibsdk-extra.jar"));
+    assert!(jar_present(&f, "mibsdk-foreign.jar"), "never listed: not ours");
+    assert!(jar_present(&f, "stock.jar"));
+}
