@@ -318,6 +318,9 @@ fn uninstall_self(ctx: &Ctx, purge: bool) -> Result<String> {
             held.join(", ")
         );
     }
+    if let Some(why) = crate::mibsdk::sdk_pkg::unrecorded_sdk(&ctx.layout, purge) {
+        bail!("{why}");
+    }
     control::request_stop(&ctx.layout)?;
     let end = Instant::now() + Duration::from_secs(15);
     while control::supervisor_pid(&ctx.layout, ctx.sys).is_some() && Instant::now() < end {

@@ -1771,3 +1771,40 @@ fn sdk_remove_takes_off_every_jar_an_installed_version_listed() {
     assert!(jar_present(&f, "mibsdk-foreign.jar"), "never listed: not ours");
     assert!(jar_present(&f, "stock.jar"));
 }
+
+fn uninstall_self(f: &common::Fixture, purge: bool) -> anyhow::Result<i32> {
+    let mut args: Vec<String> =
+        ["--root", f.root().to_str().unwrap(), "--no-supervisor", "uninstall-self"].iter().map(|s| s.to_string()).collect();
+    if purge {
+        args.push("--purge".into());
+    }
+    mibpkg::cli::run(&args)
+}
+
+/// uninstall-self refuses while an SDK no package records is active: a mibsdk-dev backup, or a
+/// live list naming the SDK that nothing would restore (final review M3).
+#[test]
+fn uninstall_self_refuses_while_an_unrecorded_sdk_is_active() {
+    // A mibsdk-dev install: its stock backup and a generated live list.
+    let (f, _dir) = unit();
+    write(&p(&f, &format!("{}/stock/tracer.was", mibsdk::BASE)), b"true\n");
+    for purge in [false, true] {
+        let e = format!("{:#}", uninstall_self(&f, purge).unwrap_err());
+        assert!(e.contains("mibsdk-dev"), "{e}");
+        assert!(e.contains("mibpkg install mibsdk") && e.contains("mibpkg remove mibsdk"), "{e}");
+    }
+    // A live list naming the SDK without a record of the stock list.
+    let (f, _dir) = unit();
+    let generated = bundles::generate(&stock(), &spec(), true).unwrap();
+    write(&p(&f, mibsdk::BUNDLES), &generated);
+    for purge in [false, true] {
+        let e = format!("{:#}", uninstall_self(&f, purge).unwrap_err());
+        assert!(e.contains("references the SDK"), "{e}");
+        assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), generated);
+    }
+    // With a record, only --purge restores it.
+    backups::backup_once(&f.layout, mibsdk::BUNDLES).unwrap();
+    let e = format!("{:#}", uninstall_self(&f, false).unwrap_err());
+    assert!(e.contains("mibpkg uninstall-self --purge"), "{e}");
+    assert!(f.layout.home().exists());
+}

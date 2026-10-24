@@ -115,6 +115,33 @@ pub fn drop_stale_records(ctx: &Ctx) -> Result<bool> {
     Ok(true)
 }
 
+/// Why removing mibpkg would strand an SDK no package records, or None. A complete `mibsdk-dev`
+/// backup means its install is active; a live list that references the SDK stays so unless
+/// `purge` restores mibpkg's own record of the stock list. The message says how to remove it.
+pub fn unrecorded_sdk(l: &Layout, purge: bool) -> Option<String> {
+    const TAIL: &str = "without mibpkg nothing can restore the stock bundle list";
+    if l.p(&format!("{}/tracer.was", stock_dir())).exists() {
+        return Some(format!(
+            "an SDK installed by mibsdk-dev is on this unit ({}/tracer.was exists); {TAIL}. Remove it first: \
+             mibpkg install mibsdk (it takes the mibsdk-dev install over), then mibpkg remove mibsdk; or uninstall it with mibsdk-dev",
+            stock_dir()
+        ));
+    }
+    if !fs::read(l.p(BUNDLES)).is_ok_and(|live| references_sdk(&live, None)) {
+        return None;
+    }
+    let recorded = backups::has_backup(l, BUNDLES) && !backups::is_tombstone(l, BUNDLES);
+    if recorded && purge {
+        return None; // restore_all puts the recorded stock list back
+    }
+    let how = if recorded {
+        "run: mibpkg uninstall-self --purge (it restores the recorded stock bundle list)"
+    } else {
+        "put the stock bundle list back by hand (or uninstall the SDK with mibsdk-dev)"
+    };
+    Some(format!("{BUNDLES} references the SDK but no installed package does; {TAIL}. To remove it, {how}"))
+}
+
 /// The stock bundle list on record: mibpkg's backup (unless stale), else a complete `mibsdk-dev`
 /// backup that the install will adopt; None on a unit nothing has touched yet.
 fn stock_source(layout: &Layout, spec: &SdkSpec) -> Result<Option<PathBuf>> {
