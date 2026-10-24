@@ -475,7 +475,8 @@ fn sdk_push_refuses_without_sdk() {
     assert!(r.err.contains(NO_SDK), "{}", r.err);
     assert!(!jar.exists() && !stamp.exists());
     assert!(!plugin_jar(&f, "hello").exists());
-    for verb in [&["sdk", "grant", "hello", "network"][..], &["sdk", "remove", "hello"], &["sdk", "safe-mode", "on"], &["sdk", "boot-state", "set-wrap", "1"], &["sdk", "data-clear", "hello"]] {
+    // remove and data-clear work without the SDK (see sdk_remove_and_data_clear_work_after_the_sdk_is_gone).
+    for verb in [&["sdk", "grant", "hello", "network"][..], &["sdk", "safe-mode", "on"], &["sdk", "boot-state", "set-wrap", "1"]] {
         let r = failed(&f, verb);
         assert!(r.err.contains(NO_SDK), "{verb:?}: {}", r.err);
     }
@@ -508,6 +509,94 @@ fn sdk_push_keeps_existing_grants_and_writes_fresh_token() {
 }
 
 // ---- sdk remove ----
+
+#[test]
+fn sdk_remove_and_data_clear_work_after_the_sdk_is_gone() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    pushed(&f, "hello");
+    write(&p(&f, mibsdk::GRANTS), b"hello=vehicle.read\n");
+    write(&data(&f, "hello"), b"x=1\n");
+    write(&p(&f, mibsdk::LEDGER), b"k=hello|PERSISTENT|a|b|A\n");
+    ok(&f, &["remove", "mibsdk", "--force"]);
+    assert!(!installed_pkg(&f, "mibsdk"));
+    assert!(plugin_jar(&f, "hello").exists() && data(&f, "hello").exists());
+    // No runtime to answer or to restore the ledger: neither waited for (the wait would be 30 s).
+    let t = Instant::now();
+    let o = Command::new(env!("CARGO_BIN_EXE_mibpkg"))
+        .arg("--root")
+        .arg(f.root())
+        .args(["--no-supervisor", "sdk", "remove", "hello"])
+        .env("MIBPKG_SDK_REMOVE_WAIT_S", "30")
+        .output()
+        .unwrap();
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert!(o.status.success(), "{out} {}", String::from_utf8_lossy(&o.stderr));
+    assert!(t.elapsed() < Duration::from_secs(10), "waited {:?}", t.elapsed());
+    assert!(out.starts_with("removed hello: plugins/hello.jar and its grants line; the SDK is not installed, so no reload was requested"), "{out}");
+    assert!(out.contains("WARNING: these overrides of hello are not restored yet"), "{out}");
+    assert!(!plugin_jar(&f, "hello").exists());
+    assert!(!marker(&f, "hello").exists(), "no reload marker without an SDK");
+    assert_eq!(grants_text(&f), "");
+    assert!(data(&f, "hello").exists(), "data kept without --purge");
+    let r = ok(&f, &["sdk", "data-clear", "hello"]);
+    assert!(r.out.starts_with("cleared the data of hello"), "{}", r.out);
+    assert!(!data(&f, "hello").exists());
+}
+
+#[test]
+fn sdk_grant_accepts_any_id_the_runtime_accepts() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    pushed(&f, "Foo.Bar");
+    let r = ok(&f, &["sdk", "grant", "Foo.Bar", "network"]);
+    assert!(r.out.starts_with("granted Foo.Bar: network\n"), "{}", r.out);
+    assert_eq!(grants_text(&f), "Foo.Bar=network\n");
+    for bad in ["../x", ".x", "a b", ""] {
+        failed(&f, &["sdk", "grant", bad, "network"]);
+    }
+    assert_eq!(grants_text(&f), "Foo.Bar=network\n");
+}
+
+#[test]
+fn sdk_remove_refuses_a_package_whose_manifest_cannot_be_read() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    install_plugin(&f, dir.path(), "bike", &[]);
+    let m = install::current_dir(&f.layout, "bike").unwrap().join("manifest.toml");
+    fs::write(&m, "not toml [").unwrap();
+    let r = failed(&f, &["sdk", "remove", "bike"]);
+    assert!(r.err.contains("the manifest of the bike package cannot be read"), "{}", r.err);
+    assert!(r.err.contains("mibpkg remove bike, then: mibpkg sdk remove bike"), "{}", r.err);
+    assert!(installed_pkg(&f, "bike") && plugin_jar(&f, "bike").exists(), "nothing changed");
+    // The way it names works.
+    ok(&f, &["remove", "bike"]);
+    ok(&f, &["sdk", "remove", "bike"]);
+    assert!(!plugin_jar(&f, "bike").exists());
+}
+
+#[test]
+fn sdk_surplus_or_missing_arguments_exit_2() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    pushed(&f, "hello");
+    for bad in [
+        &["sdk", "status", "x"][..],
+        &["sdk", "grant", "hello", "network", "x"],
+        &["sdk", "grant", "hello"],
+        &["sdk", "push", "hello", "x"],
+        &["sdk", "push"],
+        &["sdk", "remove", "hello", "x"],
+        &["sdk", "remove"],
+        &["sdk", "safe-mode", "on", "x"],
+        &["sdk", "boot-state", "set-wrap", "1", "2"],
+        &["sdk", "data-clear", "hello", "x"],
+        &["sdk", "data-clear"],
+    ] {
+        assert_eq!(mibpkg(&f, bad).code, 2, "{bad:?}");
+    }
+    assert!(plugin_jar(&f, "hello").exists());
+}
 
 #[test]
 fn sdk_remove_pushed_id_and_package_id() {
@@ -637,5 +726,6 @@ fn sdk_without_verb_exits_2() {
     let r = mibpkg(&f, &["sdk"]);
     assert_eq!(r.code, 2);
     assert!(r.err.contains("mibpkg sdk status"), "{}", r.err);
+    assert!(r.err.contains("mibpkg sdk remove <id> [--purge|--purge-data] [--force]"), "{}", r.err);
     assert_eq!(mibpkg(&f, &["sdk", "frobnicate"]).code, 2);
 }

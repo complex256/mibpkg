@@ -436,7 +436,34 @@ fn mount_housekeeping_retries_a_failed_release() {
     fs::remove_file(&lock).unwrap();
     let _ = blocker.kill();
     let _ = blocker.wait();
-    mibpkg::supervisor::housekeep_mounts(&ctx);
+    let logged = mibpkg::supervisor::MountUpkeep::default().run(&ctx);
+    assert!(logged.is_empty(), "{logged:?}");
     assert_eq!(*sys.calls.borrow(), vec!["rw /mnt/app", "ro /mnt/app"]);
     assert!(!f.layout.run(&format!("rw.app.{}", std::process::id())).exists());
+}
+
+#[test]
+fn mount_housekeeping_never_waits_for_the_remount_lock_and_logs_a_repeated_error_once() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let stale = f.layout.run(&format!("rw.app.{}", dead_pid()));
+    fs::write(&stale, "").unwrap();
+    let lock = f.layout.run("rwlock");
+    let mut blocker = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+    fs::write(&lock, blocker.id().to_string()).unwrap();
+    let mut upkeep = mibpkg::supervisor::MountUpkeep::default();
+    let t = Instant::now();
+    let first = upkeep.run(&ctx);
+    assert!(t.elapsed() < Duration::from_millis(1000), "the tick waited {:?}", t.elapsed());
+    assert_eq!(first.len(), 2, "one line per mount: {first:?}");
+    assert!(first[0].contains("/mnt/app") && first[0].contains("busy"), "{first:?}");
+    assert!(upkeep.run(&ctx).is_empty(), "the same error is not logged again");
+    assert!(stale.exists() && sys.calls.borrow().is_empty());
+    fs::remove_file(&lock).unwrap();
+    let _ = blocker.kill();
+    let _ = blocker.wait();
+    assert!(upkeep.run(&ctx).is_empty());
+    assert!(!stale.exists());
+    assert_eq!(*sys.calls.borrow(), vec!["ro /mnt/app"]);
 }

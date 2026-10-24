@@ -653,7 +653,10 @@ const SDK_USAGE: &str = "usage:
   mibpkg sdk status
   mibpkg sdk grant <id> <perm,...>        (an empty list revokes all)
   mibpkg sdk push <id>                    (/tmp/mibpkg.push.<id>.jar and its .stamp, from mibsdk-dev push)
-  mibpkg sdk remove <id> [--purge|--purge-data]
+  mibpkg sdk remove <id> [--purge|--purge-data] [--force]
+                                          (--purge deletes the plugin's data once the SDK confirms the
+                                          unload; --force is accepted as for mibpkg remove and changes
+                                          nothing for a plugin)
   mibpkg sdk safe-mode on|off
   mibpkg sdk boot-state set-wrap <n>
   mibpkg sdk data-clear <id>";
@@ -670,10 +673,13 @@ fn sdk(ctx: &Ctx, args: &[String], purge: bool, after: &dyn Fn(&Ctx)) -> Result<
     let verb = args.first().map(String::as_str).unwrap_or("");
     let rest = args.get(1..).unwrap_or(&[]);
     let w = |i: usize| rest.get(i).map(String::as_str);
+    // Exact arity: a surplus or missing argument is a usage error, never ignored.
     let well_formed = match verb {
-        "status" | "grant" | "push" | "remove" | "data-clear" => true,
-        "safe-mode" => matches!(w(0), Some("on" | "off")),
-        "boot-state" => w(0) == Some("set-wrap") && w(1).is_some_and(wrap_count),
+        "status" => rest.is_empty(),
+        "grant" => rest.len() == 2,
+        "push" | "remove" | "data-clear" => rest.len() == 1,
+        "safe-mode" => rest.len() == 1 && matches!(w(0), Some("on" | "off")),
+        "boot-state" => rest.len() == 2 && w(0) == Some("set-wrap") && w(1).is_some_and(wrap_count),
         _ => false,
     };
     if !well_formed {
@@ -687,7 +693,9 @@ fn sdk(ctx: &Ctx, args: &[String], purge: bool, after: &dyn Fn(&Ctx)) -> Result<
     // The pushed files are read once and deleted, whatever happens next (the lock included).
     let snapshot = if verb == "push" { Some(push_snapshot(ctx, rest)?) } else { None };
     let _lock = Lock::acquire(&ctx.layout, ctx.sys)?;
-    let r = need_sdk(ctx).and_then(|()| match snapshot {
+    // remove and data-clear also clean up what an SDK removal left behind, so they need no SDK.
+    let needs_sdk = !matches!(verb, "remove" | "data-clear");
+    let r = (if needs_sdk { need_sdk(ctx) } else { Ok(()) }).and_then(|()| match snapshot {
         Some((id, jar, stamp)) => crate::mibsdk::plugin_pkg::push(ctx, &id, &jar, stamp.as_deref()),
         None => sdk_action(ctx, verb, rest, purge),
     });
@@ -730,7 +738,9 @@ fn sdk_action(ctx: &Ctx, verb: &str, rest: &[String], purge: bool) -> Result<Str
     let boot_state = format!("{PERSIST}/boot.state");
     match verb {
         "grant" => {
-            let id = pkg_arg(rest, 0)?;
+            // Any id the runtime accepts (a pushed plugin's id need not be a package name).
+            let id = arg(rest, 0, "plugin id")?;
+            plugin_pkg::check_id(id)?;
             let list = arg(rest, 1, "permission list (empty to revoke all)")?;
             if !list.bytes().all(|b| b.is_ascii_alphanumeric() || b"._,-".contains(&b)) {
                 bail!("invalid permission list {list:?}");
@@ -752,8 +762,15 @@ fn sdk_action(ctx: &Ctx, verb: &str, rest: &[String], purge: bool) -> Result<Str
             if !State::load(l)?.packages.contains_key(id) {
                 return plugin_pkg::remove_id(ctx, id, purge);
             }
-            if install::current_manifest(l, id).is_ok_and(|m| m.kind() != crate::manifest::Kind::Plugin) {
-                bail!("{id} is not a plugin package; remove it with: mibpkg remove {id}");
+            match install::current_manifest(l, id) {
+                Ok(m) if m.kind() != crate::manifest::Kind::Plugin => {
+                    bail!("{id} is not a plugin package; remove it with: mibpkg remove {id}")
+                }
+                Ok(_) => {}
+                // Unknown kind: never removed as a plugin on a guess.
+                Err(e) => bail!(
+                    "the manifest of the {id} package cannot be read ({e:#}); remove the package first, then the plugin: mibpkg remove {id}, then: mibpkg sdk remove {id}"
+                ),
             }
             install::remove(ctx, id, purge)
         }

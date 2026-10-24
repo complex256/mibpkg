@@ -711,16 +711,35 @@ pub fn gem_once(ctx: &Ctx) -> Result<()> {
 }
 
 /// The supervisor's mount upkeep, at its start and on every tick: retry this process's failed
-/// releases (`Mounts::retry_releases`), then `rwhold::sweep` both mounts (dead holders, and a
-/// withdrawn hold once no live holder and no action remain). Failures are logged, never fatal.
-pub fn housekeep_mounts(ctx: &Ctx) {
-    if let Err(e) = ctx.mounts.retry_releases() {
-        eprintln!("mibpkg: retrying a read-only remount: {e:#}");
-    }
-    for mount in ["/mnt/app", "/mnt/system"] {
-        if let Err(e) = crate::rwhold::sweep(&ctx.layout, ctx.sys, mount) {
-            eprintln!("mibpkg: sweeping {mount} holders: {e:#}");
-        }
+/// releases (`Mounts::retry_releases`), then sweep both mounts (dead holders, and a withdrawn hold
+/// once no live holder and no action remain) without waiting for the remount lock: a busy lock
+/// skips this turn. Failures are never fatal; an error is reported once until it changes or clears.
+#[derive(Default)]
+pub struct MountUpkeep {
+    /// The last error reported per step, so a repeated one is not logged every tick.
+    last: std::collections::BTreeMap<&'static str, String>,
+}
+
+impl MountUpkeep {
+    /// One round; the lines worth logging (new errors only).
+    pub fn run(&mut self, ctx: &Ctx) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut note = |step: &'static str, r: Result<()>| match r {
+            Ok(()) => {
+                self.last.remove(step);
+            }
+            Err(e) => {
+                let text = format!("mibpkg: {step}: {e:#}");
+                if self.last.get(step) != Some(&text) {
+                    out.push(text.clone());
+                    self.last.insert(step, text);
+                }
+            }
+        };
+        note("retrying a read-only remount", ctx.mounts.retry_releases());
+        note("sweeping /mnt/app holders", crate::rwhold::sweep_waiting(&ctx.layout, ctx.sys, "/mnt/app", Duration::ZERO));
+        note("sweeping /mnt/system holders", crate::rwhold::sweep_waiting(&ctx.layout, ctx.sys, "/mnt/system", Duration::ZERO));
+        out
     }
 }
 
@@ -749,7 +768,10 @@ pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
     // every tick, so a mount never stays read-write on the supervisor's account.
     let ctx = Ctx::new(layout.clone(), sys);
     // Holders a crashed process left behind (and a withdrawn hold) from before this boot's start.
-    housekeep_mounts(&ctx);
+    let mut upkeep = MountUpkeep::default();
+    for line in upkeep.run(&ctx) {
+        eprintln!("{line}");
+    }
     // First boot only: install any seed collection the install card carried. Best-effort;
     // a failure here must not stop the supervisor from starting the rest.
     if let Err(e) = seed_once(&ctx, &media::roots(layout)) {
@@ -802,7 +824,9 @@ pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
             sup.restart(&id);
         }
         sup.tick(Instant::now());
-        housekeep_mounts(&ctx);
+        for line in upkeep.run(&ctx) {
+            eprintln!("{line}");
+        }
         // Background online checks, only on the unit (host tests never spawn them). The log is
         // opened twice: File::try_clone fails with EINVAL on QNX 6.5.
         if layout.root == Path::new("/") {

@@ -397,7 +397,11 @@ fn remove(ctx: &Ctx, id: &str, purge: bool, ack_timeout: Duration, ledger_wait: 
     if !present {
         bail!("{id} is not installed");
     }
-    let running = sdk_running(l);
+    // Without the SDK package there is no runtime to answer a reload or to restore the ledger:
+    // no marker is written and nothing is waited for (a leftover jar is still taken off).
+    let sdk = installed_sdk(l).is_some();
+    let running = sdk && sdk_running(l);
+    let ledger_wait = if sdk { ledger_wait } else { Duration::ZERO };
     let base = if running { ack::baseline(l) } else { ack::Baseline::unknown() };
     let (off_dropped, token) = {
         let _rw = ctx.mounts.rw("/mnt/app")?;
@@ -409,13 +413,17 @@ fn remove(ctx: &Ctx, id: &str, purge: bool, ack_timeout: Duration, ledger_wait: 
         grants::drop_line(ctx, id)?;
         // Before the marker: the reload must see the plugin switched on again.
         let off_dropped = toggles::drop(ctx, id)?;
-        (off_dropped, put_marker(ctx, id)?)
+        (off_dropped, if sdk { Some(put_marker(ctx, id)?) } else { None })
     };
     let mut out = vec![format!(
-        "removed {id}: plugins/{id}.jar and its grants line{}; reload requested",
-        if off_dropped { format!(" and its {id}.off switch") } else { String::new() }
+        "removed {id}: plugins/{id}.jar and its grants line{}; {}",
+        if off_dropped { format!(" and its {id}.off switch") } else { String::new() },
+        if sdk { "reload requested" } else { "the SDK is not installed, so no reload was requested" }
     )];
-    let acked = running && ack::wait(l, id, &base, Some(&ack::token_of(token.as_bytes())), ack_timeout).is_some();
+    let acked = match (&token, running) {
+        (Some(t), true) => ack::wait(l, id, &base, Some(&ack::token_of(t.as_bytes())), ack_timeout).is_some(),
+        _ => false,
+    };
 
     let start = Instant::now();
     let mut first = true;
@@ -436,7 +444,11 @@ fn remove(ctx: &Ctx, id: &str, purge: bool, ack_timeout: Duration, ledger_wait: 
         if waited >= ledger_wait {
             out.push(format!("WARNING: these overrides of {id} are not restored yet:"));
             out.extend(left);
-            out.push("they are restored when the SDK next starts (the plugin is no longer installed); check /tmp/mibsdk.log".into());
+            out.push(if sdk {
+                "they are restored when the SDK next starts (the plugin is no longer installed); check /tmp/mibsdk.log".into()
+            } else {
+                "nothing restores them while the SDK is not installed; install it again (mibpkg install mibsdk) and its runtime restores them".into()
+            });
             break;
         }
         thread::sleep(LEDGER_POLL.min(ledger_wait - waited));

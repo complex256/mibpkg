@@ -95,9 +95,15 @@ pub(crate) fn release_in(run_dir: &Path, sys: &dyn Sys, mount: &str, holder: u32
 /// be writing). With neither a dead holder nor a withdrawn hold it changes nothing, so it is
 /// cheap to call on every supervisor start or tick.
 pub fn sweep(layout: &Layout, sys: &dyn Sys, mount: &str) -> Result<()> {
+    sweep_waiting(layout, sys, mount, RWLOCK_WAIT)
+}
+
+/// `sweep` that waits at most `wait` for the remount lock (zero: a periodic caller skips a
+/// busy turn instead of stalling; the remount lock's "busy" error says so).
+pub fn sweep_waiting(layout: &Layout, sys: &dyn Sys, mount: &str, wait: Duration) -> Result<()> {
     let run_dir = run_dir(layout);
     let tag = tag(mount)?;
-    let _lock = remount_lock(&run_dir, sys)?;
+    let _lock = Lock::acquire_at(&run_dir.join("mibpkg.rwlock"), sys, wait)?;
     let found = sweep_dead(&run_dir, sys, tag)?;
     if found.live {
         return Ok(());
