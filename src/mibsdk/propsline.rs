@@ -35,10 +35,15 @@ fn join(out: &[&str]) -> String {
 /// with `key=value` appended when there is none. A line break in `key` or `value` is refused: it
 /// would smuggle in another line.
 pub fn set(text: &str, key: &str, value: &str) -> Result<String> {
+    set_eol(text, key, value, "")
+}
+
+/// `set` with `eol` (`""` or `"\r"`, a CRLF file's line ending) kept at the end of the line.
+pub fn set_eol(text: &str, key: &str, value: &str, eol: &str) -> Result<String> {
     if [key, value].iter().any(|s| s.contains(['\n', '\r'])) {
         bail!("a properties key or value may not contain a line break: {key:?}={value:?}");
     }
-    let new = format!("{key}={value}");
+    let new = format!("{key}={value}{eol}");
     let mut out = Vec::new();
     let mut done = false;
     for line in lines(text) {

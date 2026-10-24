@@ -944,3 +944,43 @@ fn statusprefs_drop_falls_back_to_the_temp_file() {
     assert!(statusprefs::drop(&ctx, "hello").unwrap());
     assert_eq!(fs::read_to_string(f.layout.p(mibsdk::STATUSPREFS)).unwrap(), "order=other\n");
 }
+
+#[test]
+fn statusprefs_drop_last_duplicate_order_line_wins() {
+    let (changed, text) = status_drop("order=hello,x\nkeep=1\norder=a,hello\n", "hello");
+    assert!(changed);
+    assert_eq!(text, "order=a\nkeep=1\n", "the last order line is the one in force");
+    let (changed, text) = status_drop("order=hello,x\norder=a,b\n", "hello");
+    assert!(!changed, "an overridden order line is not the user's order");
+    assert_eq!(text, "order=hello,x\norder=a,b\n");
+}
+
+#[test]
+fn statusprefs_drop_tolerates_whitespace_around_ids() {
+    let (changed, text) = status_drop("  order = a , hello ,b \n", "hello");
+    assert!(changed);
+    assert_eq!(text, "order=a,b\n");
+}
+
+#[test]
+fn statusprefs_drop_preserves_crlf_line_endings() {
+    let (changed, text) = status_drop("order=a,hello,b\r\nhello.hidden=true\r\nb.hidden=true\r\n", "hello");
+    assert!(changed);
+    assert_eq!(text, "order=a,b\r\nb.hidden=true\r\n");
+    let (changed, text) = status_drop("order=hello\r\nb.hidden=true\r\n", "hello");
+    assert!(changed);
+    assert_eq!(text, "b.hidden=true\r\n");
+}
+
+#[test]
+fn statusprefs_reads_latin1_not_utf8() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let p = f.layout.p(mibsdk::STATUSPREFS);
+    fs::create_dir_all(p.parent().unwrap()).unwrap();
+    fs::write(&p, b"# caf\xe9\norder=a,hello\n").unwrap();
+    assert!(statusprefs::has_line(&f.layout, "hello"));
+    assert!(statusprefs::drop(&ctx, "hello").unwrap());
+    assert_eq!(fs::read(&p).unwrap(), b"# caf\xe9\norder=a\n", "the non-UTF-8 byte survives");
+}

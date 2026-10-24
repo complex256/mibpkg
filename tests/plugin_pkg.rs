@@ -902,6 +902,19 @@ fn drops_the_plugins_status_line_settings() {
 }
 
 #[test]
+fn an_unreadable_status_line_file_warns_but_never_blocks_remove() {
+    let (f, _d) = pushed_unit(&["hello"]);
+    // A directory in the file's place: reading it fails.
+    write(&p(&f, mibsdk::STATUSPREFS).join("x"), b"");
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let msg = plugin_pkg::remove_id(&ctx, "hello", false).unwrap();
+    assert!(msg.contains("WARNING: cannot update the status-line settings of hello"), "{msg}");
+    assert!(msg.contains("reload requested"), "{msg}");
+    assert!(is_token(&read(&marker(&f, "hello"))), "the reload marker is still written");
+}
+
+#[test]
 fn plugins_properties_is_pushed_before_the_reload_marker() {
     // was: test_plugins_properties_is_pushed_before_the_reload_marker
     let (f, _d) = pushed_unit(&["hello"]);

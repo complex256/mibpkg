@@ -415,7 +415,7 @@ fn remove(ctx: &Ctx, id: &str, purge: bool, ack_timeout: Duration, ledger_wait: 
     let live = up || installed_sdk(l).is_some();
     let ledger_wait = if live { ledger_wait } else { Duration::ZERO };
     let base = if up { ack::baseline(l) } else { ack::Baseline::unknown() };
-    let (off_dropped, status_dropped, token) = {
+    let (off_dropped, status_dropped, status_warn, token) = {
         let _rw = ctx.mounts.rw("/mnt/app")?;
         let p = l.p(&jar);
         on_app(ctx, &format!("cannot remove {jar}"), &mut || remove_if_present(&p))?;
@@ -425,7 +425,11 @@ fn remove(ctx: &Ctx, id: &str, purge: bool, ack_timeout: Duration, ledger_wait: 
         grants::drop_line(ctx, id)?;
         // Before the marker: the reload must see the plugin switched on again.
         let off_dropped = toggles::drop(ctx, id)?;
-        let status_dropped = statusprefs::drop(ctx, id)?;
+        // Cosmetic: a failure here must not block the removal or the reload request.
+        let (status_dropped, status_warn) = match statusprefs::drop(ctx, id) {
+            Ok(d) => (d, None),
+            Err(e) => (false, Some(format!("WARNING: cannot update the status-line settings of {id} ({e:#}); the plugin may keep its place or hidden flag after a reinstall"))),
+        };
         let token = if live {
             Some(put_marker(ctx, id)?)
         } else {
@@ -434,7 +438,7 @@ fn remove(ctx: &Ctx, id: &str, purge: bool, ack_timeout: Duration, ledger_wait: 
             on_app(ctx, &format!("cannot remove {marker}"), &mut || remove_if_present(&m))?;
             None
         };
-        (off_dropped, status_dropped, token)
+        (off_dropped, status_dropped, status_warn, token)
     };
     let mut out = vec![format!(
         "removed {id}: plugins/{id}.jar and its grants line{}{}; {}",
@@ -442,6 +446,7 @@ fn remove(ctx: &Ctx, id: &str, purge: bool, ack_timeout: Duration, ledger_wait: 
         if status_dropped { " and its status-line settings" } else { "" },
         if live { "reload requested" } else { "the SDK is neither installed nor running, so no reload was requested" }
     )];
+    out.extend(status_warn);
     let acked = match (&token, up) {
         (Some(t), true) => ack::wait(l, id, &base, Some(&ack::token_of(t.as_bytes())), ack_timeout).is_some(),
         _ => false,

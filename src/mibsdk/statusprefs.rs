@@ -1,7 +1,7 @@
 //! The user's status-line choices, `PERSIST/statusline.properties`, owned by the runtime: an
 //! `order=<id>,<id>,...` line (the saved order) and one `<id>.hidden=true` line per plugin whose
 //! status item the user hid.
-use super::{propsline, put, STATUSPREFS};
+use super::{ledger, propsline, put, STATUSPREFS};
 use crate::ctx::Ctx;
 use crate::paths::Layout;
 use anyhow::{Context, Result};
@@ -28,6 +28,8 @@ fn source(layout: &Layout) -> String {
 fn strip(text: &str, id: &str) -> (String, bool) {
     let (text, hidden) = propsline::drop(text, &format!("{id}{HIDDEN}"));
     let Some(order) = propsline::get(&text, ORDER) else { return (text, hidden) };
+    // A CRLF file's `order` value ends in the line's `\r`; it stays on the rewritten line.
+    let cr = if order.ends_with('\r') { "\r" } else { "" };
     let ids: Vec<&str> = order.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
     if !ids.contains(&id) {
         return (text, hidden);
@@ -36,17 +38,17 @@ fn strip(text: &str, id: &str) -> (String, bool) {
     if rest.is_empty() {
         return (propsline::drop(&text, ORDER).0, true);
     }
-    // `set` cannot fail here: the key and the joined ids hold no line break (they came from lines).
-    match propsline::set(&text, ORDER, &rest.join(",")) {
+    // `set` cannot fail here: the ids hold no line break (they came from lines).
+    match propsline::set_eol(&text, ORDER, &rest.join(","), cr) {
         Ok(t) => (t, true),
         Err(_) => (text, hidden),
     }
 }
 
-/// The file the runtime reads has a `<id>.hidden` line (whatever its value) or `id` in its
+/// The file the runtime reads (decoded as ISO-8859-1) has a `<id>.hidden` line (whatever its value) or `id` in its
 /// `order` list, as `drop` matches them. An unreadable file has none.
 pub fn has_line(layout: &Layout, id: &str) -> bool {
-    fs::read_to_string(layout.p(&source(layout))).is_ok_and(|t| strip(&t, id).1)
+    fs::read(layout.p(&source(layout))).is_ok_and(|b| strip(&ledger::decode(&b), id).1)
 }
 
 /// Drops `id` from the status-line settings so a reinstalled plugin starts shown and unordered;
@@ -56,14 +58,15 @@ pub fn has_line(layout: &Layout, id: &str) -> bool {
 /// holds the action lock.
 pub fn drop(ctx: &Ctx, id: &str) -> Result<bool> {
     let src = source(&ctx.layout);
-    let text = match fs::read_to_string(ctx.layout.p(&src)) {
-        Ok(t) => t,
+    // ISO-8859-1, as the runtime reads it: any bytes decode, and `encode` returns them unchanged.
+    let text = match fs::read(ctx.layout.p(&src)) {
+        Ok(b) => ledger::decode(&b),
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
         Err(e) => return Err(e).with_context(|| format!("reading {src}")),
     };
     let (text, dropped) = strip(&text, id);
     if dropped {
-        put(ctx, STATUSPREFS, text.as_bytes(), 0o644)?;
+        put(ctx, STATUSPREFS, &ledger::encode(&text)?, 0o644)?;
     }
     Ok(dropped)
 }
