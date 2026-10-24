@@ -111,7 +111,8 @@ follow-up, not part of 0.8.
 
 **Data and removal.** `mibpkg remove <plugin>` keeps `/mnt/persist/mibsdk/data/<id>.properties`;
 `--purge` (alias `--purge-data`) deletes it once the SDK confirms the unload. Removal also drops
-the plugin's on/off switch, so a reinstall starts enabled.
+the plugin's on/off switch and its status-line settings (hidden flag, place in the saved order),
+so a reinstall starts enabled and shown.
 
 **`mibpkg sdk` verbs** (all but `status` need the SDK installed):
 

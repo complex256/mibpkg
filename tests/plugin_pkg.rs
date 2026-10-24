@@ -891,6 +891,17 @@ fn block_marker(f: &common::Fixture, id: &str) {
 }
 
 #[test]
+fn drops_the_plugins_status_line_settings() {
+    let (f, _d) = pushed_unit(&["hello"]);
+    write(&p(&f, mibsdk::STATUSPREFS), b"order=other,hello\nhello.hidden=true\nother.hidden=true\n");
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let msg = plugin_pkg::remove_id(&ctx, "hello", false).unwrap();
+    assert!(msg.contains("and its status-line settings"), "{msg}");
+    assert_eq!(read(&p(&f, mibsdk::STATUSPREFS)), "order=other\nother.hidden=true\n");
+}
+
+#[test]
 fn plugins_properties_is_pushed_before_the_reload_marker() {
     // was: test_plugins_properties_is_pushed_before_the_reload_marker
     let (f, _d) = pushed_unit(&["hello"]);

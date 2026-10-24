@@ -64,3 +64,9 @@ pub fn drop(text: &str, key: &str) -> (String, bool) {
     let dropped = out.len() != all.len();
     (join(&out), dropped)
 }
+
+/// The value of the last line keyed `key` (as `java.util.Properties`: a later line wins), with
+/// leading whitespace removed; `None` when there is none.
+pub fn get(text: &str, key: &str) -> Option<String> {
+    lines(text).into_iter().rev().find(|l| key_of(l) == Some(key)).and_then(|l| l.split_once('=')).map(|(_, v)| v.trim_start().to_string())
+}
