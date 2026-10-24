@@ -1636,9 +1636,7 @@ fn uninstall_self_purge_skips_stale_sdk_records() {
     assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), new_firmware_stock());
     assert!(p(&f, mibsdk::MARKER).exists(), "a stale tombstone deletes nothing");
 
-    let (f, _dir) = unit();
-    backups::backup_once(&f.layout, mibsdk::BUNDLES).unwrap();
-    write(&p(&f, mibsdk::BUNDLES), &bundles::generate(&stock(), &spec(), true).unwrap());
+    let (f, _dir) = sdk_dropped_from_state();
     uninstall_self_purge(&f);
     assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), stock());
 }
@@ -1826,4 +1824,75 @@ fn sdk_remove_refuses_when_the_hmi_changed_but_the_list_still_names_the_sdk() {
     assert!(e.ends_with("nothing changed"), "{e}");
     assert_eq!(tree(f.root()), before);
     assert_still_installed(&f);
+}
+
+// ---- uninstall-self --purge after a firmware update ----
+
+/// An installed mibsdk whose state record went (its package files remain): purge may run, and the
+/// last installed spec is readable. DSITracer was off: the marker record is a tombstone.
+fn sdk_dropped_from_state() -> (common::Fixture, tempfile::TempDir) {
+    let (f, dir) = installed(None);
+    let mut st = State::load(&f.layout).unwrap();
+    st.packages.remove("mibsdk");
+    st.save(&f.layout).unwrap();
+    (f, dir)
+}
+
+fn uninstall_self_with(f: &common::Fixture, extra: &[&str]) -> anyhow::Result<i32> {
+    let mut args: Vec<String> =
+        ["--root", f.root().to_str().unwrap(), "--no-supervisor", "uninstall-self"].iter().map(|s| s.to_string()).collect();
+    args.extend(extra.iter().map(|s| s.to_string()));
+    mibpkg::cli::run(&args)
+}
+
+/// The stock records are an older firmware's once the HMI is not one the last installed mibsdk
+/// supports (or that spec cannot be read): purge refuses, changing nothing (I1 on the purge path).
+#[test]
+fn uninstall_self_purge_refuses_when_the_firmware_changed() {
+    let (f, _dir) = sdk_dropped_from_state();
+    write(&p(&f, mibsdk::VERSION_INFO), NEW_HMI);
+    let before = tree(f.root());
+    let e = format!("{:#}", uninstall_self_with(&f, &["--purge"]).unwrap_err());
+    assert!(e.contains("the firmware changed since mibsdk was installed"), "{e}");
+    assert!(e.contains("could stop the HMI booting"), "{e}");
+    assert!(e.contains("--force"), "{e}");
+    assert!(e.ends_with("nothing changed"), "{e}");
+    assert_eq!(tree(f.root()), before);
+
+    // No readable spec: nothing says which firmware the records belong to.
+    let (f, _dir) = unit();
+    backups::backup_once(&f.layout, mibsdk::BUNDLES).unwrap();
+    write(&p(&f, mibsdk::BUNDLES), &bundles::generate(&stock(), &spec(), true).unwrap());
+    let before = tree(f.root());
+    let e = format!("{:#}", uninstall_self_with(&f, &["--purge"]).unwrap_err());
+    assert!(e.contains("the firmware changed since mibsdk was installed"), "{e}");
+    assert!(e.ends_with("nothing changed"), "{e}");
+    assert_eq!(tree(f.root()), before);
+}
+
+/// With --force the purge leaves the live bundle list and marker byte-identical, forgets the old
+/// firmware's records and still removes mibpkg.
+#[test]
+fn uninstall_self_purge_force_leaves_the_live_list_when_the_firmware_changed() {
+    let (f, _dir) = sdk_dropped_from_state();
+    write(&p(&f, mibsdk::VERSION_INFO), NEW_HMI);
+    write(&p(&f, mibsdk::MARKER), b"new firmware");
+    let live = fs::read(p(&f, mibsdk::BUNDLES)).unwrap();
+    let live_mode = mode(&p(&f, mibsdk::BUNDLES));
+    assert_eq!(uninstall_self_with(&f, &["--purge", "--force"]).unwrap(), 0);
+    assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), live);
+    assert_eq!(mode(&p(&f, mibsdk::BUNDLES)), live_mode);
+    assert_eq!(fs::read(p(&f, mibsdk::MARKER)).unwrap(), b"new firmware");
+    assert!(!f.layout.home().exists(), "purge still deletes mibpkg's files");
+    assert_eq!(sdk_jars_present(&f), SDK_JARS.to_vec(), "purge never removes the SDK files");
+}
+
+/// On the firmware the last installed mibsdk supports, purge restores the stock records as before.
+#[test]
+fn uninstall_self_purge_restores_the_records_on_the_same_firmware() {
+    let (f, _dir) = sdk_dropped_from_state();
+    assert_eq!(uninstall_self_with(&f, &["--purge"]).unwrap(), 0);
+    assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), stock());
+    assert!(!p(&f, mibsdk::MARKER).exists(), "the tombstone removes the marker the install created");
+    assert!(!f.layout.home().exists());
 }

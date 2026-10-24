@@ -295,7 +295,8 @@ pub fn run(args: &[String]) -> Result<i32> {
         "uninstall-self" => {
             let _lock = Lock::acquire(&ctx.layout, ctx.sys)?;
             let purge = args.iter().any(|a| a == "--purge");
-            let msg = uninstall_self(&ctx, purge)?;
+            let force = args.iter().any(|a| a == "--force");
+            let msg = uninstall_self(&ctx, purge, force)?;
             crate::say!("{msg}");
             Ok(0)
         }
@@ -305,9 +306,10 @@ pub fn run(args: &[String]) -> Result<i32> {
 
 /// Record the running mibpkg as installed (once), so GEM offers updates, not "Install".
 /// Remove mibpkg from boot and GEM, stopping the supervisor and closing the hotspot port. With
-/// `purge`, also restore every stock file it (or its packages) patched and delete all mibpkg files.
+/// `purge`, also restore every stock file it (or its packages) patched and delete all mibpkg files;
+/// `force` lets a purge after a firmware update leave the live bundle list and marker as they are.
 /// The caller holds the action lock (the top-level verb acquires it; GEM already holds it).
-fn uninstall_self(ctx: &Ctx, purge: bool) -> Result<String> {
+fn uninstall_self(ctx: &Ctx, purge: bool, force: bool) -> Result<String> {
     // Without mibpkg nothing could restore the stock bundle list or the plugins' overrides.
     let mut held: Vec<String> =
         State::load(&ctx.layout)?.packages.keys().filter(|n| n.as_str() == crate::mibsdk::SDK_PKG).cloned().collect();
@@ -321,6 +323,8 @@ fn uninstall_self(ctx: &Ctx, purge: bool) -> Result<String> {
     if let Some(why) = crate::mibsdk::sdk_pkg::unrecorded_sdk(&ctx.layout, purge) {
         bail!("{why}");
     }
+    // After a firmware update the SDK stock records would put the old firmware's list back.
+    let firmware_note = if purge { crate::mibsdk::sdk_pkg::purge_firmware_check(&ctx.layout, force)? } else { None };
     control::request_stop(&ctx.layout)?;
     let end = Instant::now() + Duration::from_secs(15);
     while control::supervisor_pid(&ctx.layout, ctx.sys).is_some() && Instant::now() < end {
@@ -340,6 +344,9 @@ fn uninstall_self(ctx: &Ctx, purge: bool) -> Result<String> {
             let _rw_sys = ctx.mounts.rw("/mnt/system")?;
             // A stale SDK stock record would put an older firmware's bundle list back.
             crate::mibsdk::sdk_pkg::drop_stale_records(ctx)?;
+            if firmware_note.is_some() {
+                crate::mibsdk::sdk_pkg::forget_backups(ctx)?;
+            }
             crate::backups::restore_all(&ctx.layout)?;
             match fs::remove_dir_all(ctx.layout.home()) {
                 Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
@@ -349,7 +356,11 @@ fn uninstall_self(ctx: &Ctx, purge: bool) -> Result<String> {
     }
     let _ = fs::remove_file(ctx.layout.run("stop"));
     Ok(if purge {
-        "mibpkg removed from boot and GEM; stock files restored and all mibpkg files deleted".into()
+        let mut msg = String::from("mibpkg removed from boot and GEM; stock files restored and all mibpkg files deleted");
+        if let Some(note) = firmware_note {
+            msg = format!("{note}\n{msg}");
+        }
+        msg
     } else {
         format!(
             "mibpkg removed from boot and GEM; installed files remain in {} (delete by hand if wanted)",
@@ -592,7 +603,7 @@ fn action(ctx: &Ctx, verb: &str, args: &[String], purge: bool) -> Result<String>
             // GEM's "Remove mibpkg" buttons. The caller (the gem arm) holds the lock and skips
             // the usual after() so the screens/supervisor are not recreated right after removal.
             let purge = args.iter().any(|a| a == "--purge");
-            uninstall_self(ctx, purge)
+            uninstall_self(ctx, purge, args.iter().any(|a| a == "--force"))
         }
         other => bail!("unknown action {other:?}"),
     }

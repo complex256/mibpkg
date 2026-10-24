@@ -819,17 +819,7 @@ pub fn undeploy(ctx: &Ctx, purge: bool) -> Result<String> {
     let refs = fs::read(l.p(BUNDLES)).is_ok_and(|live| references_sdk(&live, Some(&spec)));
     let supported = hmi.as_ref().is_some_and(|v| spec.hmi.contains(v));
     if refs && !supported && !ctx.force {
-        bail!(
-            "refusing to uninstall: the firmware changed since mibsdk was installed (HMI {}; this SDK supports {}), \
-             but {BUNDLES} still references the SDK.\n\
-             the stock backup is from the older firmware: restoring it, or removing the SDK jars this list still loads, \
-             could stop the HMI booting.\n\
-             put this firmware's stock bundle list back first (reinstall the firmware, or install a mibsdk that supports \
-             this HMI), then run the removal again.\n\
-             to remove the SDK files anyway and leave the bundle list as it is, add --force; nothing changed",
-            hmi.as_deref().unwrap_or("unknown"),
-            spec.hmi.join(", ")
-        );
+        bail!("{}", firmware_changed_refusal(hmi.as_deref(), Some(&spec)));
     }
     if refs && supported {
         restore_bundles(ctx)?;
@@ -850,6 +840,47 @@ pub fn undeploy(ctx: &Ctx, purge: bool) -> Result<String> {
     }
     warnings.push(remove_sdk_dirs(ctx, purge)?);
     Ok(warnings.join("\n"))
+}
+
+/// Why an uninstall refuses to restore the stock records: the HMI is not one `spec` (the installed
+/// mibsdk; None: unreadable) supports, so the records are an older firmware's.
+fn firmware_changed_refusal(hmi: Option<&str>, spec: Option<&SdkSpec>) -> String {
+    format!(
+        "refusing to uninstall: the firmware changed since mibsdk was installed (HMI {}; this SDK supports {}), \
+         but {BUNDLES} still references the SDK.\n\
+         the stock backup is from the older firmware: restoring it, or removing the SDK jars this list still loads, \
+         could stop the HMI booting.\n\
+         put this firmware's stock bundle list back first (reinstall the firmware, or install a mibsdk that supports \
+         this HMI), then run the removal again.\n\
+         to remove the SDK files anyway and leave the bundle list as it is, add --force; nothing changed",
+        hmi.unwrap_or("unknown"),
+        spec.map_or("unknown (the installed mibsdk package cannot be read)".into(), |s| s.hmi.join(", "))
+    )
+}
+
+/// Before `uninstall-self --purge` writes anything: may restoring every backup put the recorded
+/// (non-stale) bundle list and marker back? Not when the HMI is not one the last installed mibsdk
+/// supports, or that spec cannot be read: the records may be an older firmware's (the I1 rule of
+/// `undeploy`). Ok(None): restore as usual. Refused without `force`; with it Ok(Some(note)): the
+/// caller forgets the records (`forget_backups`) instead of restoring them, leaving the live files.
+pub fn purge_firmware_check(l: &Layout, force: bool) -> Result<Option<String>> {
+    if !backups::has_backup(l, BUNDLES) && !backups::has_backup(l, MARKER) || stale_records(l, None)? {
+        return Ok(None); // nothing to restore, or drop_stale_records forgets it
+    }
+    let hmi = crate::unit::hmi_version(l);
+    let spec = installed_sdk(l).map(|(_, spec, _)| spec);
+    if spec.as_ref().is_some_and(|s| hmi.as_ref().is_some_and(|v| s.hmi.contains(v))) {
+        return Ok(None);
+    }
+    if !force {
+        bail!("{}", firmware_changed_refusal(hmi.as_deref(), spec.as_ref()));
+    }
+    // The SDK files stay on the unit (purge removes only mibpkg's), so the list may keep loading them.
+    let mut note = format!("WARNING: --force: {}", firmware_changed(hmi.as_deref(), false));
+    if fs::read(l.p(BUNDLES)).is_ok_and(|live| references_sdk(&live, spec.as_ref())) {
+        note.push_str(&format!("; {BUNDLES} still references the SDK, and nothing is left to restore it: put this firmware's stock bundle list back by hand"));
+    }
+    Ok(Some(note))
 }
 
 /// The note of an uninstall that left the live bundle list and marker alone (the firmware changed
