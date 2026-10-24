@@ -710,6 +710,20 @@ pub fn gem_once(ctx: &Ctx) -> Result<()> {
     Ok(())
 }
 
+/// The supervisor's mount upkeep, at its start and on every tick: retry this process's failed
+/// releases (`Mounts::retry_releases`), then `rwhold::sweep` both mounts (dead holders, and a
+/// withdrawn hold once no live holder and no action remain). Failures are logged, never fatal.
+pub fn housekeep_mounts(ctx: &Ctx) {
+    if let Err(e) = ctx.mounts.retry_releases() {
+        eprintln!("mibpkg: retrying a read-only remount: {e:#}");
+    }
+    for mount in ["/mnt/app", "/mnt/system"] {
+        if let Err(e) = crate::rwhold::sweep(&ctx.layout, ctx.sys, mount) {
+            eprintln!("mibpkg: sweeping {mount} holders: {e:#}");
+        }
+    }
+}
+
 pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
     if let Some(pid) = control::supervisor_pid(layout, sys) {
         if pid != std::process::id() {
@@ -731,17 +745,19 @@ pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
         let _ = fs::remove_file(layout.run("pid"));
         return Ok(());
     }
+    // The supervisor's one Ctx (one Mounts per process): its failed releases are retried on
+    // every tick, so a mount never stays read-write on the supervisor's account.
+    let ctx = Ctx::new(layout.clone(), sys);
+    // Holders a crashed process left behind (and a withdrawn hold) from before this boot's start.
+    housekeep_mounts(&ctx);
     // First boot only: install any seed collection the install card carried. Best-effort;
     // a failure here must not stop the supervisor from starting the rest.
-    {
-        let ctx = Ctx::new(layout.clone(), sys);
-        if let Err(e) = seed_once(&ctx, &media::roots(layout)) {
-            println!("mibpkg: seed install skipped: {e:#}");
-        }
-        // Retry the GEM enable that the SWDL-time install.sh call could not complete.
-        if let Err(e) = gem_once(&ctx) {
-            println!("mibpkg: gem enable skipped: {e:#}");
-        }
+    if let Err(e) = seed_once(&ctx, &media::roots(layout)) {
+        println!("mibpkg: seed install skipped: {e:#}");
+    }
+    // Retry the GEM enable that the SWDL-time install.sh call could not complete.
+    if let Err(e) = gem_once(&ctx) {
+        println!("mibpkg: gem enable skipped: {e:#}");
     }
     let mut sup = Supervisor::new(layout, sys, timing.clone());
     sup.reload();
@@ -786,6 +802,7 @@ pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
             sup.restart(&id);
         }
         sup.tick(Instant::now());
+        housekeep_mounts(&ctx);
         // Background online checks, only on the unit (host tests never spawn them). The log is
         // opened twice: File::try_clone fails with EINVAL on QNX 6.5.
         if layout.root == Path::new("/") {

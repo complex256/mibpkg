@@ -88,6 +88,13 @@ impl Lock {
     }
 }
 
+impl Lock {
+    /// A live process holds the lock file at `path` (taken, not yet released).
+    pub fn held_at(path: &Path, sys: &dyn Sys) -> bool {
+        read_pid(path).is_some_and(|pid| sys.process_alive(pid))
+    }
+}
+
 /// The pid a lock file names, if it exists and names one.
 fn read_pid(path: &Path) -> Option<u32> {
     fs::read_to_string(path).ok().and_then(|s| s.trim().parse::<u32>().ok())

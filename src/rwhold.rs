@@ -77,20 +77,36 @@ pub(crate) fn release_in(run_dir: &Path, sys: &dyn Sys, mount: &str, holder: u32
     if sweep_dead(run_dir, sys, tag)?.live {
         return Ok(());
     }
-    sys.remount(mount, false)
+    sys.remount(mount, false)?;
+    // Read-only now: any earlier withdrawn hold is settled.
+    let _ = fs::remove_file(withdrawn_file(run_dir, tag));
+    Ok(())
 }
 
 /// Clean up after holders that died without releasing (killed, or a panic under
 /// `panic=abort`, which skips `Drop`): remove their holder files and, if that left no live
-/// holder, remount `mount` read-only. With no dead holder found it changes nothing, so it is
+/// holder, remount `mount` read-only.
+///
+/// It also settles a withdrawn hold (a `Mounts` whose release kept failing withdrew its holder
+/// file without remounting, so the mount may be read-write with no holder at all): with no live
+/// holder and no mibpkg action holding the action lock, it remounts read-only. mibpkg cannot ask
+/// whether a mount is read-write, so the withdraw's marker file stands for "may be": the sweep
+/// never remounts a mount mibpkg did not leave read-write itself (a tool outside the protocol may
+/// be writing). With neither a dead holder nor a withdrawn hold it changes nothing, so it is
 /// cheap to call on every supervisor start or tick.
 pub fn sweep(layout: &Layout, sys: &dyn Sys, mount: &str) -> Result<()> {
     let run_dir = run_dir(layout);
     let tag = tag(mount)?;
     let _lock = remount_lock(&run_dir, sys)?;
     let found = sweep_dead(&run_dir, sys, tag)?;
-    if found.dead > 0 && !found.live {
+    if found.live {
+        return Ok(());
+    }
+    let withdrawn = withdrawn_file(&run_dir, tag);
+    let settle = withdrawn.exists() && !Lock::held_at(&run_dir.join("mibpkg.lock"), sys);
+    if found.dead > 0 || settle {
         sys.remount(mount, false)?;
+        let _ = fs::remove_file(&withdrawn);
     }
     Ok(())
 }
@@ -136,11 +152,19 @@ fn remount_lock(run_dir: &Path, sys: &dyn Sys) -> Result<Lock> {
 /// Delete `holder`'s file for `mount` without the remount lock or a remount: the last resort
 /// of a `Mounts` going away whose release could not run, so that the next release or sweep by
 /// any process can go read-only.
+///
+/// It leaves the marker `mibpkg.rw.<tag>.withdrawn` (not a pid, so never a holder) for `sweep`.
 pub(crate) fn withdraw_in(run_dir: &Path, mount: &str, holder: u32) -> Result<()> {
-    match fs::remove_file(holder_file(run_dir, tag(mount)?, holder)) {
+    let tag = tag(mount)?;
+    let _ = fs::write(withdrawn_file(run_dir, tag), "");
+    match fs::remove_file(holder_file(run_dir, tag, holder)) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
         _ => Ok(()),
     }
+}
+
+fn withdrawn_file(run_dir: &Path, tag: &str) -> PathBuf {
+    run_dir.join(format!("mibpkg.rw.{tag}.withdrawn"))
 }
 
 fn holder_file(run_dir: &Path, tag: &str, holder: u32) -> PathBuf {

@@ -290,3 +290,53 @@ fn dropping_mounts_retries_a_pending_release() {
     assert!(!own.exists());
     assert_eq!(*sys.calls.borrow(), vec!["rw /mnt/app", "ro /mnt/app"]);
 }
+
+#[test]
+fn sweep_goes_ro_after_a_withdrawn_hold_once_no_action_runs() {
+    // The stuck-rw-without-holder case: a Mounts whose release kept failing withdrew its holder
+    // without remounting, so /mnt/app may be rw with no holder at all. The withdraw leaves a
+    // marker; the next sweep with no live holder and no action running goes read-only.
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let lock = f.layout.run("rwlock");
+    let withdrawn = f.layout.run("rw.app.withdrawn");
+    let blocker = Live::spawn();
+    {
+        let m = Mounts::new(&sys, &f.layout);
+        let g = m.rw("/mnt/app").unwrap();
+        fs::write(&lock, blocker.pid().to_string()).unwrap();
+        drop(g);
+    }
+    fs::remove_file(&lock).unwrap();
+    assert!(withdrawn.exists(), "the withdraw is recorded");
+    // An action holds the action lock: it may be about to write; leave the mount alone.
+    let action = Live::spawn();
+    fs::write(f.layout.run("lock"), action.pid().to_string()).unwrap();
+    rwhold::sweep(&f.layout, &sys, "/mnt/app").unwrap();
+    assert_eq!(*sys.calls.borrow(), vec!["rw /mnt/app"]);
+    // A live holder keeps it rw too.
+    fs::remove_file(f.layout.run("lock")).unwrap();
+    let other = Live::spawn();
+    let held = f.layout.run(&format!("rw.app.{}", other.pid()));
+    fs::write(&held, "").unwrap();
+    rwhold::sweep(&f.layout, &sys, "/mnt/app").unwrap();
+    assert_eq!(*sys.calls.borrow(), vec!["rw /mnt/app"]);
+    fs::remove_file(&held).unwrap();
+    rwhold::sweep(&f.layout, &sys, "/mnt/app").unwrap();
+    assert_eq!(*sys.calls.borrow(), vec!["rw /mnt/app", "ro /mnt/app"]);
+    assert!(!withdrawn.exists());
+    // Settled: the next sweep changes nothing.
+    rwhold::sweep(&f.layout, &sys, "/mnt/app").unwrap();
+    assert_eq!(sys.calls.borrow().len(), 2);
+}
+
+#[test]
+fn an_ordinary_release_to_ro_clears_the_withdrawn_marker() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let withdrawn = f.layout.run("rw.app.withdrawn");
+    fs::write(&withdrawn, "").unwrap();
+    let m = Mounts::new(&sys, &f.layout);
+    drop(m.rw("/mnt/app").unwrap());
+    assert!(!withdrawn.exists());
+}

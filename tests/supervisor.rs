@@ -386,3 +386,57 @@ fn the_status_says_which_mibpkg_version_the_supervisor_runs() {
     let sup = Supervisor::new(&f.layout, &sys, fast());
     assert_eq!(sup.status().version.as_deref(), Some(env!("CARGO_PKG_VERSION")));
 }
+
+/// The pid of a process that has exited and been reaped.
+fn dead_pid() -> u32 {
+    let mut c = std::process::Command::new("true").spawn().unwrap();
+    c.wait().unwrap();
+    c.id()
+}
+
+#[test]
+fn supervisor_sweeps_dead_rw_holders_at_start_and_on_its_tick() {
+    let f = common::fixture();
+    let stale = f.layout.run(&format!("rw.app.{}", dead_pid()));
+    fs::write(&stale, "").unwrap();
+    let layout = f.layout.clone();
+    let h = std::thread::spawn(move || {
+        let sys = RecordingSys::default();
+        mibpkg::supervisor::run(&layout, &sys, fast()).unwrap();
+        let calls = sys.calls.borrow().clone();
+        calls
+    });
+    let wait = |p: &std::path::Path| {
+        let end = Instant::now() + Duration::from_secs(5);
+        while p.exists() && Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        !p.exists()
+    };
+    assert!(wait(&stale), "swept at start");
+    // A holder that dies while the supervisor runs is swept by its tick.
+    let stale2 = f.layout.run(&format!("rw.app.{}", dead_pid()));
+    fs::write(&stale2, "").unwrap();
+    assert!(wait(&stale2), "swept on the tick");
+    mibpkg::control::request_stop(&f.layout).unwrap();
+    let calls = h.join().unwrap();
+    assert!(calls.iter().filter(|c| c.as_str() == "ro /mnt/app").count() >= 2, "{calls:?}");
+}
+
+#[test]
+fn mount_housekeeping_retries_a_failed_release() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let lock = f.layout.run("rwlock");
+    let mut blocker = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+    let g = ctx.mounts.rw("/mnt/app").unwrap();
+    fs::write(&lock, blocker.id().to_string()).unwrap();
+    drop(g); // release fails: the remount lock is busy
+    fs::remove_file(&lock).unwrap();
+    let _ = blocker.kill();
+    let _ = blocker.wait();
+    mibpkg::supervisor::housekeep_mounts(&ctx);
+    assert_eq!(*sys.calls.borrow(), vec!["rw /mnt/app", "ro /mnt/app"]);
+    assert!(!f.layout.run(&format!("rw.app.{}", std::process::id())).exists());
+}
