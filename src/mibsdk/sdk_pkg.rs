@@ -135,7 +135,8 @@ pub fn unrecorded_sdk(l: &Layout, purge: bool) -> Option<String> {
         return None; // restore_all puts the recorded stock list back
     }
     let how = if recorded {
-        "run: mibpkg uninstall-self --purge (it restores the recorded stock bundle list)"
+        "run: mibpkg uninstall-self --purge (it restores the recorded stock bundle list only on the firmware the SDK was \
+         installed for; otherwise it refuses: add --force, then put the stock bundle list back by hand)"
     } else {
         "put the stock bundle list back by hand (or uninstall the SDK with mibsdk-dev)"
     };

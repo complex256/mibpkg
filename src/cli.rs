@@ -356,11 +356,13 @@ fn uninstall_self(ctx: &Ctx, purge: bool, force: bool) -> Result<String> {
     }
     let _ = fs::remove_file(ctx.layout.run("stop"));
     Ok(if purge {
-        let mut msg = String::from("mibpkg removed from boot and GEM; stock files restored and all mibpkg files deleted");
-        if let Some(note) = firmware_note {
-            msg = format!("{note}\n{msg}");
+        match firmware_note {
+            None => "mibpkg removed from boot and GEM; stock files restored and all mibpkg files deleted".into(),
+            Some(note) => format!(
+                "{note}\nmibpkg removed from boot and GEM; restored the other stock files, left the bundle list and \
+                 DSITracer marker as they are, and deleted all mibpkg files"
+            ),
         }
-        msg
     } else {
         format!(
             "mibpkg removed from boot and GEM; installed files remain in {} (delete by hand if wanted)",
