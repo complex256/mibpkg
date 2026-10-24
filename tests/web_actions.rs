@@ -8,7 +8,14 @@ use std::time::{Duration, Instant};
 
 fn known() -> Known {
     let set = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<BTreeSet<_>>();
-    Known { installed: set(&["carmqtt", "mibpkg"]), available: set(&["carmqtt", "extra"]), collections: set(&["complex256", "community"]) }
+    let mut plugins = std::collections::BTreeMap::new();
+    plugins.insert("bike".to_string(), vec!["vehicle.read".to_string(), "network".to_string()]);
+    Known {
+        installed: set(&["carmqtt", "mibpkg", "mibsdk", "bike"]),
+        available: set(&["carmqtt", "extra"]),
+        collections: set(&["complex256", "community"]),
+        plugins,
+    }
 }
 
 const HOSTILE: &[&str] = &[";reboot", "$(id)", "`id`", "a\nb", "--root", "-x", "../../etc", "ü", " carmqtt", "CARMQTT", "carmqtt;", ""];
@@ -316,34 +323,59 @@ fn install_action_rejects_bad_permission_strings() {
 
 #[test]
 fn grant_action_builds_sdk_grant_argv() {
+    let d = r#""declared":["vehicle.read","network"]"#;
     assert_eq!(
-        argv(r#"{"action":"grant","id":"carmqtt","permissions":["vehicle.read","network"]}"#).unwrap(),
-        ["sdk", "grant", "carmqtt", "vehicle.read,network"]
+        argv(&format!(r#"{{"action":"grant","id":"bike","permissions":["vehicle.read","network"],{d}}}"#)).unwrap(),
+        ["sdk", "grant", "bike", "vehicle.read,network"]
     );
     // Nothing checked revokes every grant (the plugin stops running).
-    assert_eq!(argv(r#"{"action":"grant","id":"carmqtt","permissions":[]}"#).unwrap(), ["sdk", "grant", "carmqtt", ""]);
-    let v = validate(&parse_action(br#"{"action":"grant","id":"carmqtt","permissions":[]}"#).unwrap(), &known()).unwrap();
-    assert_eq!(v.package.as_deref(), Some("carmqtt"));
-    assert!(v.label.contains("carmqtt"), "{}", v.label);
+    assert_eq!(argv(&format!(r#"{{"action":"grant","id":"bike","permissions":[],{d}}}"#)).unwrap(), ["sdk", "grant", "bike", ""]);
+    // The declared list may come in any order.
+    let json = r#"{"action":"grant","id":"bike","permissions":["network"],"declared":["network","vehicle.read"]}"#;
+    let v = validate(&parse_action(json.as_bytes()).unwrap(), &known()).unwrap();
+    assert_eq!(v.argv, ["sdk", "grant", "bike", "network"]);
+    assert_eq!(v.package.as_deref(), Some("bike"));
+    assert!(v.label.contains("bike"), "{}", v.label);
 }
 
 #[test]
 fn grant_action_rejects_bad_id_and_permission() {
+    let d = r#""declared":["vehicle.read","network"]"#;
     let long = "x".repeat(5000);
     let mut bad: Vec<&str> = HOSTILE.to_vec();
     bad.push(&long);
-    bad.push("extra"); // offered, not installed
+    // Offered but not installed; installed but plain; the SDK itself; mibpkg.
+    bad.extend(["extra", "carmqtt", "mibsdk", "mibpkg"]);
     for s in bad {
         let s = serde_json::to_string(s).unwrap();
-        let json = format!(r#"{{"action":"grant","id":{s},"permissions":["network"]}}"#);
+        let json = format!(r#"{{"action":"grant","id":{s},"permissions":["network"],{d}}}"#);
         assert!(argv(&json).is_err(), "{json}");
     }
-    for perm in ["a b", "--x", "", "a,b", "ü"] {
+    // Malformed, or not one the plugin declares.
+    for perm in ["a b", "--x", "", "a,b", "ü", "hooks.parking", "platform.unrestricted"] {
         let s = serde_json::to_string(perm).unwrap();
-        let json = format!(r#"{{"action":"grant","id":"carmqtt","permissions":[{s}]}}"#);
+        let json = format!(r#"{{"action":"grant","id":"bike","permissions":[{s}],{d}}}"#);
         assert!(argv(&json).is_err(), "{json}");
     }
-    for json in [r#"{"action":"grant","id":"carmqtt"}"#, r#"{"action":"grant","id":"carmqtt","permissions":[],"x":1}"#] {
-        assert!(argv(json).is_err(), "{json}");
+    for json in [
+        r#"{"action":"grant","id":"bike","declared":[]}"#.to_string(),
+        r#"{"action":"grant","id":"bike","permissions":[]}"#.to_string(),
+        format!(r#"{{"action":"grant","id":"bike","permissions":[],{d},"x":1}}"#),
+        // The page showed another declared set (the plugin changed meanwhile): refused.
+        r#"{"action":"grant","id":"bike","permissions":["vehicle.read"],"declared":["vehicle.read"]}"#.to_string(),
+        r#"{"action":"grant","id":"bike","permissions":[],"declared":["vehicle.read","network","hooks.parking"]}"#.to_string(),
+    ] {
+        assert!(argv(&json).is_err(), "{json}");
+    }
+}
+
+#[test]
+fn rollback_action_with_approve_builds_argv_with_flag() {
+    assert_eq!(argv(r#"{"action":"rollback","package":"bike","approve":["network"]}"#).unwrap(), ["rollback", "bike", "--approve=network"]);
+    assert_eq!(argv(r#"{"action":"rollback","package":"bike","approve":[]}"#).unwrap(), ["rollback", "bike"]);
+    for bad in ["--x", "a b", ""] {
+        let s = serde_json::to_string(bad).unwrap();
+        let json = format!(r#"{{"action":"rollback","package":"bike","approve":[{s}]}}"#);
+        assert!(argv(&json).is_err(), "{json}");
     }
 }

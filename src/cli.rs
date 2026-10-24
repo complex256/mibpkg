@@ -34,10 +34,10 @@ const USAGE: &str = "usage:
   mibpkg [--root DIR] [--no-supervisor] <command>
     supervise | status | list | install <pkg> [collection] | remove <pkg> [--purge|--purge-data] [--force]
     install-file <pkg> <upload-id> [collection|-]
-    (install, install-file and gem install/install-file take --approve=<perm,...> for a plugin's permissions)
+    (install, install-file, rollback and gem install/install-file/rollback take --approve=<perm,...> for a plugin's permissions)
     sdk status | sdk grant <id> <perm,...> | sdk push <id> | sdk remove <id> [--purge|--purge-data]
     sdk safe-mode on|off | sdk boot-state set-wrap <n> | sdk data-clear <id>
-    rollback <pkg> | restart <pkg> | rescan | update-all | gem <action> [args..]
+    rollback <pkg> [--approve=<perm,...>] | restart <pkg> | rescan | update-all | gem <action> [args..]
     config-resolve <pkg> keep|card [config]
     (install, rescan and update-all take --config=keep|card to settle config conflicts)
     online-check | sntp [host:port] | web
@@ -608,8 +608,8 @@ struct ActionFlags {
 fn flag_scope(rest: &[String]) -> bool {
     let w = |i: usize| rest.get(i).map(String::as_str);
     match w(0) {
-        Some("install" | "install-file" | "update-all" | "remove") => true,
-        Some("gem") => matches!(w(1), Some("install" | "install-file" | "remove")),
+        Some("install" | "install-file" | "update-all" | "remove" | "rollback") => true,
+        Some("gem") => matches!(w(1), Some("install" | "install-file" | "remove" | "rollback")),
         Some("sdk") => w(1) == Some("remove"),
         _ => false,
     }
@@ -711,6 +711,31 @@ fn sdk(ctx: &Ctx, args: &[String], purge: bool, after: &dyn Fn(&Ctx)) -> Result<
     Ok(0)
 }
 
+/// What `sdk grant` may grant `id`: a package's grants are a subset of what its `[plugin]`
+/// declares (any other package is refused); a pushed jar has no manifest, so the installed SDK's
+/// catalog decides (failing closed when it is missing or unreadable). Revoking all is always fine.
+fn grantable(ctx: &Ctx, id: &str, perms: &std::collections::BTreeSet<String>) -> Result<()> {
+    let l = &ctx.layout;
+    if State::load(l)?.packages.contains_key(id) {
+        let m = install::current_manifest(l, id).with_context(|| format!("reading the manifest of the {id} package"))?;
+        let Some(plugin) = m.plugin.as_ref() else {
+            bail!("{id} is not a plugin package; only plugins have permissions");
+        };
+        if let Some(p) = perms.iter().find(|p| !plugin.permissions.contains(p)) {
+            bail!("{id} does not declare {p}; it can only be granted: {}", plugin.permissions.join(", "));
+        }
+        return Ok(());
+    }
+    if perms.is_empty() {
+        return Ok(());
+    }
+    let cat = crate::mibsdk::catalog::installed(l)?.with_context(|| format!("{} is missing", crate::mibsdk::PERMISSIONS))?;
+    if let Some(p) = perms.iter().find(|p| !cat.iter().any(|c| &c.id == *p)) {
+        bail!("the installed SDK does not know the permission {p}");
+    }
+    Ok(())
+}
+
 fn need_sdk(ctx: &Ctx) -> Result<()> {
     if crate::mibsdk::installed_sdk(&ctx.layout).is_none() {
         bail!("mibsdk is not installed (run: mibpkg install mibsdk, or mibsdk-dev install)");
@@ -753,6 +778,7 @@ fn sdk_action(ctx: &Ctx, verb: &str, rest: &[String], purge: bool) -> Result<Str
                 bail!("invalid permission list {list:?}");
             }
             let perms: std::collections::BTreeSet<String> = list.split(',').filter(|p| !p.is_empty()).map(String::from).collect();
+            grantable(ctx, id, &perms)?;
             {
                 let _rw = ctx.mounts.rw("/mnt/app")?;
                 crate::mibsdk::grants::set(ctx, id, &perms)?;

@@ -37,17 +37,23 @@ export function newlyAsked(offered, installed) {
 /**
  * The approval sheet: one row per permission, loud rows marked.
  *   perms: [{id, text, loud}]
- *   onApprove(ids): "Allow and install" was pressed
+ *   onApprove(ids): the confirm button was pressed; ids are exactly the asked ones
  *   onCancel(): Cancel was pressed (nothing is sent; the sheet closes)
+ *   blocked: [{id, text, loud}] revoked permissions the plugin still declares: it stays
+ *            blocked after this until they are granted on its page
+ *   confirm: the confirm button's label
  */
-export function approvalSheet(perms, onApprove, { onCancel = null } = {}) {
+export function approvalSheet(perms, onApprove, { onCancel = null, blocked = [], confirm = 'Allow and install' } = {}) {
   const sheet = h(
     'div',
     { class: 'confirm perm-sheet' },
     h('p', {}, h('strong', {}, 'This plugin asks to:')),
     permissionList(perms),
     h('p', { class: 'muted' }, 'It runs only while every permission it asks for is granted. You can revoke them later on its page, which stops it.'),
-    h('button', { class: 'button', type: 'button', onclick: () => onApprove(perms.map((p) => p.id)) }, 'Allow and install'),
+    blocked.length
+      ? h('div', { class: 'notice' }, h('p', {}, 'It stays blocked until these are granted too (on its page):'), permissionList(blocked))
+      : null,
+    h('button', { class: 'button', type: 'button', onclick: () => onApprove(perms.map((p) => p.id)) }, confirm),
     h(
       'button',
       {
@@ -69,13 +75,21 @@ export function approvalSheet(perms, onApprove, { onCancel = null } = {}) {
 /**
  * The grants of an installed plugin: a checkbox per declared permission (checked = granted).
  *   perms: [{id, text, loud, granted}]
- *   onSave(ids): the checked ids
+ *   onSave(ids): the checked ids; only called when they differ from what was shown
  */
 export function grantsEditor(perms, onSave) {
   const boxes = perms.map((p) => h('input', { type: 'checkbox', 'data-perm': p.id, checked: p.granted }));
   const warning = h('div', { class: 'notice' }, BLOCKED_WARNING);
+  const shown = perms.map((p) => Boolean(p.granted));
+  const save = h(
+    'button',
+    { class: 'button', type: 'button', onclick: () => changed() && onSave(boxes.filter((b) => b.checked).map((b) => b.getAttribute('data-perm'))) },
+    'Save',
+  );
+  const changed = () => boxes.some((b, i) => b.checked !== shown[i]);
   const update = () => {
     warning.hidden = boxes.every((b) => b.checked);
+    save.disabled = !changed();
   };
   boxes.forEach((b) => b.addEventListener('change', update));
   update();
@@ -86,6 +100,6 @@ export function grantsEditor(perms, onSave) {
     { class: 'perm-editor' },
     rows,
     warning,
-    h('button', { class: 'button', type: 'button', onclick: () => onSave(boxes.filter((b) => b.checked).map((b) => b.getAttribute('data-perm'))) }, 'Save'),
+    save,
   );
 }

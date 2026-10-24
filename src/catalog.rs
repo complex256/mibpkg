@@ -39,12 +39,16 @@ pub struct Perm {
     pub id: String,
     /// The installed SDK's plain-words text, or a note that the SDK does not know it.
     pub text: String,
-    /// Shown as a warning (`platform.unrestricted`).
+    /// Shown as a warning: what the catalog marks loud, `platform.unrestricted` always, and any
+    /// permission the installed SDK does not know (its risk cannot be told).
     pub loud: bool,
     /// Installed plugins only: whether `grants.properties` grants it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub granted: Option<bool>,
 }
+
+/// Loud whatever the catalog says: it may be any code in the HMI.
+const ALWAYS_LOUD: &str = "platform.unrestricted";
 
 /// `ids` described by the installed SDK's catalog (`None`: no readable catalog), with `granted`
 /// filled in when a grant set is given.
@@ -52,8 +56,8 @@ pub fn permissions(cat: Option<&[PermInfo]>, ids: &[String], grant: Option<&BTre
     ids.iter()
         .map(|id| {
             let (text, loud) = match cat.and_then(|c| c.iter().find(|p| &p.id == id)) {
-                Some(p) => (p.text.clone(), p.loud),
-                None => (format!("{id}: not known to the installed SDK"), false),
+                Some(p) => (p.text.clone(), p.loud || id == ALWAYS_LOUD),
+                None => (format!("{id}: not known to the installed SDK"), true),
             };
             Perm { id: id.clone(), text, loud, granted: grant.map(|g| g.contains(id)) }
         })
@@ -95,6 +99,11 @@ pub struct Inst {
     pub permissions: Vec<Perm>,
     /// Declared permissions not granted: non-empty means the runtime blocks the plugin.
     pub blocked: Vec<String>,
+    /// What the kept previous version declares (a rollback asks for those the current one
+    /// does not).
+    pub previous_permissions: Vec<Perm>,
+    /// `grants.properties` could not be read: `granted` is unknown (None) and `blocked` empty.
+    pub grants_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -185,7 +194,7 @@ pub fn build(layout: &Layout, unit: &UnitInfo) -> Vec<PkgView> {
     // A missing or unreadable catalog describes every permission as unknown.
     let cat = crate::mibsdk::catalog::installed(layout).ok().flatten();
     let cat = cat.as_deref();
-    let grants = crate::mibsdk::grants::read(layout).unwrap_or_default();
+    let grants = crate::mibsdk::grants::read(layout).map_err(|e| format!("{e:#}"));
 
     // name -> what each collection offers (its newest version that fits, else its newest).
     let mut offered: BTreeMap<String, Vec<Avail>> = BTreeMap::new();
@@ -224,7 +233,14 @@ pub fn build(layout: &Layout, unit: &UnitInfo) -> Vec<PkgView> {
             let manifest = current_manifest(layout, &name).ok();
             let installed = state.packages.get(&name).map(|i| {
                 let declared = manifest.as_ref().and_then(|m| m.plugin.as_ref()).map(|p| p.permissions.clone()).unwrap_or_default();
-                let grant = grants.get(&name).cloned().unwrap_or_default();
+                let grant = grants.as_ref().ok().map(|g| g.get(&name).cloned().unwrap_or_default());
+                let previous_declared = i
+                    .previous
+                    .as_ref()
+                    .and_then(|v| std::fs::read_to_string(layout.pkg_dir(&name).join(v).join("manifest.toml")).ok())
+                    .and_then(|t| crate::manifest::Manifest::parse(&t).ok())
+                    .and_then(|m| m.plugin.map(|p| p.permissions))
+                    .unwrap_or_default();
                 let services = i
                     .services
                     .iter()
@@ -259,8 +275,13 @@ pub fn build(layout: &Layout, unit: &UnitInfo) -> Vec<PkgView> {
                     last_result: state.results.get(&name).cloned(),
                     configs,
                     kind: manifest.as_ref().and_then(|m| m.kind().name()),
-                    permissions: permissions(cat, &declared, Some(&grant)),
-                    blocked: crate::mibsdk::grants::missing(&declared, &grant),
+                    permissions: permissions(cat, &declared, grant.as_ref()),
+                    blocked: grant.as_ref().map(|g| crate::mibsdk::grants::missing(&declared, g)).unwrap_or_default(),
+                    previous_permissions: permissions(cat, &previous_declared, None),
+                    grants_error: match &grants {
+                        Err(e) if !declared.is_empty() => Some(e.clone()),
+                        _ => None,
+                    },
                 }
             });
             let newer_in = |id: &str, inst: &Inst| {

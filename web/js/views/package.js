@@ -51,23 +51,42 @@ export async function render(name) {
     }
   }
 
-  // Install or update from `collection`: a plugin that asks for permissions the installed
-  // version did not declare shows the approval sheet first; Cancel sends nothing.
-  function install(collection) {
-    const body = { action: 'install', package: p.name, collection };
-    const offered = p.available.find((a) => a.collection === collection);
-    const asked = offered && offered.kind === 'plugin' ? newlyAsked(offered.permissions, inst ? inst.permissions : null) : [];
+  // Start `body` (an install, update or rollback to a version declaring `target`): when that
+  // asks for permissions the installed version did not declare, the approval sheet comes first
+  // in `area`, showing exactly the asked ones; Cancel sends nothing.
+  function withApproval(body, target, area, confirm) {
+    const asked = newlyAsked(target, inst ? inst.permissions : null);
     if (!asked.length) {
       act(body);
       return;
     }
+    // Revoked permissions the target still declares: the plugin stays blocked after this.
+    const askedIds = asked.map((x) => x.id);
+    const blocked = inst ? target.filter((x) => inst.blocked.includes(x.id) && !askedIds.includes(x.id)) : [];
     replace(
-      sheetArea,
-      approvalSheet(asked, (ids) => {
-        sheetArea.replaceChildren();
-        act({ ...body, approve: ids });
-      }),
+      area,
+      approvalSheet(
+        asked,
+        (ids) => {
+          area.replaceChildren();
+          act({ ...body, approve: ids });
+        },
+        { blocked, confirm },
+      ),
     );
+  }
+
+  // Install or update from `collection`.
+  function install(collection) {
+    const offered = p.available.find((a) => a.collection === collection);
+    const target = offered && offered.kind === 'plugin' ? offered.permissions : [];
+    withApproval({ action: 'install', package: p.name, collection }, target, sheetArea, 'Allow and install');
+  }
+
+  // Roll back to the kept previous version (it may declare permissions the current one does not).
+  function rollback(area) {
+    const target = inst && inst.kind === 'plugin' ? inst.previous_permissions : [];
+    withApproval({ action: 'rollback', package: p.name }, target, area, 'Allow and roll back');
   }
 
   // Show a job's log; when `live`, redraw the page once it finishes.
@@ -105,7 +124,7 @@ export async function render(name) {
     p.description ? h('p', {}, p.description) : null,
     notices(p),
     jobArea,
-    inst ? actions(p, act) : null,
+    inst ? actions(p, act, rollback) : null,
     inst ? links(p) : null,
     permissions(p, act),
     info(p),
@@ -206,7 +225,7 @@ function notices(p) {
 }
 
 /** Restart, Roll back, Remove (with an in-page confirmation). */
-function actions(p, act) {
+function actions(p, act, rollback) {
   const inst = p.installed;
   const confirmArea = h('div', {});
 
@@ -227,7 +246,7 @@ function actions(p, act) {
 
   const buttons = [
     inst.services.length ? h('button', { class: 'pill', type: 'button', onclick: () => act({ action: 'restart', package: p.name }) }, 'Restart') : null,
-    inst.previous ? h('button', { class: 'pill', type: 'button', onclick: () => act({ action: 'rollback', package: p.name }) }, `Roll back to ${inst.previous}`) : null,
+    inst.previous ? h('button', { class: 'pill', type: 'button', onclick: () => rollback(confirmArea) }, `Roll back to ${inst.previous}`) : null,
     p.name !== 'mibpkg' ? h('button', { class: 'pill', type: 'button', onclick: confirmRemove }, 'Remove') : null,
   ].filter(Boolean);
 
@@ -261,7 +280,13 @@ function permissions(p, act) {
     if (inst.kind !== 'plugin' || !inst.permissions.length) {
       return null;
     }
-    return h('div', {}, head, grantsEditor(inst.permissions, (ids) => act({ action: 'grant', id: p.name, permissions: ids })));
+    if (inst.grants_error) {
+      // Unknown is not "nothing granted": no editor that would look all unchecked.
+      return h('div', {}, head, h('div', { class: 'notice error' }, `Cannot read the plugin grants: ${inst.grants_error}`), permissionList(inst.permissions));
+    }
+    // `declared` is the set this editor shows; the car refuses the change if it differs now.
+    const declared = inst.permissions.map((x) => x.id);
+    return h('div', {}, head, grantsEditor(inst.permissions, (ids) => act({ action: 'grant', id: p.name, permissions: ids, declared })));
   }
   const offered = p.available.find((a) => a.kind === 'plugin' && a.permissions.length);
   return offered ? h('div', {}, head, permissionList(offered.permissions)) : null;

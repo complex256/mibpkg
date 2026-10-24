@@ -139,7 +139,8 @@ function confirmStep(page, i) {
       return;
     }
     installButton.hidden = true;
-    replace(sheetArea, approvalSheet(asked, (ids) => install(ids), { onCancel: () => (installButton.hidden = false) }));
+    const blocked = i.permissions.filter((p) => i.stays_blocked.includes(p.id));
+    replace(sheetArea, approvalSheet(asked, (ids) => install(ids), { blocked, onCancel: () => (installButton.hidden = false) }));
   });
 
   const perms = i.permissions.length

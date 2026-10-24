@@ -182,3 +182,34 @@ test('newlyAsked: what an install or update adds over the installed version', ()
   assert.deepEqual(newlyAsked(p('a'), p('a', 'b')), []);
   assert.deepEqual(newlyAsked([], null), []);
 });
+
+test('grantsEditor: Save without a change starts nothing', () => {
+  const saved = [];
+  const ed = grantsEditor(PERMS.map((p, i) => ({ ...p, granted: i !== 2 })), (ids) => saved.push(ids));
+  const boxes = all(ed, (e) => e.tagName === 'INPUT' && e.attrs.type === 'checkbox');
+  const save = button(ed, 'Save');
+  assert.ok(save.disabled, 'nothing changed yet');
+  fire(save, 'click');
+  boxes[0].checked = false;
+  fire(boxes[0], 'change');
+  assert.ok(!save.disabled);
+  boxes[0].checked = true;
+  fire(boxes[0], 'change');
+  assert.ok(save.disabled, 'back to what was shown');
+  fire(save, 'click');
+  assert.deepEqual(saved, []);
+});
+
+test('approvalSheet names the permissions that keep the plugin blocked, and takes its button label', () => {
+  const approved = [];
+  const sheet = approvalSheet([PERMS[0]], (ids) => approved.push(ids), {
+    blocked: [{ id: 'network', text: 'Open network connections', loud: false }],
+    confirm: 'Allow and roll back',
+  });
+  assert.ok(sheet.textContent.includes('stays blocked until'), sheet.textContent);
+  assert.ok(sheet.textContent.includes('Open network connections'), sheet.textContent);
+  fire(button(sheet, 'Allow and roll back'), 'click');
+  assert.deepEqual(approved, [['vehicle.read']], 'only the asked ids are approved');
+  // Without blocked permissions the sheet says nothing about it.
+  assert.ok(!approvalSheet([PERMS[0]], () => {}).textContent.includes('stays blocked'));
+});

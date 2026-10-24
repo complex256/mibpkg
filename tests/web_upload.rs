@@ -213,6 +213,8 @@ fn upload_inspection_lists_needs_approval_for_new_permissions_only() {
     assert_eq!(i.kind.as_deref(), Some("upgrade"));
     assert_eq!(i.package_kind.as_deref(), Some("plugin"));
     assert_eq!(i.needs_approval, ["ui.slot.carmenu", "platform.unrestricted"]);
+    // network is still declared and still revoked: the plugin stays blocked after the update.
+    assert_eq!(i.stays_blocked, ["network"]);
     let ids: Vec<&str> = i.permissions.iter().map(|p| p.id.as_str()).collect();
     assert_eq!(ids, ["vehicle.read", "network", "ui.slot.carmenu", "platform.unrestricted"]);
     assert_eq!(i.permissions[0].text, "Read vehicle state: ignition, gear, parking sensors");
@@ -226,9 +228,25 @@ fn upload_inspection_lists_needs_approval_for_new_permissions_only() {
     let i = look(&f, &[], &plugin_mpk(&f, "hello", "1.0.0", &["network", "made.up"]));
     assert_eq!(i.needs_approval, ["network", "made.up"]);
     assert!(i.permissions[1].text.contains("not known to the installed SDK"), "{:?}", i.permissions[1]);
+    assert!(i.permissions[1].loud, "an unknown permission keeps a warning");
+    assert!(i.stays_blocked.is_empty());
 
     // A plain package has no permissions to approve.
     let i = look(&f, &[], &mpk_bytes(&f, "demo", "1.0.0", ""));
     assert_eq!(i.package_kind, None);
     assert!(i.permissions.is_empty() && i.needs_approval.is_empty());
+}
+
+#[test]
+fn unrestricted_is_loud_even_when_the_catalog_says_otherwise() {
+    use mibpkg::mibsdk::catalog::PermInfo;
+    let cat = vec![
+        PermInfo { id: "platform.unrestricted".into(), group: "Danger".into(), text: "Anything".into(), loud: false },
+        PermInfo { id: "network".into(), group: "Network".into(), text: "Network".into(), loud: false },
+    ];
+    let ids = vec!["platform.unrestricted".to_string(), "network".to_string(), "made.up".to_string()];
+    let loud: Vec<bool> = mibpkg::catalog::permissions(Some(&cat), &ids, None).iter().map(|p| p.loud).collect();
+    assert_eq!(loud, [true, false, true]);
+    let loud: Vec<bool> = mibpkg::catalog::permissions(None, &ids, None).iter().map(|p| p.loud).collect();
+    assert_eq!(loud, [true, true, true]);
 }

@@ -775,3 +775,81 @@ fn catalog_shows_plugin_permissions_in_plain_words_granted_and_blocked() {
     assert_eq!(sdk.kind.as_deref(), Some("sdk"));
     assert!(sdk.permissions.is_empty() && sdk.blocked.is_empty());
 }
+
+fn install_version(f: &common::Fixture, dir: &Path, id: &str, ver: &str, perms: &[&str]) {
+    let sys = RecordingSys::default();
+    let mut ctx = Ctx::new(f.layout.clone(), &sys);
+    ctx.approved = Some(perms.iter().map(|s| s.to_string()).collect());
+    install_src(&ctx, &plugin_src(dir, id, ver, perms)).unwrap();
+}
+
+#[test]
+fn rollback_takes_approve_for_permissions_only_the_previous_version_declares() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    install_version(&f, dir.path(), "hello", "1.0.0", &["vehicle.read", "network"]);
+    install_version(&f, dir.path(), "hello", "1.1.0", &["vehicle.read"]);
+    assert_eq!(grants_text(&f), "hello=vehicle.read\n");
+    let r = mibpkg(&f, &["rollback", "hello"]);
+    assert_eq!(r.code, 3, "{:?}", (&r.out, &r.err));
+    assert!(r.out.ends_with("approve with: --approve=network\n"), "{}", r.out);
+    assert_eq!(State::load(&f.layout).unwrap().packages["hello"].version, "1.1.0");
+    ok(&f, &["rollback", "hello", "--approve=network"]);
+    assert_eq!(State::load(&f.layout).unwrap().packages["hello"].version, "1.0.0");
+    assert_eq!(grants_text(&f), "hello=network,vehicle.read\n");
+    // Through the gem arm too (the web's path): 1.2.0 drops network again; its previous is 1.0.0.
+    install_version(&f, dir.path(), "hello", "1.2.0", &["vehicle.read"]);
+    assert_eq!(mibpkg(&f, &["gem", "rollback", "hello"]).code, 0);
+    assert!(State::load(&f.layout).unwrap().results["hello"].starts_with("FAILED: approve these permissions"));
+    assert_eq!(mibpkg(&f, &["gem", "rollback", "hello", "--approve=network"]).code, 0);
+    let res = State::load(&f.layout).unwrap().results["hello"].clone();
+    assert!(res.starts_with("OK: "), "{res}");
+    assert_eq!(State::load(&f.layout).unwrap().packages["hello"].version, "1.0.0");
+}
+
+#[test]
+fn sdk_grant_on_a_package_grants_only_what_its_plugin_declares() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    install_plugin(&f, dir.path(), "hello", &["vehicle.read"]);
+    let before = grants_text(&f);
+    let r = failed(&f, &["sdk", "grant", "hello", "vehicle.read,network"]);
+    assert!(r.err.contains("hello does not declare network"), "{}", r.err);
+    let r = failed(&f, &["sdk", "grant", "mibsdk", ""]);
+    assert!(r.err.contains("mibsdk is not a plugin package"), "{}", r.err);
+    let sys = RecordingSys::default();
+    install_src(&Ctx::new(f.layout.clone(), &sys), &common::pkg_src(dir.path(), "plain", "1.0.0", "sleep 1", "")).unwrap();
+    let r = failed(&f, &["sdk", "grant", "plain", "network"]);
+    assert!(r.err.contains("plain is not a plugin package"), "{}", r.err);
+    assert_eq!(grants_text(&f), before);
+    // A pushed jar has no manifest: the installed SDK's catalog decides.
+    pushed(&f, "pushy");
+    let r = failed(&f, &["sdk", "grant", "pushy", "made.up"]);
+    assert!(r.err.contains("made.up"), "{}", r.err);
+    assert_eq!(grants_text(&f), before);
+}
+
+#[test]
+fn catalog_shows_previous_permissions_unknown_as_loud_and_unreadable_grants() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    install_version(&f, dir.path(), "hello", "1.0.0", &["vehicle.read", "network"]);
+    install_version(&f, dir.path(), "hello", "1.1.0", &["vehicle.read"]);
+    let unit = mibpkg::unit::detect(&f.layout);
+    let view = |name: &str| mibpkg::catalog::build(&f.layout, &unit).into_iter().find(|v| v.name == name).unwrap().installed.unwrap();
+    let inst = view("hello");
+    let prev: Vec<&str> = inst.previous_permissions.iter().map(|p| p.id.as_str()).collect();
+    assert_eq!(prev, ["vehicle.read", "network"]);
+    assert_eq!(inst.grants_error, None);
+    // Without a catalog every permission is unknown, and unknown is loud.
+    fs::remove_file(p(&f, mibsdk::PERMISSIONS)).unwrap();
+    let inst = view("hello");
+    assert!(inst.permissions[0].loud && inst.permissions[0].text.contains("not known"), "{:?}", inst.permissions);
+    // An unreadable grants file is an error, not "nothing granted".
+    fs::remove_file(p(&f, mibsdk::GRANTS)).unwrap();
+    fs::create_dir(p(&f, mibsdk::GRANTS)).unwrap();
+    let inst = view("hello");
+    assert!(inst.grants_error.as_deref().is_some_and(|e| e.contains("grants.properties")), "{:?}", inst.grants_error);
+    assert!(inst.permissions.iter().all(|p| p.granted.is_none()), "{:?}", inst.permissions);
+    assert!(inst.blocked.is_empty());
+}
