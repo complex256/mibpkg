@@ -43,6 +43,7 @@ const USAGE: &str = "usage:
     online-check | sntp [host:port] | web
     gem install-file <pkg> <id> <collection|-> | gem config-set <pkg> <n> <id>
     gem source-add <source> | gem source-remove <source> | gem web-settings <id> | gem web-reset | gem web-restart
+    gem sdk grant <id> <perm,...>
     bootstrap | enable-gem | disable-gem | gem-patch <apply|status|revert> [--from DIR] | uninstall-self\n  mibpkg swdl-card <out-dir> --payload DIR [--seed DIR] --version V [--signed-header FILE] [--no-mib]\n  mibpkg gem-patch build --stock JAR --patched JAR [--out DIR]";
 
 pub fn run(args: &[String]) -> Result<i32> {
@@ -219,10 +220,16 @@ pub fn run(args: &[String]) -> Result<i32> {
                 "install" | "remove" | "rollback" | "restart" | "install-file" | "config-set" | "config-resolve" => {
                     args.get(1).filter(|n| crate::manifest::valid_name(n)).cloned().unwrap_or_else(|| "_".into())
                 }
+                "sdk" => args.get(2).filter(|n| crate::manifest::valid_name(n)).cloned().unwrap_or_else(|| "_".into()),
                 _ => "_".into(),
             };
             let r = match flags_err {
                 Some(e) => Err(e),
+                // The web's grant/revoke: only `sdk grant`, under this lock like every gem action.
+                None if verb == "sdk" => match &args[1..] {
+                    [g, rest @ ..] if g == "grant" && rest.len() == 2 => need_sdk(&ctx).and_then(|()| sdk_action(&ctx, "grant", rest, purge)),
+                    _ => Err(anyhow::anyhow!("gem sdk takes only: grant <id> <perm,...>")),
+                },
                 None => action(&ctx, &verb, &args[1..], purge),
             };
             let text = match r {

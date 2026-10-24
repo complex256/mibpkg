@@ -729,3 +729,49 @@ fn sdk_without_verb_exits_2() {
     assert!(r.err.contains("mibpkg sdk remove <id> [--purge|--purge-data] [--force]"), "{}", r.err);
     assert_eq!(mibpkg(&f, &["sdk", "frobnicate"]).code, 2);
 }
+
+// ---- the web's view and verbs ----
+
+#[test]
+fn gem_sdk_grant_is_the_webs_revoke_path() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    install_plugin(&f, dir.path(), "hello", &["vehicle.read", "network"]);
+    running(&f);
+    let rt = fake_runtime(&f, "hello", "BLOCKED_PERMISSIONS missing permissions: network");
+    let r = ok(&f, &["gem", "sdk", "grant", "hello", "vehicle.read"]);
+    assert!(rt.join().unwrap(), "no reload requested");
+    assert!(r.out.contains("OK: granted hello: vehicle.read"), "{}", r.out);
+    assert_eq!(grants_text(&f), "hello=vehicle.read\n");
+    // Only grant goes through gem; a malformed one is FAILED, nothing changes.
+    for bad in [&["gem", "sdk", "remove", "hello"][..], &["gem", "sdk", "grant", "hello", "a b"], &["gem", "sdk", "grant", "hello"]] {
+        let r = mibpkg(&f, bad);
+        assert!(r.out.contains("FAILED: "), "{bad:?}: {}", r.out);
+    }
+    assert_eq!(grants_text(&f), "hello=vehicle.read\n");
+    assert!(installed_pkg(&f, "hello"));
+}
+
+#[test]
+fn catalog_shows_plugin_permissions_in_plain_words_granted_and_blocked() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    install_plugin(&f, dir.path(), "hello", &["vehicle.read", "platform.unrestricted"]);
+    write(&p(&f, mibsdk::GRANTS), b"hello=vehicle.read\n");
+    let views = mibpkg::catalog::build(&f.layout, &mibpkg::unit::detect(&f.layout));
+    let hello = views.iter().find(|v| v.name == "hello").unwrap();
+    let inst = hello.installed.as_ref().unwrap();
+    assert_eq!(inst.kind.as_deref(), Some("plugin"));
+    let json = serde_json::to_value(&inst.permissions).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!([
+            {"id": "vehicle.read", "text": "Read vehicle state: ignition, gear, parking sensors", "loud": false, "granted": true},
+            {"id": "platform.unrestricted", "text": "Unrestricted: may use reflection and stock HMI classes; the SDK cannot contain it", "loud": true, "granted": false},
+        ])
+    );
+    assert_eq!(inst.blocked, ["platform.unrestricted"]);
+    let sdk = views.iter().find(|v| v.name == "mibsdk").unwrap().installed.as_ref().unwrap();
+    assert_eq!(sdk.kind.as_deref(), Some("sdk"));
+    assert!(sdk.permissions.is_empty() && sdk.blocked.is_empty());
+}

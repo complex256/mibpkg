@@ -1,7 +1,7 @@
 //! A collection = a directory with index.json + packages/*.mpk.
 use crate::archive::{sha256_file, Package};
 use crate::fsutil::atomic_write;
-use crate::manifest::{safe_rel, valid_name, Compat, Kind, Manifest};
+use crate::manifest::{safe_rel, valid_name, Compat, Manifest};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -62,11 +62,7 @@ impl IndexEntry {
             description: m.package.description.clone(),
             compat: m.compat.clone(),
             uses_scripts: m.uses_scripts(),
-            kind: match m.kind() {
-                Kind::Plain => None,
-                Kind::Plugin => Some("plugin".into()),
-                Kind::Sdk => Some("sdk".into()),
-            },
+            kind: m.kind().name(),
             permissions: m.plugin.as_ref().map(|p| p.permissions.clone()).unwrap_or_default(),
         }
     }

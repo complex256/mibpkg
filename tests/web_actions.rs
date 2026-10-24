@@ -288,3 +288,62 @@ fn gem_survives_its_output_pipe_closing() {
     let st = mibpkg::state::State::load(&mibpkg::paths::Layout::load(t.path()).unwrap()).unwrap();
     assert!(st.results["_"].starts_with("OK: rescanned"), "the action ran: {:?}", st.results);
 }
+
+#[test]
+fn install_action_with_approve_builds_argv_with_flag() {
+    assert_eq!(
+        argv(r#"{"action":"install","package":"extra","approve":["vehicle.read","network"]}"#).unwrap(),
+        ["install", "extra", "--approve=vehicle.read,network"]
+    );
+    assert_eq!(
+        argv(r#"{"action":"install","package":"carmqtt","collection":"community","approve":["platform.unrestricted"]}"#).unwrap(),
+        ["install", "carmqtt", "community", "--approve=platform.unrestricted"]
+    );
+    // An empty list adds no flag: the install then asks instead of approving nothing.
+    assert_eq!(argv(r#"{"action":"install","package":"extra","approve":[]}"#).unwrap(), ["install", "extra"]);
+}
+
+#[test]
+fn install_action_rejects_bad_permission_strings() {
+    let long = "x".repeat(200);
+    for bad in ["a b", "--x", "-x", "", "a,b", "a=b", "ü", "$(id)", "a\nb", long.as_str()] {
+        let s = serde_json::to_string(bad).unwrap();
+        let json = format!(r#"{{"action":"install","package":"extra","approve":["network",{s}]}}"#);
+        assert!(argv(&json).is_err(), "{json}");
+    }
+    assert!(argv(r#"{"action":"install","package":"extra","approve":"network"}"#).is_err(), "a list, not a string");
+}
+
+#[test]
+fn grant_action_builds_sdk_grant_argv() {
+    assert_eq!(
+        argv(r#"{"action":"grant","id":"carmqtt","permissions":["vehicle.read","network"]}"#).unwrap(),
+        ["sdk", "grant", "carmqtt", "vehicle.read,network"]
+    );
+    // Nothing checked revokes every grant (the plugin stops running).
+    assert_eq!(argv(r#"{"action":"grant","id":"carmqtt","permissions":[]}"#).unwrap(), ["sdk", "grant", "carmqtt", ""]);
+    let v = validate(&parse_action(br#"{"action":"grant","id":"carmqtt","permissions":[]}"#).unwrap(), &known()).unwrap();
+    assert_eq!(v.package.as_deref(), Some("carmqtt"));
+    assert!(v.label.contains("carmqtt"), "{}", v.label);
+}
+
+#[test]
+fn grant_action_rejects_bad_id_and_permission() {
+    let long = "x".repeat(5000);
+    let mut bad: Vec<&str> = HOSTILE.to_vec();
+    bad.push(&long);
+    bad.push("extra"); // offered, not installed
+    for s in bad {
+        let s = serde_json::to_string(s).unwrap();
+        let json = format!(r#"{{"action":"grant","id":{s},"permissions":["network"]}}"#);
+        assert!(argv(&json).is_err(), "{json}");
+    }
+    for perm in ["a b", "--x", "", "a,b", "ü"] {
+        let s = serde_json::to_string(perm).unwrap();
+        let json = format!(r#"{{"action":"grant","id":"carmqtt","permissions":[{s}]}}"#);
+        assert!(argv(&json).is_err(), "{json}");
+    }
+    for json in [r#"{"action":"grant","id":"carmqtt"}"#, r#"{"action":"grant","id":"carmqtt","permissions":[],"x":1}"#] {
+        assert!(argv(json).is_err(), "{json}");
+    }
+}

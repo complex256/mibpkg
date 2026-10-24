@@ -77,6 +77,17 @@ pub enum Kind {
     Sdk,
 }
 
+impl Kind {
+    /// "plugin" or "sdk", as index entries and the web name the kind; None for a plain package.
+    pub fn name(self) -> Option<String> {
+        match self {
+            Kind::Plain => None,
+            Kind::Plugin => Some("plugin".into()),
+            Kind::Sdk => Some("sdk".into()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PackageMeta {

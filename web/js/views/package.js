@@ -7,11 +7,15 @@
     job         live output while an action on this package runs
     actions     Restart · Roll back · Remove
     links       logs and config files
+    permissions a plugin's permissions: what it asks for, or (installed) grant and revoke
     info        sources, compatibility, scripts, last result
+
+  Installing or updating a plugin that asks for new permissions opens the approval sheet first.
 */
 import { api } from '../api.js';
 import { backLink, formatSize, h, replace, toast } from '../dom.js';
 import { packageIcon } from '../icons.js';
+import { approvalSheet, grantsEditor, newlyAsked, permissionList } from '../permissions.js';
 import { isSelfUpdate, jobView, redrawSoon, startAction, waitForRestart } from '../jobs.js';
 import { compareVersions, offeringCollections } from '../rows.js';
 
@@ -32,6 +36,7 @@ export async function render(name) {
 
   const inst = p.installed;
   const jobArea = h('div', {});
+  const sheetArea = h('div', {});
 
   // Start an action on this package and show its output here.
   async function act(body) {
@@ -44,6 +49,25 @@ export async function render(name) {
     } catch (e) {
       toast(e.message, { error: true });
     }
+  }
+
+  // Install or update from `collection`: a plugin that asks for permissions the installed
+  // version did not declare shows the approval sheet first; Cancel sends nothing.
+  function install(collection) {
+    const body = { action: 'install', package: p.name, collection };
+    const offered = p.available.find((a) => a.collection === collection);
+    const asked = offered && offered.kind === 'plugin' ? newlyAsked(offered.permissions, inst ? inst.permissions : null) : [];
+    if (!asked.length) {
+      act(body);
+      return;
+    }
+    replace(
+      sheetArea,
+      approvalSheet(asked, (ids) => {
+        sheetArea.replaceChildren();
+        act({ ...body, approve: ids });
+      }),
+    );
   }
 
   // Show a job's log; when `live`, redraw the page once it finishes.
@@ -75,32 +99,34 @@ export async function render(name) {
     'div',
     {},
     backLink('#/discover', 'Discover'),
-    header(p, act),
+    header(p, install),
+    sheetArea,
     facts(p),
     p.description ? h('p', {}, p.description) : null,
     notices(p),
     jobArea,
     inst ? actions(p, act) : null,
     inst ? links(p) : null,
+    permissions(p, act),
     info(p),
   );
 }
 
 /** Icon, name, collection, and the main button (install / update / choose). */
-function header(p, act) {
+function header(p, install) {
   const inst = p.installed;
   const colls = offeringCollections(p);
   let main = null;
   let chooser = null;
 
   if (inst && p.update) {
-    main = h('button', { class: 'pill primary', type: 'button', onclick: () => act({ action: 'install', package: p.name, collection: p.update_from }) }, p.update_from === inst.collection ? `Update to ${p.update}` : `Update to ${p.update} from ${p.update_from}`);
+    main = h('button', { class: 'pill primary', type: 'button', onclick: () => install(p.update_from) }, p.update_from === inst.collection ? `Update to ${p.update}` : `Update to ${p.update} from ${p.update_from}`);
   } else if (inst && p.moved_choices && p.moved_choices.length) {
     // The package's collection is gone and several offer it: one button per collection.
     main = h('div', { style: 'display:flex;flex-direction:column;gap:6px' },
-      p.moved_choices.map((c) => h('button', { class: 'pill', type: 'button', onclick: () => act({ action: 'install', package: p.name, collection: c.collection }) }, `Update to ${c.version} from ${c.collection}`)));
+      p.moved_choices.map((c) => h('button', { class: 'pill', type: 'button', onclick: () => install(c.collection) }, `Update to ${c.version} from ${c.collection}`)));
   } else if (!inst && colls.length === 1) {
-    main = h('button', { class: 'pill primary', type: 'button', onclick: () => act({ action: 'install', package: p.name, collection: colls[0] }) }, 'Get');
+    main = h('button', { class: 'pill primary', type: 'button', onclick: () => install(colls[0]) }, 'Get');
   } else if (!inst && colls.length > 1) {
     // Several collections offer it: the user picks which one it (and its updates) come from.
     const radios = colls.map((c, i) => {
@@ -117,7 +143,7 @@ function header(p, act) {
       {},
       h('p', { class: 'muted' }, 'More than one source has this package. Choose the one to install it from; later updates come from the same source.'),
       radios,
-      h('button', { class: 'button', type: 'button', onclick: (e) => act({ action: 'install', package: p.name, collection: e.target.parentElement.querySelector('input:checked').value }) }, 'Install'),
+      h('button', { class: 'button', type: 'button', onclick: (e) => install(e.target.parentElement.querySelector('input:checked').value) }, 'Install'),
     );
   } else if (!inst) {
     main = h('button', { class: 'pill', type: 'button', disabled: true }, 'Not for this car');
@@ -222,6 +248,23 @@ function links(p) {
     ),
   ];
   return items.length ? h('ul', { class: 'menu', style: 'margin-top:12px' }, items) : null;
+}
+
+/**
+ * A plugin's permissions. Installed: a checkbox each to grant or revoke (all-or-nothing: an
+ * unchecked one stops the plugin). Not installed: what the offered version asks for.
+ */
+function permissions(p, act) {
+  const inst = p.installed;
+  const head = h('div', { class: 'section-head' }, h('h2', {}, 'Permissions'));
+  if (inst) {
+    if (inst.kind !== 'plugin' || !inst.permissions.length) {
+      return null;
+    }
+    return h('div', {}, head, grantsEditor(inst.permissions, (ids) => act({ action: 'grant', id: p.name, permissions: ids })));
+  }
+  const offered = p.available.find((a) => a.kind === 'plugin' && a.permissions.length);
+  return offered ? h('div', {}, head, permissionList(offered.permissions)) : null;
 }
 
 function info(p) {

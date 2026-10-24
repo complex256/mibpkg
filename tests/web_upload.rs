@@ -157,3 +157,78 @@ fn an_archive_claiming_a_huge_entry_is_refused_before_unpacking() {
     let i = look(&f, &[], &gz.finish().unwrap());
     assert!(i.problems[0].contains("too large"), "{:?}", i.problems);
 }
+
+/// A `[plugin]` package (the stamp's contents are only checked at install).
+fn plugin_mpk(f: &common::Fixture, id: &str, version: &str, perms: &[&str]) -> Vec<u8> {
+    let s = f.root().join(format!("src-{id}-{version}"));
+    fs::create_dir_all(&s).unwrap();
+    let list: Vec<String> = perms.iter().map(|p| format!("{p:?}")).collect();
+    let manifest = format!(
+        "[package]\nname = \"{id}\"\nversion = \"{version}\"\n\n[plugin]\njar = \"{id}.jar\"\napi = 2\npermissions = [{}]\n",
+        list.join(", ")
+    );
+    fs::write(s.join("manifest.toml"), &manifest).unwrap();
+    fs::write(s.join(format!("{id}.jar")), "jar").unwrap();
+    fs::write(s.join(format!("{id}.jar.stamp")), "format=1\n").unwrap();
+    let out = f.root().join(format!("{id}-{version}.mpk"));
+    mibpkg::archive::pack(&s, &out).unwrap();
+    fs::read(out).unwrap()
+}
+
+/// `id` recorded as installed at `version` with `perms` declared, and the SDK's catalog present.
+fn installed_plugin(f: &common::Fixture, id: &str, version: &str, perms: &[&str], grants: &str) {
+    let dir = f.layout.pkg_dir(id).join(version);
+    fs::create_dir_all(&dir).unwrap();
+    let list: Vec<String> = perms.iter().map(|p| format!("{p:?}")).collect();
+    fs::write(
+        dir.join("manifest.toml"),
+        format!("[package]\nname = \"{id}\"\nversion = \"{version}\"\n\n[plugin]\njar = \"{id}.jar\"\napi = 2\npermissions = [{}]\n", list.join(", ")),
+    )
+    .unwrap();
+    fs::write(f.layout.pkg_dir(id).join("current"), version).unwrap();
+    let mut st = mibpkg::state::State::load(&f.layout).unwrap_or_default();
+    st.packages.insert(
+        id.into(),
+        mibpkg::state::Installed { collection: "uploaded".into(), version: version.into(), previous: None, services: vec![], uses_scripts: false },
+    );
+    st.save(&f.layout).unwrap();
+    let g = f.layout.p(mibpkg::mibsdk::GRANTS);
+    fs::create_dir_all(g.parent().unwrap()).unwrap();
+    fs::write(&g, grants).unwrap();
+}
+
+fn catalog(f: &common::Fixture) {
+    let to = f.layout.p(mibpkg::mibsdk::PERMISSIONS);
+    fs::create_dir_all(to.parent().unwrap()).unwrap();
+    fs::copy(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mibsdk/permissions.json"), to).unwrap();
+}
+
+#[test]
+fn upload_inspection_lists_needs_approval_for_new_permissions_only() {
+    let f = common::fixture();
+    catalog(&f);
+    // network was revoked: it stays revoked, and the update does not ask for it again.
+    installed_plugin(&f, "bike", "1.0.0", &["vehicle.read", "network"], "bike=vehicle.read\n");
+    let i = look(&f, &[], &plugin_mpk(&f, "bike", "1.1.0", &["vehicle.read", "network", "ui.slot.carmenu", "platform.unrestricted"]));
+    assert_eq!(i.kind.as_deref(), Some("upgrade"));
+    assert_eq!(i.package_kind.as_deref(), Some("plugin"));
+    assert_eq!(i.needs_approval, ["ui.slot.carmenu", "platform.unrestricted"]);
+    let ids: Vec<&str> = i.permissions.iter().map(|p| p.id.as_str()).collect();
+    assert_eq!(ids, ["vehicle.read", "network", "ui.slot.carmenu", "platform.unrestricted"]);
+    assert_eq!(i.permissions[0].text, "Read vehicle state: ignition, gear, parking sensors");
+    assert!(!i.permissions[0].loud);
+    assert!(i.permissions[3].loud, "platform.unrestricted is loud");
+    let json = serde_json::to_value(&i).unwrap();
+    assert_eq!(json["needs_approval"], serde_json::json!(["ui.slot.carmenu", "platform.unrestricted"]));
+    assert_eq!(json["permissions"][3], serde_json::json!({"id": "platform.unrestricted", "text": "Unrestricted: may use reflection and stock HMI classes; the SDK cannot contain it", "loud": true}));
+
+    // A fresh plugin asks for everything it declares; an unknown permission says so.
+    let i = look(&f, &[], &plugin_mpk(&f, "hello", "1.0.0", &["network", "made.up"]));
+    assert_eq!(i.needs_approval, ["network", "made.up"]);
+    assert!(i.permissions[1].text.contains("not known to the installed SDK"), "{:?}", i.permissions[1]);
+
+    // A plain package has no permissions to approve.
+    let i = look(&f, &[], &mpk_bytes(&f, "demo", "1.0.0", ""));
+    assert_eq!(i.package_kind, None);
+    assert!(i.permissions.is_empty() && i.needs_approval.is_empty());
+}

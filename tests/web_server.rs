@@ -231,10 +231,21 @@ fn upload_inspect_and_install_builds_the_install_file_argv() {
     let id = v["upload_id"].as_str().unwrap().to_string();
     let r = write(&srv, "POST", &format!("/api/uploads/{id}/install"), br#"{"collection":"elsewhere"}"#, None);
     assert_eq!(r.status, 400);
+    let r = write(&srv, "POST", &format!("/api/uploads/{id}/install"), br#"{"collection":"-","approve":["--x"]}"#, None);
+    assert_eq!(r.status, 400, "a malformed approval is refused");
     let r = write(&srv, "POST", &format!("/api/uploads/{id}/install"), br#"{"collection":"-"}"#, None);
     assert_eq!(r.status, 202, "{}", String::from_utf8_lossy(&r.body));
     wait_done(&srv, r.json()["job"].as_str().unwrap());
-    assert_eq!(srv.runner.seen(), vec![vec!["install-file".to_string(), "fresh".into(), id.clone(), "-".into()]]);
+    let r = write(&srv, "POST", &format!("/api/uploads/{id}/install"), br#"{"collection":"-","approve":["vehicle.read","network"]}"#, None);
+    assert_eq!(r.status, 202, "{}", String::from_utf8_lossy(&r.body));
+    wait_done(&srv, r.json()["job"].as_str().unwrap());
+    assert_eq!(
+        srv.runner.seen(),
+        vec![
+            vec!["install-file".to_string(), "fresh".into(), id.clone(), "-".into()],
+            vec!["install-file".to_string(), "fresh".into(), id.clone(), "-".into(), "--approve=vehicle.read,network".into()],
+        ]
+    );
     let r = write(&srv, "POST", "/api/uploads/0123456789abcdef0123456789abcdef/install", br#"{"collection":"-"}"#, None);
     assert_eq!(r.status, 404);
 }
