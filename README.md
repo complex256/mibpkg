@@ -79,6 +79,67 @@ way? **GEM → mibpkg → Reset web settings.**
 **Emergency stop:** create an empty file `mibpkg/DISABLE` on the card and reboot — no package
 services start while it is present.
 
+## Plugin SDK packages
+
+mibpkg 0.8 can install the MIB SDK (`mibsdk`) and the plugins that run on it as ordinary packages.
+A manifest has one of two extra tables:
+
+- **`[sdk]`** - the SDK package itself (named `mibsdk`; the name is refused for any manifest without
+  `[sdk]`). It carries the API range (`api`, `min_api`), the supported `hmi` builds, the `jars`,
+  one `stamp`, the configurator, the bundle line and the owned class prefixes. Installing it patches
+  the unit's bundle list and writes `sdk.properties`; it is refused on an HMI build it does not list.
+  This replaces the `[[patch]]` idea in `docs/ideas.md`.
+- **`[plugin]`** - one plugin (`jar`, `api`, `permissions`). The package name is the plugin id:
+  2-40 characters, first `[a-z0-9]`, the rest `[a-z0-9-]`. The runtime accepts one character more
+  (41), so a 41-character id still loads when pushed by hand but cannot be packaged; this is
+  intended. A plugin installs only when `sdk.min_api <= plugin.api <= sdk.api`.
+
+mibpkg 0.7 refuses `[plugin]` and `[sdk]` manifests, so a unit must be on 0.8 first.
+
+**Approval.** A plugin install or update that adds a permission needs an explicit approval list
+that covers it. Without one, `install`, `install-file`, `rollback` and the GEM equivalents list the
+permissions and exit **3**; re-run with `--approve=<perm,...>`. `update-all` never approves on your
+behalf and refuses `--approve`: update each such plugin with `mibpkg install <pkg> --approve=...`.
+Seeding never installs `[sdk]` or `[plugin]` packages. The web interface shows one row per
+permission in plain words and asks before installing or updating.
+
+**Revoking.** Runtime enforcement is all-or-nothing today: a plugin whose declared permissions are
+not all granted is `BLOCKED_PERMISSIONS` and does not run. So revoking any one permission (web
+Revoke, or `mibpkg sdk grant <id> <fewer,perms>`) stops the plugin until the permission is granted
+again. Optional permissions (a manifest-level `optional` list the runtime tolerates ungranted) are a
+follow-up, not part of 0.8.
+
+**Data and removal.** `mibpkg remove <plugin>` keeps `/mnt/persist/mibsdk/data/<id>.properties`;
+`--purge` (alias `--purge-data`) deletes it once the SDK confirms the unload. Removal also drops
+the plugin's on/off switch, so a reinstall starts enabled.
+
+**`mibpkg sdk` verbs** (all but `status` need the SDK installed):
+
+| Verb | What it does |
+|---|---|
+| `sdk status` | SDK, plugins, grants, safe mode and boot state; read-only |
+| `sdk grant <id> <perm,...>` | set a plugin's grants (an empty list revokes all) |
+| `sdk push <id>` | install a development jar from `/tmp/mibpkg.push.<id>.jar` (+ `.stamp`) |
+| `sdk remove <id> [--purge]` | remove a plugin |
+| `sdk safe-mode on\|off` | create or delete the `SAFE_MODE` marker |
+| `sdk boot-state set-wrap <n>` | set the wrap-boot counter |
+| `sdk data-clear <id>` | delete a plugin's data file |
+
+### Other tools that write `/mnt/app`
+
+`/mnt/app` is normally read-only, and several processes remount it. mibpkg shares the remount with
+a holder protocol; tools that follow it never flip the mount under each other:
+
+1. Take `/tmp/mibpkg.rwlock` (create it with `create_new`, your pid inside; remove it when done).
+2. Create your holder file `/tmp/mibpkg.rw.app.<pid>` (use `system` instead of `app` for
+   `/mnt/system`), then `mount -uw /mnt/app`.
+3. On release, take the lock, remove your holder file, and run `mount -ur /mnt/app` only if no live
+   `mibpkg.rw.app.*` file remains (files of dead pids do not count).
+
+Re-assert `mount -uw` before **each** write and verify the write by reading it back: other processes
+remount `/mnt/app` read-only at any time (bench e2e), and a 0.7 supervisor still running during an
+upgrade does not honour holders.
+
 ## For developers
 
 - `cargo test` — host tests (all unit paths are mapped under a temp root).
@@ -89,7 +150,7 @@ services start while it is present.
   engineering-menu entry accepted (see below).
 - `mibpkg swdl-card <out> --payload DIR [--seed DIR] --version V [--signed-header FILE] [--no-mib]`
   — assemble the card directly. `--no-mib` emits a pure SWDL card.
-- `mibpkg build <src-dir> <out-dir>` — build a `.mpk` from a directory with `manifest.toml`.
+- `mibpkg build <src-dir> <out-dir>` — build a `.mpk` from a directory with `manifest.toml` (plain, `[plugin]` or `[sdk]`).
 - `mibpkg index <collection-dir> --id ID --name NAME` — write `index.json`.
 - `mibpkg verify <card-dir | github:owner/repo | index.json>` — check a card or a collection the
   way the car would.
