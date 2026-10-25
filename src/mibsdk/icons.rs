@@ -219,9 +219,9 @@ pub fn sha16(bytes: &[u8]) -> String {
 
 /// `index.properties` for `checked`: `<name>=<sha16>,<w>,<h>`, sorted by name, LF.
 pub fn index_text(checked: &[Checked]) -> String {
-    let mut lines: Vec<String> = checked.iter().map(|c| format!("{}={},{},{}\n", c.name, c.sha16, c.w, c.h)).collect();
-    lines.sort();
-    lines.concat()
+    let mut sorted: Vec<&Checked> = checked.iter().collect();
+    sorted.sort_by(|a, b| a.name.cmp(&b.name)); // by name: a whole-line sort puts `wifi-off=` before `wifi=`
+    sorted.iter().map(|c| format!("{}={},{},{}\n", c.name, c.sha16, c.w, c.h)).collect()
 }
 
 /// Install `checked` into `dir_abs`: every `<sha16>.png`, then `index.properties`, last the

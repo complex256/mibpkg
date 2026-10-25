@@ -197,6 +197,16 @@ fn check_all_reads_checks_and_hashes_every_declared_icon_and_writes_nothing() {
     assert!(e.starts_with("icon bad: bad CRC"), "{e}");
 }
 
+#[test]
+fn index_text_sorts_by_name_not_by_whole_line() {
+    // '-' sorts before '=', so a whole-line sort would put `wifi-off=` first.
+    let one = |name: &str, sha16: &str| icons::Checked {
+        name: name.to_string(), sha16: sha16.to_string(), w: 20, h: 20, bytes: Vec::new(),
+    };
+    let c = vec![one("wifi-off", "1111111111111111"), one("wifi", "2222222222222222")];
+    assert_eq!(icons::index_text(&c), "wifi=2222222222222222,20,20\nwifi-off=1111111111111111,20,20\n");
+}
+
 /// The shared vectors for the tightened rules (SDK `6f07811`): each refused for its own reason.
 #[test]
 fn png_check_refuses_each_tightened_rule_fixture_for_its_reason() {

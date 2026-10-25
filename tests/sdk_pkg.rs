@@ -2041,6 +2041,32 @@ fn update_from_an_sdk_without_hmisystem_takes_the_line_over() {
 }
 
 #[test]
+fn update_to_an_sdk_without_hmisystem_puts_the_line_back_to_stock_byte_for_byte() {
+    // What the SDK without hmisystem writes on a fresh install: the reference.
+    let (rf, rdir) = unit();
+    let rsys = RecordingSys::default();
+    install_sdk(&Ctx::new(rf.layout.clone(), &rsys), rdir.path(), "0.2.0").unwrap();
+    let want = fs::read(p(&rf, mibsdk::BUNDLES)).unwrap();
+
+    let (f, dir) = unit();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    install_sdk_system(&ctx, dir.path(), "0.1.0").unwrap();
+    assert!(bundles_text(&f).contains(&format!("{HMISYSTEM_SDK}\r\n")));
+    install_sdk(&ctx, dir.path(), "0.2.0").unwrap();
+    assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), want, "the same bytes as a fresh install without hmisystem");
+    let live = bundles_text(&f);
+    assert_eq!(live.matches(&format!("{HMISYSTEM_STOCK}\r\n")).count(), 1, "{live}");
+    assert!(!live.contains("SdkSystemActivator"));
+    // The stock line itself is byte-identical to the stock file's.
+    let stock_text = String::from_utf8(stock()).unwrap();
+    let line = |t: &str| t.split_inclusive('\n').find(|l| l.starts_with("HMISystem=")).unwrap().to_string();
+    assert_eq!(line(&live), line(&stock_text));
+    install::remove(&ctx, "mibsdk", false).unwrap();
+    assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), stock());
+}
+
+#[test]
 fn owned_prefix_system_hmi_refuses_a_foreign_jar() {
     let cls = "de/audi/tghu/system/hmi/Activator.class";
     let (f, dir) = unit();

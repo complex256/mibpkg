@@ -81,7 +81,8 @@ services start while it is present.
 
 ## Plugin SDK packages
 
-mibpkg 0.8 can install the MIB SDK (`mibsdk`) and the plugins that run on it as ordinary packages.
+From 0.8 mibpkg can install the MIB SDK (`mibsdk`) and the plugins that run on it as ordinary
+packages; the `hmisystem` and `icons` keys below need 0.9.
 A manifest has one of two extra tables:
 
 - **`[sdk]`** - the SDK package itself (named `mibsdk`; the name is refused for any manifest without
@@ -102,7 +103,9 @@ A manifest has one of two extra tables:
   (41), so a 41-character id still loads when pushed by hand but cannot be packaged; this is
   intended. A plugin installs only when `sdk.min_api <= plugin.api <= sdk.api`.
 
-mibpkg 0.7 refuses `[plugin]` and `[sdk]` manifests, so a unit must be on 0.8 first.
+mibpkg 0.7 refuses `[plugin]` and `[sdk]` manifests, so a unit must be on 0.8 first. mibpkg 0.8
+refuses a `[sdk]` or `[plugin]` that has `hmisystem_stock`/`hmisystem` or `icons` ("unknown field"),
+so such a package needs 0.9.
 
 **Icons.** From 0.9 `[plugin]` and `[sdk]` may list `icons = ["<name>", ...]`: names `[a-z0-9-]{1,32}`,
 no duplicates, at most 8 for a plugin and 32 for the SDK's built-in set. Each name needs the package
@@ -121,8 +124,8 @@ pass the same PNG rules as the SDK build's `PngCheck`, or the install is refused
 
 They are installed content-addressed: `/mnt/app/eso/hmi/lsd/mibsdk/icons/<plugin-id>/<sha16>.png`
 (the SDK's in `.../mibsdk/icons-sdk/`), `<sha16>` being the first 16 lowercase hex characters of
-the file's SHA-256, plus `index.properties` with one `<name>=<sha16>,<w>,<h>` line per icon, sorted,
-LF. An update writes the new files, then the index, then removes the files the index no longer
+the file's SHA-256, plus `index.properties` with one `<name>=<sha16>,<w>,<h>` line per icon, sorted
+by name, LF. An update writes the new files, then the index, then removes the files the index no longer
 lists; if the icons cannot be written, the jar, grants line and icons are put back as they were.
 `mibpkg remove <plugin>` deletes the plugin's icon directory once the SDK has confirmed the unload
 (or did not answer), and a re-run finishes a removal that left only that directory. Removing the
