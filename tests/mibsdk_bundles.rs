@@ -2,7 +2,7 @@
 //! `HMICar=` guard: port of the SDK repo's `installer/test_gen_bundles.py` plus `mibsdk-dev`'s
 //! `check_hmicar`.
 use mibpkg::manifest::SdkSpec;
-use mibpkg::mibsdk::bundles::{check_hmicar, generate, sdk_properties};
+use mibpkg::mibsdk::bundles::{check_hmicar, check_line, generate, sdk_properties};
 
 const STOCK_FILE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -28,6 +28,8 @@ fn spec() -> SdkSpec {
         tracer_configurator: "de.audi.tghu.dsitrace.TraceConfigurator".into(),
         hmicar_stock: "de.audi.tghu.car.hmi.Activator".into(),
         hmicar: "mibsdk.adapter.hqc.ui.SdkCarActivator".into(),
+        hmisystem_stock: None,
+        hmisystem: None,
         owned: vec!["de/audi/tghu/car/hmi/".into(), "de/audi/atip/model/CarModelBank".into()],
         properties: vec![
             "hook.services=org.dsi.ifc.carparkingsystem.DSICarParkingSystem".into(),
@@ -405,4 +407,95 @@ fn generate_refuses_a_bundle_line_without_a_name() {
         let why = format!("{:#}", generate(&stock(), &sdk, true).expect_err("accepted"));
         assert_eq!(why, format!("[sdk] bundle {bundle:?} is not a <name>=<activator> line"));
     }
+}
+
+// ---- HMISystem= (the System module's activator) ----
+
+const HMISYSTEM_STOCK: &str = "HMISystem=de.audi.tghu.system.hmi.Activator";
+const HMISYSTEM_SDK: &str = "HMISystem=mibsdk.adapter.hqc.ui.SdkSystemActivator";
+
+fn spec_system() -> SdkSpec {
+    SdkSpec {
+        hmisystem_stock: Some("de.audi.tghu.system.hmi.Activator".into()),
+        hmisystem: Some("mibsdk.adapter.hqc.ui.SdkSystemActivator".into()),
+        ..spec()
+    }
+}
+
+fn gen_with(src: &[u8], sdk: SdkSpec, tracer: bool) -> Vec<u8> {
+    generate(src, &sdk, tracer).unwrap()
+}
+
+fn refusal_with(src: &[u8], sdk: SdkSpec) -> String {
+    format!("{:#}", generate(src, &sdk, true).expect_err("generate accepted the input"))
+}
+
+#[test]
+fn hmisystem_substituted_once_keeping_crlf_and_fixed_point() {
+    let out = gen_with(&stock(), spec_system(), true);
+    assert_eq!(count(&out, b"HMISystem=mibsdk.adapter.hqc.ui.SdkSystemActivator\r\n"), 1);
+    assert_eq!(count(&out, b"HMISystem=de.audi.tghu.system.hmi.Activator"), 0);
+    assert_eq!(gen_with(&out, spec_system(), true), out);
+    // HMICar= is still rewritten alongside, and nothing else changed.
+    assert!(contains(&out, b"HMICar=mibsdk.adapter.hqc.ui.SdkCarActivator\r\n"));
+    let without = gen_with(&stock(), spec(), true);
+    assert_eq!(replace(&out, HMISYSTEM_SDK.as_bytes(), HMISYSTEM_STOCK.as_bytes()), without);
+}
+
+#[test]
+fn nonstock_hmisystem_refused() {
+    let bad = replace(&stock(), HMISYSTEM_STOCK.as_bytes(), b"HMISystem=other.Activator");
+    assert_eq!(refusal_with(&bad, spec_system()), "HMISystem is not stock (other.Activator); refusing");
+}
+
+#[test]
+fn duplicate_hmisystem_refused() {
+    let dup = replace(
+        &stock(),
+        format!("{HMISYSTEM_STOCK}\r\n").as_bytes(),
+        format!("{HMISYSTEM_STOCK}\r\nHMISystem \t=de.audi.tghu.system.hmi.Activator\r\n").as_bytes(),
+    );
+    assert_eq!(refusal_with(&dup, spec_system()), "expected exactly one HMISystem= line, found 2");
+    let none = replace(&stock(), format!("{HMISYSTEM_STOCK}\r\n").as_bytes(), b"");
+    assert_eq!(refusal_with(&none, spec_system()), "expected exactly one HMISystem= line, found 0");
+}
+
+#[test]
+fn hmisystem_line_ending_in_a_bare_cr_refused() {
+    let src = b"de.audi.tghu.serviceDelegateConfigurator=x\nBundle.Startup.Autostart=A\nHMICar=de.audi.tghu.car.hmi.Activator\nHMISystem=de.audi.tghu.system.hmi.Activator\rX=y\n";
+    assert_eq!(
+        refusal_with(src, spec_system()),
+        "the HMISystem line ends in a bare CR; rewriting it would join it to the next line; refusing"
+    );
+}
+
+#[test]
+fn spec_without_hmisystem_leaves_the_line_alone() {
+    // Even a foreign or duplicated HMISystem= line is copied byte for byte.
+    for src in [stock(), replace(&stock(), HMISYSTEM_STOCK.as_bytes(), b"HMISystem=other.Activator\nHMISystem=x")] {
+        let out = gen(&src, true);
+        let lines = |b: &[u8]| -> Vec<Vec<u8>> {
+            b.split_inclusive(|c| *c == b'\n').filter(|l| l.starts_with(b"HMISystem")).map(|l| l.to_vec()).collect()
+        };
+        assert_eq!(lines(&out), lines(&src));
+    }
+    assert!(contains(&gen(&stock(), true), format!("{HMISYSTEM_STOCK}\r\n").as_bytes()));
+}
+
+#[test]
+fn check_line_is_check_hmicar_over_any_key() {
+    let text = format!("a=b\r\n{HMISYSTEM_STOCK}\r\n{HMICAR_STOCK}\r\n");
+    check_line(text.as_bytes(), "HMISystem", "x", &[HMISYSTEM_STOCK]).unwrap();
+    check_line(text.as_bytes(), "HMICar", "x", &[HMICAR_STOCK]).unwrap();
+    let why = |t: &str, allowed: &[&str]| {
+        format!("{:#}", check_line(t.as_bytes(), "HMISystem", "the file", allowed).unwrap_err())
+    };
+    assert_eq!(
+        why(&text, &[HMISYSTEM_SDK]),
+        format!("HMISystem is not stock in the file ({HMISYSTEM_STOCK}); refusing; nothing changed")
+    );
+    assert_eq!(why("a=b\n", &[HMISYSTEM_STOCK]), "HMISystem is not stock in the file (no HMISystem= line); refusing; nothing changed");
+    // Every Properties spelling of the key counts.
+    assert!(check_line(format!("{text}HMISys\\\ntem=x\n").as_bytes(), "HMISystem", "x", &[HMISYSTEM_STOCK]).is_err());
+    assert!(check_hmicar(text.as_bytes(), "x", &[HMICAR_STOCK]).is_ok());
 }

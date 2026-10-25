@@ -65,17 +65,24 @@ fn find_carplay_stock(dir: &Path) -> std::result::Result<Option<PathBuf>, (PathB
     Ok(None)
 }
 
-fn hmicar_lines(sdk: &SdkSpec) -> (String, String) {
-    (format!("HMICar={}", sdk.hmicar_stock), format!("HMICar={}", sdk.hmicar))
+/// The bundle-list lines the spec takes over, as (key, stock line, SDK line): `HMICar=`, and
+/// `HMISystem=` when the spec has `hmisystem`.
+fn managed_lines(sdk: &SdkSpec) -> Vec<(&'static str, String, String)> {
+    let mut out = vec![("HMICar", format!("HMICar={}", sdk.hmicar_stock), format!("HMICar={}", sdk.hmicar))];
+    if let (Some(stock), Some(ours)) = (&sdk.hmisystem_stock, &sdk.hmisystem) {
+        out.push(("HMISystem", format!("HMISystem={stock}"), format!("HMISystem={ours}")));
+    }
+    out
 }
 
 /// The live bundle list references the SDK: it names mibsdk or (with the spec) the SDK bundle,
-/// or its `HMICar=` is not the stock line.
+/// or one of the lines the spec manages (`managed_lines`) is not the stock line.
 fn references_sdk(live: &[u8], spec: Option<&SdkSpec>) -> bool {
     let has = |needle: &[u8]| live.windows(needle.len()).any(|w| w == needle);
     has(b"mibsdk")
         || spec.is_some_and(|spec| {
-            has(spec.bundle.as_bytes()) || bundles::check_hmicar(live, "", &[&hmicar_lines(spec).0]).is_err()
+            has(spec.bundle.as_bytes())
+                || managed_lines(spec).iter().any(|(key, stock, _)| bundles::check_line(live, key, "", &[stock]).is_err())
         })
 }
 
@@ -190,16 +197,21 @@ pub fn check(ctx: &Ctx, m: &Manifest, pkg_dir: Option<&Path>) -> Result<()> {
     check_owned_classes(l, sdk, &jars)?;
 
     // The bundle list must be stock (or, on an update, ours) before any backup exists.
-    let (stock_line, sdk_line) = hmicar_lines(sdk);
     let live = fs::read(l.p(BUNDLES)).map_err(|e| anyhow!("cannot read {BUNDLES} ({e}); nothing changed"))?;
-    match stock_source(l, sdk)? {
-        Some(src) => {
-            bundles::check_hmicar(&live, &format!("the installed {BUNDLES}"), &[&stock_line, &sdk_line])?;
-            let stock =
-                fs::read(&src).map_err(|e| anyhow!("the stock backup {} is unreadable ({e}); nothing changed", l.unit_path(&src)))?;
-            bundles::check_hmicar(&stock, "the stock bundles file", &[&stock_line])?;
+    let stock = match stock_source(l, sdk)? {
+        Some(src) => Some(
+            fs::read(&src).map_err(|e| anyhow!("the stock backup {} is unreadable ({e}); nothing changed", l.unit_path(&src)))?,
+        ),
+        None => None,
+    };
+    for (key, stock_line, sdk_line) in managed_lines(sdk) {
+        match &stock {
+            Some(stock) => {
+                bundles::check_line(&live, key, &format!("the installed {BUNDLES}"), &[&stock_line, &sdk_line])?;
+                bundles::check_line(stock, key, "the stock bundles file", &[&stock_line])?;
+            }
+            None => bundles::check_line(&live, key, "the stock bundles file", &[&stock_line])?,
         }
-        None => bundles::check_hmicar(&live, "the stock bundles file", &[&stock_line])?,
     }
 
     if !l.p(TRACER_JAR).exists() {
@@ -450,8 +462,10 @@ fn plan(ctx: &Ctx, m: &Manifest, dir: &Path, notes: &mut Vec<String>) -> Result<
         }
         (live, mode_of(&l.p(BUNDLES))?, None, marker_tracer())
     };
-    // check_hmicar before generate (its HMICar= reading is the stricter one).
-    bundles::check_hmicar(&stock, "the stock bundles file", &[&hmicar_lines(&spec).0])?;
+    // check_line before generate (its reading of each managed line is the stricter one).
+    for (key, stock_line, _) in managed_lines(&spec) {
+        bundles::check_line(&stock, key, "the stock bundles file", &[&stock_line])?;
+    }
     let generated = bundles::generate(&stock, &spec, tracer).map_err(|e| anyhow!("{e:#}; nothing changed"))?;
     let props = bundles::sdk_properties(&spec, tracer);
     Ok(Plan { dir: dir.to_path_buf(), adopt, drop_stale, stock, stock_mode, bundles: generated, props, spec })

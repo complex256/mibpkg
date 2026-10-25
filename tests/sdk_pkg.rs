@@ -1917,3 +1917,146 @@ fn uninstall_self_purge_restores_the_records_on_the_same_firmware() {
     assert!(!p(&f, mibsdk::MARKER).exists(), "the tombstone removes the marker the install created");
     assert!(!f.layout.home().exists());
 }
+
+// ---- HMISystem= (an SDK whose [sdk] has hmisystem) ----
+
+const SYSTEM_MANIFEST: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/manifests/sdk-mibsdk-system.toml");
+const HMISYSTEM_STOCK: &str = "HMISystem=de.audi.tghu.system.hmi.Activator";
+const HMISYSTEM_SDK: &str = "HMISystem=mibsdk.adapter.hqc.ui.SdkSystemActivator";
+
+/// `sdk_src` with the manifest that also takes the `HMISystem=` line over.
+fn sdk_src_system(dir: &Path, version: &str) -> PathBuf {
+    let s = sdk_src(dir, version);
+    let text = fs::read_to_string(SYSTEM_MANIFEST).unwrap().replace("version = \"0.1.0\"", &format!("version = \"{version}\""));
+    fs::write(s.join("manifest.toml"), text).unwrap();
+    s
+}
+
+fn install_sdk_system(ctx: &Ctx, dir: &Path, version: &str) -> anyhow::Result<String> {
+    install_src(ctx, &sdk_src_system(dir, version))
+}
+
+/// An install of the system SDK refused with `want`: no remount, and no file anywhere changed.
+fn assert_system_refused_untouched(f: &common::Fixture, dir: &Path, version: &str, want: &str) {
+    let before = tree(f.root());
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let e = err(install_sdk_system(&ctx, dir, version));
+    assert!(e.contains(want), "{e}");
+    assert!(e.ends_with("; nothing changed"), "{e}");
+    assert!(sys.calls.borrow().is_empty(), "/mnt/app was remounted: {:?}", sys.calls.borrow());
+    assert_eq!(tree(f.root()), before, "{want}");
+}
+
+fn bundles_text(f: &common::Fixture) -> String {
+    String::from_utf8(fs::read(p(f, mibsdk::BUNDLES)).unwrap()).unwrap()
+}
+
+#[test]
+fn sdk_remove_restores_stock_bundles_byte_for_byte_with_hmisystem() {
+    let (f, dir) = unit();
+    tracer_off(&f);
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    install_sdk_system(&ctx, dir.path(), "0.1.0").unwrap();
+    let live = bundles_text(&f);
+    assert_eq!(live.matches(&format!("{HMISYSTEM_SDK}\r\n")).count(), 1, "{live}");
+    assert!(!live.contains(HMISYSTEM_STOCK));
+    assert!(live.contains(&format!("{HMICAR_SDK}\r\n")));
+    install::remove(&ctx, "mibsdk", false).unwrap();
+    assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), stock());
+    assert!(bundles_text(&f).contains(&format!("{HMISYSTEM_STOCK}\r\n")));
+    assert_eq!(mode(&p(&f, mibsdk::BUNDLES)), 0o777);
+}
+
+#[test]
+fn install_refuses_a_foreign_hmisystem_line() {
+    // A fresh install: the live list must hold the stock line (the SDK's own value too is refused).
+    for bad in ["HMISystem=x.Y", "HMISystem = de.audi.tghu.system.hmi.Activator", HMISYSTEM_SDK] {
+        let (f, dir) = unit();
+        write(&p(&f, mibsdk::BUNDLES), bundles_text(&f).replace(HMISYSTEM_STOCK, bad).as_bytes());
+        assert_system_refused_untouched(&f, dir.path(), "0.1.0", "HMISystem is not stock in the stock bundles file");
+    }
+    // An update: the live list may hold the stock or the SDK line, nothing else.
+    let (f, dir) = unit();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    install_sdk_system(&ctx, dir.path(), "0.1.0").unwrap();
+    install_sdk_system(&ctx, dir.path(), "0.2.0").unwrap();
+    let ours = bundles_text(&f);
+    write(&p(&f, mibsdk::BUNDLES), ours.replace(HMISYSTEM_SDK, "HMISystem=other.Act").as_bytes());
+    assert_system_refused_untouched(
+        &f,
+        dir.path(),
+        "0.3.0",
+        "HMISystem is not stock in the installed /mnt/app/eso/hmi/lsd/bundles_dsitracer_enabled.properties (HMISystem=other.Act)",
+    );
+    // ... and the stock backup must hold the stock line.
+    write(&p(&f, mibsdk::BUNDLES), ours.as_bytes());
+    let bk = backups::backup_path(&f.layout, mibsdk::BUNDLES);
+    fs::write(&bk, fs::read_to_string(&bk).unwrap().replace(HMISYSTEM_STOCK, HMISYSTEM_SDK)).unwrap();
+    assert_system_refused_untouched(&f, dir.path(), "0.3.0", "HMISystem is not stock in the stock bundles file");
+}
+
+#[test]
+fn firmware_changed_remove_refuses_without_force_when_only_hmisystem_references_the_sdk() {
+    let (f, dir) = unit();
+    tracer_off(&f);
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    install_sdk_system(&ctx, dir.path(), "0.1.0").unwrap();
+    // A new firmware's list: stock but for a non-stock HMISystem= line naming neither mibsdk nor the bundle.
+    let live = String::from_utf8(new_firmware_stock()).unwrap().replace(HMISYSTEM_STOCK, "HMISystem=other.Activator");
+    write(&p(&f, mibsdk::BUNDLES), live.as_bytes());
+    write(&p(&f, mibsdk::VERSION_INFO), NEW_HMI);
+    let before = tree(f.root());
+    let e = format!("{:#}", install::remove(&ctx, "mibsdk", false).unwrap_err());
+    assert!(e.contains("the firmware changed since mibsdk was installed"), "{e}");
+    assert!(e.contains("--force"), "{e}");
+    assert!(e.ends_with("nothing changed"), "{e}");
+    assert_eq!(tree(f.root()), before);
+    assert_eq!(sdk_jars_present(&f), SDK_JARS.to_vec());
+    assert!(State::load(&f.layout).unwrap().packages.contains_key("mibsdk"));
+    // With --force the live list is left as it is.
+    let mut ctx = Ctx::new(f.layout.clone(), &sys);
+    ctx.force = true;
+    let msg = install::remove(&ctx, "mibsdk", false).unwrap();
+    assert!(msg.contains("WARNING"), "{msg}");
+    assert_eq!(bundles_text(&f), live);
+}
+
+#[test]
+fn update_from_an_sdk_without_hmisystem_takes_the_line_over() {
+    let (f, dir) = unit();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    install_sdk(&ctx, dir.path(), "0.1.0").unwrap();
+    assert!(bundles_text(&f).contains(&format!("{HMISYSTEM_STOCK}\r\n")));
+    install_sdk_system(&ctx, dir.path(), "0.2.0").unwrap();
+    let live = bundles_text(&f);
+    assert_eq!(live.matches(&format!("{HMISYSTEM_SDK}\r\n")).count(), 1, "{live}");
+    assert!(!live.contains(HMISYSTEM_STOCK));
+    install::remove(&ctx, "mibsdk", false).unwrap();
+    assert_eq!(fs::read(p(&f, mibsdk::BUNDLES)).unwrap(), stock());
+}
+
+#[test]
+fn owned_prefix_system_hmi_refuses_a_foreign_jar() {
+    let cls = "de/audi/tghu/system/hmi/Activator.class";
+    let (f, dir) = unit();
+    jar_with(&p(&f, &format!("{}/zz-other-mod.jar", mibsdk::JARS)), &["a/B.class", cls]);
+    assert_system_refused_untouched(&f, dir.path(), "0.1.0", &format!("zz-other-mod.jar defines {cls}, which the SDK owns"));
+}
+
+#[test]
+fn references_sdk_counts_a_nonstock_hmisystem_only_with_the_spec_that_has_it() {
+    // Stale-record logic: the live list (HMISystem= foreign, nothing else) references the SDK
+    // for a spec with hmisystem, not for one without.
+    let live = String::from_utf8(stock()).unwrap().replace(HMISYSTEM_STOCK, "HMISystem=other.Activator");
+    let (f, _dir) = unit();
+    write(&p(&f, mibsdk::BUNDLES), live.as_bytes());
+    backups::backup_once(&f.layout, mibsdk::BUNDLES).unwrap();
+    let system = Manifest::parse(&fs::read_to_string(SYSTEM_MANIFEST).unwrap()).unwrap().sdk.unwrap();
+    assert!(sdk_pkg::stale_records(&f.layout, Some(&spec())).unwrap());
+    assert!(!sdk_pkg::stale_records(&f.layout, Some(&system)).unwrap());
+}

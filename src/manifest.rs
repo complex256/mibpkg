@@ -61,6 +61,12 @@ pub struct SdkSpec {
     /// Class names; the bundle-list line is `HMICar=<value>`.
     pub hmicar_stock: String,
     pub hmicar: String,
+    /// Class names; the bundle-list line is `HMISystem=<value>`. Both or neither: with them the
+    /// install manages `HMISystem=` exactly as `HMICar=`; without them the line is left alone.
+    #[serde(default)]
+    pub hmisystem_stock: Option<String>,
+    #[serde(default)]
+    pub hmisystem: Option<String>,
     /// Class path prefixes only the SDK may define, e.g. "de/audi/tghu/car/hmi/".
     pub owned: Vec<String>,
     /// sdk.properties lines.
@@ -328,11 +334,26 @@ impl Manifest {
                     bail!("[sdk] {key} {v:?} must be a Java class name ([A-Za-z_$][A-Za-z0-9_$.]*)");
                 }
             }
+            match (&s.hmisystem_stock, &s.hmisystem) {
+                (Some(stock), Some(ours)) => {
+                    for (key, v) in [("hmisystem_stock", stock), ("hmisystem", ours)] {
+                        if !class_name(v) {
+                            bail!("[sdk] {key} {v:?} must be a Java class name ([A-Za-z_$][A-Za-z0-9_$.]*)");
+                        }
+                    }
+                }
+                (None, None) => {}
+                _ => bail!("[sdk] hmisystem and hmisystem_stock go together"),
+            }
             let bundle_ok = s.bundle.split_once('=').is_some_and(|(k, class)| {
-                !k.is_empty() && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') && k != "HMICar" && class_name(class)
+                !k.is_empty()
+                    && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                    && k != "HMICar"
+                    && k != "HMISystem"
+                    && class_name(class)
             });
             if !bundle_ok {
-                bail!("[sdk] bundle {:?} must be <[A-Za-z0-9_]+>=<class name>, and not HMICar", s.bundle);
+                bail!("[sdk] bundle {:?} must be <[A-Za-z0-9_]+>=<class name>, and not HMICar or HMISystem", s.bundle);
             }
             for p in &s.properties {
                 property_line(p).with_context(|| format!("[sdk] properties entry {p:?}"))?;

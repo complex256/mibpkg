@@ -363,3 +363,41 @@ fn sdk_jars_hmi_and_owned_must_be_non_empty() {
     refused(&sdk_with("hmi", "hmi = []"), "hmi");
     refused(&sdk_with("owned", "owned = []"), "owned");
 }
+
+// ---- [sdk] hmisystem ----
+
+/// The SDK manifest with `extra` lines added to `[sdk]` after `hmicar`.
+fn sdk_plus(extra: &str) -> String {
+    sdk("mibsdk").replace(
+        "hmicar = \"mibsdk.adapter.hqc.ui.SdkCarActivator\"\n",
+        &format!("hmicar = \"mibsdk.adapter.hqc.ui.SdkCarActivator\"\n{extra}\n"),
+    )
+}
+
+#[test]
+fn hmisystem_keys_go_together() {
+    let stock = "hmisystem_stock = \"de.audi.tghu.system.hmi.Activator\"";
+    let ours = "hmisystem = \"mibsdk.adapter.hqc.ui.SdkSystemActivator\"";
+    refused(&sdk_plus(stock), "[sdk] hmisystem and hmisystem_stock go together");
+    refused(&sdk_plus(ours), "[sdk] hmisystem and hmisystem_stock go together");
+    let s = Manifest::parse(&sdk_plus(&format!("{stock}\n{ours}"))).unwrap().sdk.unwrap();
+    assert_eq!(s.hmisystem_stock.as_deref(), Some("de.audi.tghu.system.hmi.Activator"));
+    assert_eq!(s.hmisystem.as_deref(), Some("mibsdk.adapter.hqc.ui.SdkSystemActivator"));
+    let s = Manifest::parse(&sdk("mibsdk")).unwrap().sdk.unwrap();
+    assert_eq!((s.hmisystem_stock, s.hmisystem), (None, None));
+}
+
+#[test]
+fn hmisystem_values_are_class_names_and_the_bundle_key_is_not_hmisystem() {
+    refused(&sdk_plus("hmisystem_stock = \"1bad\"\nhmisystem = \"a.B\""), "[sdk] hmisystem_stock \"1bad\" must be a Java class name");
+    refused(&sdk_plus("hmisystem_stock = \"a.B\"\nhmisystem = \"a b\""), "[sdk] hmisystem \"a b\" must be a Java class name");
+    refused(&sdk_with("bundle", "bundle = \"HMISystem=mibsdk.adapter.hqc.SdkBundleActivator\""), "and not HMICar or HMISystem");
+    refused(&sdk_with("bundle", "bundle = \"HMICar=mibsdk.adapter.hqc.SdkBundleActivator\""), "and not HMICar or HMISystem");
+}
+
+#[test]
+fn the_system_fixture_parses_with_the_third_owned_prefix() {
+    let s = Manifest::parse(&fixture("sdk-mibsdk-system.toml")).unwrap().sdk.unwrap();
+    assert_eq!(s.hmisystem.as_deref(), Some("mibsdk.adapter.hqc.ui.SdkSystemActivator"));
+    assert_eq!(s.owned, vec!["de/audi/tghu/car/hmi/", "de/audi/atip/model/CarModelBank", "de/audi/tghu/system/hmi/"]);
+}

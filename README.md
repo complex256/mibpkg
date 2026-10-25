@@ -89,6 +89,14 @@ A manifest has one of two extra tables:
   one `stamp`, the configurator, the bundle line and the owned class prefixes. Installing it patches
   the unit's bundle list and writes `sdk.properties`; it is refused on an HMI build it does not list.
   This replaces the `[[patch]]` idea in `docs/ideas.md`.
+
+  The install points `HMICar=` (`hmicar_stock` -> `hmicar`) at the SDK's Car activator. From 0.9 an
+  `[sdk]` may also set `hmisystem_stock` and `hmisystem` (both or neither), and `HMISystem=` is then
+  managed the same way: rewritten only if it reads exactly `HMISystem=<hmisystem_stock>` (or already
+  the SDK value, on an update), its line break kept; refused when it is anything else, missing or
+  duplicated. Without the two keys the line is copied byte for byte. Uninstall restores the stock
+  bundle list byte for byte, and after a firmware change refuses without `--force` while either line
+  still references the SDK.
 - **`[plugin]`** - one plugin (`jar`, `api`, `permissions`). The package name is the plugin id:
   2-40 characters, first `[a-z0-9]`, the rest `[a-z0-9-]`. The runtime accepts one character more
   (41), so a 41-character id still loads when pushed by hand but cannot be packaged; this is
@@ -118,7 +126,7 @@ so a reinstall starts enabled and shown.
 
 | Verb | What it does |
 |---|---|
-| `sdk status` | SDK, plugins, grants, safe mode and boot state; read-only |
+| `sdk status` | the live `HMICar=` and `HMISystem=` lines, SDK, plugins, grants, safe mode and boot state; read-only |
 | `sdk grant <id> <perm,...>` | set a plugin's grants (an empty list revokes all) |
 | `sdk push <id>` | install a development jar from `/tmp/mibpkg.push.<id>.jar` (+ `.stamp`) |
 | `sdk remove <id> [--purge]` | remove a plugin |

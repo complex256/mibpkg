@@ -904,20 +904,20 @@ fn latin1(b: &[u8]) -> String {
     b.iter().map(|&c| c as char).collect()
 }
 
-/// `sdk status`: the live `HMICar=` line first, the SDK and its plugins, the ledger, then the
-/// runtime's STATUS lines. Never fails: what cannot be read is said on stderr.
+/// `sdk status`: the live `HMICar=` and `HMISystem=` lines first, the SDK and its plugins, the
+/// ledger, then the runtime's STATUS lines. Never fails: what cannot be read is said on stderr.
 fn sdk_status(ctx: &Ctx) {
     use crate::mibsdk::{grants, installed_sdk, ledger, reboot_flag, sdk_running, toggles, BASE, BUNDLES, LOG};
     let l = &ctx.layout;
-    match fs::read(l.p(BUNDLES)) {
-        Ok(b) => {
-            let t = latin1(&b);
-            let line = t.split('\n').map(|x| x.strip_suffix('\r').unwrap_or(x)).find(|x| x.starts_with("HMICar="));
-            crate::say!("{}", line.unwrap_or("HMICar=<missing>"));
-        }
-        Err(e) => {
-            crate::warn!("warning: cannot read {BUNDLES} ({e})");
-            crate::say!("HMICar=<missing>");
+    let text = fs::read(l.p(BUNDLES)).map(|b| latin1(&b)).unwrap_or_else(|e| {
+        crate::warn!("warning: cannot read {BUNDLES} ({e})");
+        String::new()
+    });
+    for key in ["HMICar=", "HMISystem="] {
+        let line = text.split('\n').map(|x| x.strip_suffix('\r').unwrap_or(x)).find(|x| x.starts_with(key));
+        match line {
+            Some(line) => crate::say!("{line}"),
+            None => crate::say!("{key}<missing>"),
         }
     }
     let sdk = installed_sdk(l);
