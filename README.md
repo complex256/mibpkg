@@ -104,6 +104,31 @@ A manifest has one of two extra tables:
 
 mibpkg 0.7 refuses `[plugin]` and `[sdk]` manifests, so a unit must be on 0.8 first.
 
+**Icons.** From 0.9 `[plugin]` and `[sdk]` may list `icons = ["<name>", ...]`: names `[a-z0-9-]{1,32}`,
+no duplicates, at most 8 for a plugin and 32 for the SDK's built-in set. Each name needs the package
+file `icons/<name>.png` (`mibpkg build` refuses a package without it). At install every icon must
+pass the same PNG rules as the SDK build's `PngCheck`, or the install is refused with
+`icon <name>: <rule>; nothing changed`:
+
+- at most 32768 bytes, the PNG signature;
+- IHDR first and only once: 8-bit, colour type 6 (RGBA) or 4 (grey + alpha), compression, filter
+  and interlace 0, width and height 1..72;
+- every chunk complete with a correct CRC; no `acTL`/`fcTL`/`fdAT`; IDAT chunks consecutive; IEND
+  last, with no byte after it;
+- the IDAT data is one complete zlib stream, with nothing after its end, that inflates to exactly
+  `height * (1 + width * channels)` bytes (inflation stops at that size + 1), and every row filter
+  is 0..4.
+
+They are installed content-addressed: `/mnt/app/eso/hmi/lsd/mibsdk/icons/<plugin-id>/<sha16>.png`
+(the SDK's in `.../mibsdk/icons-sdk/`), `<sha16>` being the first 16 lowercase hex characters of
+the file's SHA-256, plus `index.properties` with one `<name>=<sha16>,<w>,<h>` line per icon, sorted,
+LF. An update writes the new files, then the index, then removes the files the index no longer
+lists; if the icons cannot be written, the jar, grants line and icons are put back as they were.
+`mibpkg remove <plugin>` deletes the plugin's icon directory once the SDK has confirmed the unload
+(or did not answer), and a re-run finishes a removal that left only that directory. Removing the
+SDK removes `icons-sdk/` and the (then empty) `icons/`. `sdk push` installs the jar only and leaves
+icons alone.
+
 **Approval.** A plugin install or update that adds a permission needs an explicit approval list
 that covers it. Without one, `install`, `install-file`, `rollback` and the GEM equivalents list the
 permissions and exit **3**; re-run with `--approve=<perm,...>`. `update-all` never approves on your

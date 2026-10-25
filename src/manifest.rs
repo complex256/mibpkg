@@ -42,6 +42,9 @@ pub struct PluginSpec {
     pub jar: String,
     pub api: u32,
     pub permissions: Vec<String>,
+    /// Icon names (`[a-z0-9-]{1,32}`, at most 8); each needs the package file `icons/<name>.png`.
+    #[serde(default)]
+    pub icons: Vec<String>,
 }
 
 /// `[sdk]`: the values the SDK install writes into the unit's bundle list and sdk.properties.
@@ -74,6 +77,9 @@ pub struct SdkSpec {
     pub properties: Vec<String>,
     /// The permission catalog file, e.g. "permissions.json".
     pub permissions: String,
+    /// The built-in icon set's names (`[a-z0-9-]{1,32}`, at most 32); each needs `icons/<name>.png`.
+    #[serde(default)]
+    pub icons: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -196,11 +202,16 @@ impl Manifest {
     /// Files a [plugin] or [sdk] package must carry (`archive::pack` checks them).
     pub fn kind_files(&self) -> Vec<String> {
         match (&self.plugin, &self.sdk) {
-            (Some(p), _) => vec![p.jar.clone(), format!("{}.stamp", p.jar)],
+            (Some(p), _) => {
+                let mut v = vec![p.jar.clone(), format!("{}.stamp", p.jar)];
+                v.extend(p.icons.iter().map(|n| crate::mibsdk::icons::file_of(n)));
+                v
+            }
             (None, Some(s)) => {
                 let mut v = s.jars.clone();
                 v.push(s.stamp.clone());
                 v.push(s.permissions.clone());
+                v.extend(s.icons.iter().map(|n| crate::mibsdk::icons::file_of(n)));
                 v
             }
             (None, None) => Vec::new(),
@@ -298,6 +309,7 @@ impl Manifest {
                     bail!("permission {perm:?} must be 1 or more of [A-Za-z0-9._-]");
                 }
             }
+            icon_names("[plugin]", &p.icons, crate::mibsdk::icons::PLUGIN_MAX)?;
         }
         if let Some(s) = &self.sdk {
             if name != SDK_PACKAGE {
@@ -366,6 +378,7 @@ impl Manifest {
                     bail!("[sdk] owned prefix {o:?} must be a class path like de/audi/tghu/car/hmi/ (no leading /)");
                 }
             }
+            icon_names("[sdk]", &s.icons, crate::mibsdk::icons::SDK_MAX)?;
         }
         Ok(())
     }
@@ -382,6 +395,23 @@ fn file_name(what: &str, v: &str, ext: &str) -> Result<()> {
     let p = safe_rel(v).with_context(|| format!("{what} {v:?}"))?;
     if p.components().count() != 1 || !v.ends_with(ext) || v.len() == ext.len() {
         bail!("{what} {v:?} must be a single file name ending {ext}");
+    }
+    Ok(())
+}
+
+/// `icons`: at most `max` names, each `[a-z0-9-]{1,32}`, none twice.
+fn icon_names(table: &str, names: &[String], max: usize) -> Result<()> {
+    if names.len() > max {
+        bail!("{table} icons: {} declared, at most {max}", names.len());
+    }
+    let mut seen = HashSet::new();
+    for n in names {
+        if !crate::mibsdk::icons::valid_name(n) {
+            bail!("{table} icon name {n:?} must be 1-32 of [a-z0-9-]");
+        }
+        if !seen.insert(n.as_str()) {
+            bail!("{table} icon {n} is declared twice");
+        }
     }
     Ok(())
 }

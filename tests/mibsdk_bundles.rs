@@ -36,6 +36,7 @@ fn spec() -> SdkSpec {
             "ui.enabled=true".into(),
         ],
         permissions: "permissions.json".into(),
+        icons: vec![],
     }
 }
 

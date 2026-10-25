@@ -9,7 +9,7 @@ use crate::fsutil::{atomic_write, copy_atomic};
 use crate::index::{cmp_versions, Collection};
 use crate::legacy;
 use crate::manifest::{Kind, Manifest};
-use crate::mibsdk::{plugin_pkg, sdk_pkg};
+use crate::mibsdk::{icons, plugin_pkg, sdk_pkg};
 use crate::paths::Layout;
 use crate::state::{Installed, State};
 use anyhow::{bail, Context, Result};
@@ -258,12 +258,12 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
     let kind = pkg.manifest.kind();
     if kind == Kind::Sdk && !repair {
         // The guards run before /mnt/app goes read-write: a refusal changes nothing at all.
-        sdk_pkg::check(ctx, &pkg.manifest, current_dir(layout, name).as_deref())?;
+        sdk_pkg::check(ctx, &pkg.manifest, current_dir(layout, name).as_deref(), icons::Source::Package(pkg))?;
     }
     // A plugin's checks and approval, also before anything is written (NeedsApproval included).
     let approval = if kind == Kind::Plugin && !repair {
         let old = previous.as_ref().and_then(|_| current_manifest(layout, name).ok());
-        Some(plugin_pkg::check(ctx, &pkg.manifest, old.as_ref())?)
+        Some(plugin_pkg::check(ctx, &pkg.manifest, old.as_ref(), icons::Source::Package(pkg))?)
     } else {
         None
     };
@@ -589,12 +589,12 @@ pub fn rollback(ctx: &Ctx, name: &str) -> Result<String> {
     let mut sdk_notes = Vec::new();
     let mut plugin_notes = Vec::new();
     if kind == Kind::Sdk {
-        sdk_pkg::check(ctx, &m, current_dir(layout, name).as_deref())?;
+        sdk_pkg::check(ctx, &m, current_dir(layout, name).as_deref(), icons::Source::Dir(&prev_dir))?;
     }
     // Grants never grow on a rollback: what the current version declared and is granted, of what
     // the previous one declares; a permission only the previous one declares needs an approval.
     let approval = if kind == Kind::Plugin {
-        Some(plugin_pkg::check(ctx, &m, current_manifest(layout, name).ok().as_ref())?)
+        Some(plugin_pkg::check(ctx, &m, current_manifest(layout, name).ok().as_ref(), icons::Source::Dir(&prev_dir))?)
     } else {
         None
     };

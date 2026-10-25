@@ -2060,3 +2060,65 @@ fn references_sdk_counts_a_nonstock_hmisystem_only_with_the_spec_that_has_it() {
     assert!(sdk_pkg::stale_records(&f.layout, Some(&spec())).unwrap());
     assert!(!sdk_pkg::stale_records(&f.layout, Some(&system)).unwrap());
 }
+
+// ---- icons (Task 9) ----
+
+const ICON_FIX: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/icons");
+
+fn icon(name: &str) -> Vec<u8> {
+    fs::read(Path::new(ICON_FIX).join(name)).unwrap()
+}
+
+fn sha16(b: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(b)[..8].iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// `sdk_src` declaring the built-in `icons` (name, PNG bytes), shipped as `icons/<name>.png`.
+fn sdk_src_icons(dir: &Path, version: &str, icons: &[(&str, Vec<u8>)]) -> PathBuf {
+    let s = sdk_src(dir, version);
+    let names: Vec<String> = icons.iter().map(|(n, _)| format!("{n:?}")).collect();
+    let mut m = fs::read_to_string(s.join("manifest.toml")).unwrap();
+    m.push_str(&format!("icons = [{}]\n", names.join(", ")));
+    fs::write(s.join("manifest.toml"), m).unwrap();
+    for (n, b) in icons {
+        write(&s.join(format!("icons/{n}.png")), b);
+    }
+    s
+}
+
+#[test]
+fn sdk_install_writes_icons_sdk_and_uninstall_removes_it() {
+    let (f, dir) = unit();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    install_src(&ctx, &sdk_src_icons(dir.path(), "0.1.0", &[("star-72", icon("ok-72.png")), ("star-20", icon("ok-20.png"))])).unwrap();
+    let d = p(&f, mibsdk::SDK_ICONS);
+    let (big, small) = (sha16(&icon("ok-72.png")), sha16(&icon("ok-20.png")));
+    assert_eq!(fs::read_to_string(d.join("index.properties")).unwrap(), format!("star-20={small},20,20\nstar-72={big},72,72\n"));
+    assert_eq!(fs::read(d.join(format!("{big}.png"))).unwrap(), icon("ok-72.png"));
+    assert_eq!(fs::read(d.join(format!("{small}.png"))).unwrap(), icon("ok-20.png"));
+    // An update drops what the new set no longer lists.
+    install_src(&ctx, &sdk_src_icons(dir.path(), "0.2.0", &[("star-20", icon("ok-20.png"))])).unwrap();
+    assert!(!d.join(format!("{big}.png")).exists());
+    assert_eq!(fs::read_to_string(d.join("index.properties")).unwrap(), format!("star-20={small},20,20\n"));
+    // A plugin's icons, then the plugin removed: its (now empty) ICONS goes with the SDK.
+    fs::create_dir_all(p(&f, mibsdk::ICONS)).unwrap();
+    let msg = install::remove(&ctx, "mibsdk", false).unwrap();
+    assert!(msg.ends_with(REBOOT_REMOVE), "{msg}");
+    assert!(!d.exists());
+    assert!(!p(&f, mibsdk::ICONS).exists());
+}
+
+#[test]
+fn sdk_install_with_a_bad_icon_is_refused_untouched() {
+    let (f, dir) = unit();
+    let before = tree(f.root());
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let e = err(install_src(&ctx, &sdk_src_icons(dir.path(), "0.1.0", &[("star-72", icon("apng.png"))])));
+    assert!(e.starts_with("icon star-72: animated PNG"), "{e}");
+    assert!(e.ends_with("; nothing changed"), "{e}");
+    assert!(sys.calls.borrow().is_empty(), "/mnt/app was remounted: {:?}", sys.calls.borrow());
+    assert_eq!(tree(f.root()), before);
+}

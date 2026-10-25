@@ -401,3 +401,39 @@ fn the_system_fixture_parses_with_the_third_owned_prefix() {
     assert_eq!(s.hmisystem.as_deref(), Some("mibsdk.adapter.hqc.ui.SdkSystemActivator"));
     assert_eq!(s.owned, vec!["de/audi/tghu/car/hmi/", "de/audi/atip/model/CarModelBank", "de/audi/tghu/system/hmi/"]);
 }
+
+// ---- icons (Task 9) ----
+
+#[test]
+fn icon_names_are_checked_and_need_their_files() {
+    let with = |icons: &str| plugin("hello", &format!("jar=\"hello.jar\"\napi=1\npermissions=[]\nicons=[{icons}]"));
+    let m = Manifest::parse(&with("\"hello\", \"a-1\"")).unwrap();
+    assert_eq!(m.plugin.as_ref().unwrap().icons, vec!["hello".to_string(), "a-1".to_string()]);
+    assert_eq!(m.kind_files(), vec!["hello.jar", "hello.jar.stamp", "icons/hello.png", "icons/a-1.png"]);
+    assert!(Manifest::parse(HELLO).unwrap().plugin.unwrap().icons.is_empty(), "icons default to none");
+    let max = format!("\"{}\"", "a".repeat(32));
+    Manifest::parse(&with(&max)).unwrap();
+    for bad in ["\"\"", "\"Hello\"", "\"a_b\"", "\"a.png\"", "\"../x\"", "\"a b\"", &format!("\"{}\"", "a".repeat(33))] {
+        refused(&with(bad), "must be 1-32 of [a-z0-9-]");
+    }
+    refused(&with("\"a\", \"a\""), "icon a is declared twice");
+    let eight: Vec<String> = (0..8).map(|i| format!("\"i{i}\"")).collect();
+    Manifest::parse(&with(&eight.join(","))).unwrap();
+    let nine: Vec<String> = (0..9).map(|i| format!("\"i{i}\"")).collect();
+    refused(&with(&nine.join(",")), "[plugin] icons: 9 declared, at most 8");
+    // The SDK's built-in set: at most 32, same names.
+    let names = |n: usize| (0..n).map(|i| format!("\"i{i}\"")).collect::<Vec<_>>().join(",");
+    let s = Manifest::parse(&format!("{}icons = [{}]\n", sdk("mibsdk"), names(32))).unwrap();
+    assert_eq!(s.kind_files().iter().filter(|f| f.starts_with("icons/")).count(), 32);
+    refused(&format!("{}icons = [{}]\n", sdk("mibsdk"), names(33)), "[sdk] icons: 33 declared, at most 32");
+    refused(&format!("{}icons = [\"A\"]\n", sdk("mibsdk")), "[sdk] icon name \"A\"");
+
+    // archive::pack refuses a package without a declared icon's file.
+    let t = tempfile::tempdir().unwrap();
+    let p = t.path().join("p");
+    stage(&p, &with("\"hello\""), &["hello.jar", "hello.jar.stamp"]);
+    assert!(pack_err(&p).contains("icons/hello.png is named in manifest.toml but missing from"));
+    fs::create_dir_all(p.join("icons")).unwrap();
+    fs::write(p.join("icons/hello.png"), b"x").unwrap();
+    mibpkg::archive::pack(&p, &t.path().join("hello.mpk")).unwrap();
+}

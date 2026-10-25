@@ -2,9 +2,9 @@
 //! state, the all-or-undo deploy and the guarded uninstall. A port of `mibsdk-dev`'s
 //! `cmd_install` / `cmd_uninstall` (`check_owned_classes`, `check_hmicar`, `migrate_state`,
 //! `migrate_ledger`, `check_ledger`, `restore_bundles_mode`), writing through `put`.
-use super::{bundles, ledger, stamp, zipnames};
+use super::{bundles, icons, ledger, stamp, zipnames};
 use super::{installed_sdk, put, put_file, put_with, reboot_flag, FileOps, StdOps, SDK_PKG};
-use super::{BASE, BUNDLES, HMI_ROOT, JARS, LEDGER, MARKER, OLD_LEDGER, PERMISSIONS, PERSIST, RAM, TRACER_JAR};
+use super::{BASE, BUNDLES, HMI_ROOT, ICONS, JARS, LEDGER, MARKER, OLD_LEDGER, PERMISSIONS, PERSIST, RAM, SDK_ICONS, TRACER_JAR};
 use crate::backups;
 use crate::ctx::Ctx;
 use crate::install;
@@ -162,8 +162,9 @@ fn stock_source(layout: &Layout, spec: &SdkSpec) -> Result<Option<PathBuf>> {
 
 /// The install guards, before anything is written (nothing here writes). `pkg_dir` is the
 /// installed SDK version's directory on an update or rollback (None on a fresh install); only then
-/// are the installed plugin packages checked against the new api range.
-pub fn check(ctx: &Ctx, m: &Manifest, pkg_dir: Option<&Path>) -> Result<()> {
+/// are the installed plugin packages checked against the new api range. The built-in icons are
+/// read from `src` (the package being installed) and must pass `png_check`.
+pub fn check(ctx: &Ctx, m: &Manifest, pkg_dir: Option<&Path>, src: icons::Source) -> Result<()> {
     let sdk = m.sdk.as_ref().context("not an [sdk] package")?;
     let l = &ctx.layout;
 
@@ -195,6 +196,7 @@ pub fn check(ctx: &Ctx, m: &Manifest, pkg_dir: Option<&Path>) -> Result<()> {
     }
 
     check_owned_classes(l, sdk, &jars)?;
+    icons::check_from(src, &sdk.icons).map_err(|e| anyhow!("{e:#}; nothing changed"))?;
 
     // The bundle list must be stock (or, on an update, ours) before any backup exists.
     let live = fs::read(l.p(BUNDLES)).map_err(|e| anyhow!("cannot read {BUNDLES} ({e}); nothing changed"))?;
@@ -395,6 +397,8 @@ struct Plan {
     stock_mode: u32,
     bundles: Vec<u8>,
     props: Vec<u8>,
+    /// The built-in icons, checked from `dir`.
+    icons: Vec<icons::Checked>,
 }
 
 fn mode_of(p: &Path) -> Result<u32> {
@@ -468,7 +472,8 @@ fn plan(ctx: &Ctx, m: &Manifest, dir: &Path, notes: &mut Vec<String>) -> Result<
     }
     let generated = bundles::generate(&stock, &spec, tracer).map_err(|e| anyhow!("{e:#}; nothing changed"))?;
     let props = bundles::sdk_properties(&spec, tracer);
-    Ok(Plan { dir: dir.to_path_buf(), adopt, drop_stale, stock, stock_mode, bundles: generated, props, spec })
+    let icons = icons::check_all(dir, &spec.icons).map_err(|e| anyhow!("{e:#}; nothing changed"))?;
+    Ok(Plan { dir: dir.to_path_buf(), adopt, drop_stale, stock, stock_mode, bundles: generated, props, spec, icons })
 }
 
 /// Run `f`, a write or removal under /mnt/app, judged by its result: re-assert read-write first
@@ -516,6 +521,8 @@ struct Done {
     jars: Vec<String>,
     /// The SDK's own files (sdk.properties, permissions.json) this run may have written.
     files: Vec<String>,
+    /// SDK_ICONS may have been written.
+    icons: bool,
 }
 
 /// Record the stock bundle list and marker: adopt `mibsdk-dev`'s backup, or back up the live
@@ -580,6 +587,8 @@ fn apply(ctx: &Ctx, plan: &Plan, ops: &dyn FileOps, done: &mut Done, notes: &mut
     put(ctx, &props, &plan.props, 0o644)?;
     done.files.push(PERMISSIONS.to_string());
     put_file(ctx, PERMISSIONS, &plan.dir.join(&plan.spec.permissions), 0o644)?;
+    done.icons = true;
+    icons::install(ctx, SDK_ICONS, &plan.icons)?;
     done.activating = true;
     // Only if absent: lsd.sh reads the on-disk bundle list only with the marker, and touching an
     // existing one would change the stock file.
@@ -708,6 +717,9 @@ fn undo_fresh(ctx: &Ctx, plan: &Plan, done: &Done) -> Result<String> {
             remove_on_app(ctx, &abs)?;
         }
     }
+    if done.icons {
+        icons::remove(ctx, SDK_ICONS)?;
+    }
     if live_stock {
         forget_backups(ctx)?;
     }
@@ -822,6 +834,8 @@ pub fn undeploy(ctx: &Ctx, purge: bool) -> Result<String> {
         } else {
             bail!("cannot read the installed mibsdk package and {BUNDLES} is not stock; restore it by hand");
         }
+        icons::remove(ctx, SDK_ICONS)?;
+        icons::remove(ctx, ICONS)?;
         warnings.push("the SDK files were already removed by an earlier run".into());
         warnings.push(remove_sdk_dirs(ctx, purge)?);
         return Ok(warnings.join("\n"));
@@ -853,6 +867,9 @@ pub fn undeploy(ctx: &Ctx, purge: bool) -> Result<String> {
     for abs in [format!("{BASE}/sdk.properties"), PERMISSIONS.to_string()] {
         remove_on_app(ctx, &abs)?;
     }
+    // No plugin package is left, so ICONS holds nothing of a plugin that is still installed.
+    icons::remove(ctx, SDK_ICONS)?;
+    icons::remove(ctx, ICONS)?;
     warnings.push(remove_sdk_dirs(ctx, purge)?);
     Ok(warnings.join("\n"))
 }

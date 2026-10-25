@@ -199,6 +199,11 @@ impl Package {
         Ok(Package { manifest, entries })
     }
 
+    /// The bytes of the regular file `rel` in the package, if it holds one.
+    pub fn file(&self, rel: &str) -> Option<&[u8]> {
+        self.entries.iter().find(|e| !e.dir && e.path == Path::new(rel)).map(|e| e.data.as_slice())
+    }
+
     pub fn unpacked_size(&self) -> u64 {
         self.entries.iter().map(|e| e.data.len() as u64).sum()
     }

@@ -1353,3 +1353,157 @@ fn plugin_install_reports_success_when_the_reload_request_fails() {
     assert_eq!(install::current_version(&f.layout, "hello").as_deref(), Some("1.0.0"));
     assert!(State::load(&f.layout).unwrap().packages.contains_key("hello"));
 }
+
+// ---- icons (Task 9) ----
+
+const ICON_FIX: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/icons");
+
+fn icon(name: &str) -> Vec<u8> {
+    fs::read(Path::new(ICON_FIX).join(name)).unwrap()
+}
+
+fn sha16(b: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(b)[..8].iter().map(|x| format!("{x:02x}")).collect()
+}
+
+fn icon_dir(f: &common::Fixture, id: &str) -> PathBuf {
+    p(f, &format!("{}/{id}", mibsdk::ICONS))
+}
+
+/// The files in plugin `id`'s icon directory, by name.
+fn icon_files(f: &common::Fixture, id: &str) -> Vec<String> {
+    let mut v: Vec<String> = fs::read_dir(icon_dir(f, id)).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    v.sort();
+    v
+}
+
+/// `plugin_src` declaring `icons` (name, PNG bytes), each shipped as `icons/<name>.png`.
+fn plugin_src_icons(dir: &Path, id: &str, ver: &str, perms: &[&str], icons: &[(&str, Vec<u8>)]) -> PathBuf {
+    let s = plugin_src(dir, id, ver, 2, perms);
+    let names: Vec<String> = icons.iter().map(|(n, _)| format!("{n:?}")).collect();
+    let mut m = read(&s.join("manifest.toml"));
+    m.push_str(&format!("icons = [{}]\n", names.join(", ")));
+    fs::write(s.join("manifest.toml"), m).unwrap();
+    for (n, b) in icons {
+        write(&s.join(format!("icons/{n}.png")), b);
+    }
+    s
+}
+
+#[test]
+fn plugin_install_writes_content_addressed_icons_and_index() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    install_src(&ctx, &plugin_src_icons(dir.path(), "hello", "1.0.0", &[], &[("hello", icon("ok-72.png"))])).unwrap();
+    let h = sha16(&icon("ok-72.png"));
+    assert_eq!(read(&icon_dir(&f, "hello").join("index.properties")), format!("hello={h},72,72\n"));
+    assert_eq!(fs::read(icon_dir(&f, "hello").join(format!("{h}.png"))).unwrap(), icon("ok-72.png"));
+    assert_eq!(icon_files(&f, "hello"), vec![format!("{h}.png"), "index.properties".to_string()]);
+    assert_eq!(sys.calls.borrow().last().map(String::as_str), Some("ro /mnt/app"));
+}
+
+#[test]
+fn plugin_update_with_new_content_replaces_the_file_and_index() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    install_src(&ctx, &plugin_src_icons(dir.path(), "hello", "1.0.0", &[], &[("hello", icon("ok-72.png"))])).unwrap();
+    install_src(&ctx, &plugin_src_icons(dir.path(), "hello", "1.1.0", &[], &[("hello", icon("ok-20.png"))])).unwrap();
+    let (old, new) = (sha16(&icon("ok-72.png")), sha16(&icon("ok-20.png")));
+    assert_eq!(read(&icon_dir(&f, "hello").join("index.properties")), format!("hello={new},20,20\n"));
+    assert!(!icon_dir(&f, "hello").join(format!("{old}.png")).exists(), "the old file is gone");
+    assert_eq!(icon_files(&f, "hello"), vec![format!("{new}.png"), "index.properties".to_string()]);
+    // An update that declares no icons removes the directory.
+    install_src(&ctx, &plugin_src_icons(dir.path(), "hello", "1.2.0", &[], &[])).unwrap();
+    assert!(!icon_dir(&f, "hello").exists());
+}
+
+#[test]
+fn plugin_install_with_a_bad_icon_writes_nothing() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    let grants_before = fs::read(p(&f, mibsdk::GRANTS)).ok();
+    let state_before = fs::read(f.layout.state_dir().join("installed.json")).ok();
+    let sys = RecordingSys::default();
+    let mut ctx = Ctx::new(f.layout.clone(), &sys);
+    approving(&mut ctx, &["vehicle.read"]);
+    let src = plugin_src_icons(dir.path(), "hello", "1.0.0", &["vehicle.read"], &[("ok", icon("ok-20.png")), ("hello", icon("bad-crc.png"))]);
+    let e = err(install_src(&ctx, &src));
+    assert!(e.starts_with("icon hello: bad CRC"), "{e}");
+    assert!(e.ends_with("; nothing changed"), "{e}");
+    assert!(!plugin_jar(&f, "hello").exists());
+    assert_eq!(fs::read(p(&f, mibsdk::GRANTS)).ok(), grants_before);
+    assert!(!icon_dir(&f, "hello").exists());
+    assert!(!p(&f, mibsdk::ICONS).exists());
+    assert!(!installed_pkg(&f, "hello"));
+    assert_eq!(fs::read(f.layout.state_dir().join("installed.json")).ok(), state_before);
+    assert!(!f.layout.pkg_dir("hello").exists());
+    assert!(sys.calls.borrow().is_empty(), "remounted: {:?}", sys.calls.borrow());
+}
+
+#[test]
+fn plugin_update_whose_icon_write_fails_restores_the_prior_jar_grants_and_icons() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    let sys = RecordingSys::default();
+    let mut ctx = Ctx::new(f.layout.clone(), &sys);
+    approving(&mut ctx, &["vehicle.read", "network"]);
+    let v1 = plugin_src_icons(dir.path(), "hello", "1.0.0", &["vehicle.read"], &[("hello", icon("ok-72.png"))]);
+    install_src(&ctx, &v1).unwrap();
+    let (grants_before, index_before) = (grants_text(&f), read(&icon_dir(&f, "hello").join("index.properties")));
+    // The new icon's file cannot be written: a non-empty directory sits in its place.
+    let new = sha16(&icon("ok-20.png"));
+    write(&icon_dir(&f, "hello").join(format!("{new}.png/x")), b"");
+    let v2 = plugin_src_icons(dir.path(), "hello", "1.1.0", &["vehicle.read", "network"], &[("hello", icon("ok-20.png"))]);
+    let e = err(install_src(&ctx, &v2));
+    assert!(e.contains("were put back as they were"), "{e}");
+    assert_eq!(fs::read(plugin_jar(&f, "hello")).unwrap(), fs::read(v1.join("hello.jar")).unwrap());
+    assert_eq!(grants_text(&f), grants_before);
+    assert_eq!(read(&icon_dir(&f, "hello").join("index.properties")), index_before);
+    let old = sha16(&icon("ok-72.png"));
+    assert_eq!(fs::read(icon_dir(&f, "hello").join(format!("{old}.png"))).unwrap(), icon("ok-72.png"));
+    assert_eq!(State::load(&f.layout).unwrap().packages["hello"].version, "1.0.0");
+    // A fresh install whose icon write fails leaves no icon directory, jar or grants line.
+    write(&icon_dir(&f, "fresh").join(format!("{new}.png/x")), b"");
+    let e = err(install_src(&ctx, &plugin_src_icons(dir.path(), "fresh", "1.0.0", &["network"], &[("fresh", icon("ok-20.png"))])));
+    assert!(e.contains("were put back as they were"), "{e}");
+    assert!(!plugin_jar(&f, "fresh").exists());
+    assert!(granted(&f, "fresh").is_none());
+    // The directory was there before (it holds the blocker), so it stays, with no file of the install.
+    assert!(!icon_dir(&f, "fresh").join("index.properties").exists());
+    assert_eq!(icon_files(&f, "fresh"), vec![format!("{new}.png")]);
+    assert!(icon_dir(&f, "fresh").join(format!("{new}.png")).is_dir());
+}
+
+#[test]
+fn plugin_remove_deletes_its_icon_dir() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    install_src(&ctx, &plugin_src_icons(dir.path(), "hello", "1.0.0", &[], &[("hello", icon("ok-72.png"))])).unwrap();
+    install_src(&ctx, &plugin_src_icons(dir.path(), "other", "1.0.0", &[], &[("other", icon("ok-72.png"))])).unwrap();
+    let msg = install::remove(&ctx, "hello", false).unwrap();
+    assert!(msg.contains("removed its icons"), "{msg}");
+    assert!(!icon_dir(&f, "hello").exists());
+    // Identical bytes in another package: its own file, untouched.
+    assert_eq!(icon_files(&f, "other").len(), 2);
+    assert_eq!(sys.calls.borrow().last().map(String::as_str), Some("ro /mnt/app"));
+}
+
+#[test]
+fn remove_rerun_finishes_an_orphaned_icon_dir() {
+    let (f, _d) = pushed_unit(&[]);
+    write(&icon_dir(&f, "hello").join("index.properties"), b"hello=0123456789abcdef,72,72\n");
+    write(&icon_dir(&f, "hello").join("0123456789abcdef.png"), &icon("ok-72.png"));
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let msg = plugin_pkg::remove_id_with(&ctx, "hello", false, ack::ACK_TIMEOUT, NO_WAIT).unwrap();
+    assert!(msg.contains("removed its icons"), "{msg}");
+    assert!(!icon_dir(&f, "hello").exists());
+    assert!(p(&f, mibsdk::ICONS).is_dir(), "only the plugin's own directory goes");
+}

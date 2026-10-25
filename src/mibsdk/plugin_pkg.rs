@@ -4,7 +4,7 @@
 //! `cmd_remove`, writing through `put`.
 use super::grants::{self, Approval};
 use super::sdk_pkg::on_app;
-use super::{ack, catalog, ledger, stamp, statusprefs, toggles};
+use super::{ack, catalog, icons, ledger, stamp, statusprefs, toggles};
 use super::{installed_sdk, put, put_file, BASE, LOG, PERMISSIONS, PERSIST};
 use crate::ctx::Ctx;
 use crate::manifest::Manifest;
@@ -81,7 +81,8 @@ pub fn on_unit(layout: &crate::paths::Layout, id: &str) -> bool {
 /// approval: what the plugin adds over `old` (the installed package's manifest, or None: every
 /// declared permission) must be covered by `ctx.approved`, else `NeedsApproval`. A permission the
 /// user revoked stays revoked; a jar pushed for the same id is no refusal (`old` is None for it).
-pub fn check(ctx: &Ctx, m: &Manifest, old: Option<&Manifest>) -> Result<Approval> {
+/// Every declared icon is read from `src` (the package being installed) and must pass `png_check`.
+pub fn check(ctx: &Ctx, m: &Manifest, old: Option<&Manifest>, src: icons::Source) -> Result<Approval> {
     let plugin = m.plugin.as_ref().context("not a [plugin] package")?;
     let id = m.package.name.as_str();
     let l = &ctx.layout;
@@ -107,6 +108,7 @@ pub fn check(ctx: &Ctx, m: &Manifest, old: Option<&Manifest>) -> Result<Approval
         };
         bail!("{id} asks for permissions the installed SDK does not know: {}{why}", unknown.join(", "));
     }
+    icons::check_from(src, &plugin.icons).map_err(|e| anyhow!("{e:#}; nothing changed"))?;
     let current = grants::read(l)?.remove(id).unwrap_or_default();
     let declared_old = old.and_then(|o| o.plugin.as_ref()).map(|p| p.permissions.as_slice());
     let approval = grants::plan(&plugin.permissions, declared_old, &current);
@@ -140,14 +142,16 @@ fn remove_if_present(p: &Path) -> io::Result<()> {
     }
 }
 
-/// What a deploy replaced: the jar and the grants line before it (None: there was none).
+/// What a deploy replaced: the jar, the grants line and the icon directory before it (None: there
+/// was none).
 struct Prior {
     jar: Option<Vec<u8>>,
     grants: Option<BTreeSet<String>>,
+    icons: Option<Vec<(String, Vec<u8>)>>,
 }
 
-/// Put the jar and the grants line of `id` back as `prior` holds them. The caller holds
-/// /mnt/app read-write.
+/// Put the jar, the grants line and the icons of `id` back as `prior` holds them. The caller
+/// holds /mnt/app read-write.
 fn restore(ctx: &Ctx, id: &str, prior: &Prior) -> Result<()> {
     let target = jar_abs(id);
     match &prior.jar {
@@ -158,9 +162,10 @@ fn restore(ctx: &Ctx, id: &str, prior: &Prior) -> Result<()> {
         }
     }
     match &prior.grants {
-        Some(g) => grants::set(ctx, id, g),
-        None => grants::drop_line(ctx, id).map(|_| ()),
+        Some(g) => grants::set(ctx, id, g)?,
+        None => grants::drop_line(ctx, id).map(|_| ())?,
     }
+    icons::restore(ctx, &icons::plugin_dir(id), &prior.icons)
 }
 
 /// A plugin deployed by an install or rollback whose `current` is not written yet. Dropped without
@@ -186,16 +191,17 @@ impl Drop for Deployed<'_, '_> {
     fn drop(&mut self) {
         let Some(prior) = self.prior.take() else { return };
         match restore(self.ctx, &self.id, &prior) {
-            Ok(()) => (self.ctx.progress)(&format!("put {}.jar and its grants line back as they were", self.id)),
-            Err(e) => crate::warn!("warning: could not put {}.jar and its grants line back ({e:#}); run: mibpkg sdk remove {} or install it again", self.id, self.id),
+            Ok(()) => (self.ctx.progress)(&format!("put {}.jar, its grants line and its icons back as they were", self.id)),
+            Err(e) => crate::warn!("warning: could not put {}.jar, its grants line and its icons back ({e:#}); run: mibpkg sdk remove {} or install it again", self.id, self.id),
         }
     }
 }
 
 /// Install the plugin's jar from `ver_dir` (the staged copy, verified against its stamp there)
-/// to `BASE/plugins/<id>.jar` and set its grants line to `approval.grant`. If the grants line
-/// cannot be written, the jar and line are put back at once; afterwards, until `commit`, by
-/// dropping the result. Its notes: the unrestricted warning, a takeover of a pushed jar, and a
+/// to `BASE/plugins/<id>.jar`, set its grants line to `approval.grant`, then install its icons
+/// (checked again from `ver_dir`, before anything is written) into `ICONS/<id>`. If the grants
+/// line or the icons cannot be written, the jar, line and icons are put back at once; afterwards,
+/// until `commit`, by dropping the result. Its notes: the unrestricted warning, a takeover of a pushed jar, and a
 /// plugin left blocked by missing grants.
 ///
 /// Caller contract: holds the action lock and `ctx.mounts.rw("/mnt/app")`.
@@ -206,6 +212,8 @@ pub fn deploy<'c, 'a>(ctx: &'c Ctx<'a>, m: &Manifest, ver_dir: &Path, approval: 
     let jar = ver_dir.join(&plugin.jar);
     let verified = stamp::verify(&ver_dir.join(format!("{}.stamp", plugin.jar)), stamp::StampKind::Plugin, Some(id), &[&jar])
         .map_err(|e| anyhow!(stamp::plugin_refusal(id, &format!("{e:#}"))))?;
+    let checked = icons::check_all(ver_dir, &plugin.icons).map_err(|e| anyhow!("{e:#}; nothing changed"))?;
+    let icon_dir = icons::plugin_dir(id);
     let target = jar_abs(id);
     let prior = Prior {
         jar: match fs::read(l.p(&target)) {
@@ -214,14 +222,16 @@ pub fn deploy<'c, 'a>(ctx: &'c Ctx<'a>, m: &Manifest, ver_dir: &Path, approval: 
             Err(e) => return Err(e).with_context(|| format!("reading {target}")),
         },
         grants: grants::read(l)?.remove(id),
+        icons: icons::snapshot(l, &icon_dir)?,
     };
     let takeover = prior.jar.is_some() && !State::load(l)?.packages.contains_key(id);
     ensure_plugins_dir(ctx)?;
     put_file(ctx, &target, &jar, JAR_MODE)?;
-    if let Err(e) = grants::set(ctx, id, &approval.grant) {
+    let written = grants::set(ctx, id, &approval.grant).and_then(|()| icons::install(ctx, &icon_dir, &checked));
+    if let Err(e) = written {
         return Err(match restore(ctx, id, &prior) {
-            Ok(()) => e.context(format!("{id}.jar was put back as it was")),
-            Err(u) => e.context(format!("putting {target} back failed too ({u:#})")),
+            Ok(()) => e.context(format!("{id}.jar, its grants line and its icons were put back as they were")),
+            Err(u) => e.context(format!("putting {target}, its grants line and its icons back failed too ({u:#})")),
         });
     }
     let mut notes = Vec::new();
@@ -391,9 +401,9 @@ pub(crate) fn remove_package(ctx: &Ctx, id: &str, purge: bool) -> Result<String>
 fn remove(ctx: &Ctx, id: &str, purge: bool, ack_timeout: Duration, ledger_wait: Duration, known: bool) -> Result<String> {
     check_id(id)?;
     let l = &ctx.layout;
-    let (jar, data, marker) = (jar_abs(id), data_abs(id), reload_abs(id));
-    // A reload marker or ledger lines count too: a run that failed after removing the jar and the
-    // grants line leaves only those, and its re-run must still request the reload.
+    let (jar, data, marker, icon_dir) = (jar_abs(id), data_abs(id), reload_abs(id), icons::plugin_dir(id));
+    // A reload marker, ledger lines or the icon directory count too: a run that failed after
+    // removing the jar and the grants line leaves only those, and its re-run must finish it.
     let entries = ledger::read(l)?;
     let present = known
         || l.p(&jar).exists()
@@ -402,6 +412,7 @@ fn remove(ctx: &Ctx, id: &str, purge: bool, ack_timeout: Duration, ledger_wait: 
         || toggles::has_line(l, id)
         || statusprefs::has_line(l, id)
         || l.p(&marker).exists()
+        || l.p(&icon_dir).exists()
         || !ledger::of(&entries, id).is_empty();
     if !present {
         bail!("{id} is not installed");
@@ -451,6 +462,13 @@ fn remove(ctx: &Ctx, id: &str, purge: bool, ack_timeout: Duration, ledger_wait: 
         (Some(t), true) => ack::wait(l, id, &base, Some(&ack::token_of(t.as_bytes())), ack_timeout).is_some(),
         _ => false,
     };
+    // The icons only once the runtime has let the plugin go (or did not answer), in a fresh
+    // read-write scope: the HMI is never left asked for a file of a plugin still loaded.
+    if l.p(&icon_dir).exists() {
+        let _rw = ctx.mounts.rw("/mnt/app")?;
+        icons::remove(ctx, &icon_dir)?;
+        out[0].push_str(&format!("; removed its icons ({icon_dir})"));
+    }
 
     let start = Instant::now();
     let mut first = true;
