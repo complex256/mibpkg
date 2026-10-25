@@ -10,6 +10,7 @@ pub mod plugin_pkg;
 pub mod propsline;
 pub mod sdk_pkg;
 pub mod stamp;
+pub mod statusprefs;
 pub mod toggles;
 pub mod zipnames;
 
@@ -49,6 +50,8 @@ pub const PERMISSIONS: &str = "/mnt/app/eso/hmi/lsd/mibsdk/permissions.json";
 pub const GRANTS: &str = "/mnt/app/eso/hmi/lsd/mibsdk/grants.properties";
 /// The user's on/off switches: one `<id>.off=true` line per plugin switched off (`UserToggles`).
 pub const TOGGLES: &str = "/mnt/persist/mibsdk/plugins.properties";
+/// The user's status-line choices: `order=<id>,...` and one `<id>.hidden=true` line per hidden item.
+pub const STATUSPREFS: &str = "/mnt/persist/mibsdk/statusline.properties";
 /// `OverrideLedger`'s file: the overrides of vehicle state the runtime still has to restore.
 pub const LEDGER: &str = "/mnt/persist/mibsdk/ledger.properties";
 /// Where installs from before the move to PERSIST kept the ledger.

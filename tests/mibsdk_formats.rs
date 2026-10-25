@@ -479,7 +479,7 @@ fn put_success_removes_a_temp_left_by_a_no_op_rename() {
 
 // ---- permission catalog, grants and toggles files, approval, ledger v2 ----
 
-use mibpkg::mibsdk::{catalog, grants, ledger, propsline, toggles};
+use mibpkg::mibsdk::{catalog, grants, ledger, propsline, statusprefs, toggles};
 use std::collections::BTreeSet;
 
 /// Writes `text` at the on-unit path `abs` inside the fixture, creating its directory.
@@ -870,4 +870,117 @@ fn ledger_latin1_round_trips() {
     let (new, _) = ledger::merge(&text, "");
     assert_eq!(ledger::encode(&new).unwrap(), bytes);
     assert!(ledger::encode("k=\u{20ac}").is_err(), "not latin-1");
+}
+
+// ---- statusline.properties ----
+
+fn status_drop(initial: &str, id: &str) -> (bool, String) {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    write_at(&f, mibsdk::STATUSPREFS, initial);
+    let changed = statusprefs::drop(&ctx, id).unwrap();
+    (changed, fs::read_to_string(f.layout.p(mibsdk::STATUSPREFS)).unwrap())
+}
+
+#[test]
+fn statusprefs_drop_missing_file_is_a_no_op() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    assert!(!statusprefs::drop(&ctx, "hello").unwrap());
+    assert!(!f.layout.p(mibsdk::STATUSPREFS).exists(), "and nothing written");
+    assert!(!statusprefs::has_line(&f.layout, "hello"));
+}
+
+#[test]
+fn statusprefs_drop_removes_only_the_hidden_line() {
+    let (changed, text) = status_drop("order=a,b\nhello.hidden=true\nhello-2.hidden=true\n", "hello");
+    assert!(changed);
+    assert_eq!(text, "order=a,b\nhello-2.hidden=true\n");
+}
+
+#[test]
+fn statusprefs_drop_removes_id_from_the_order_middle() {
+    let (changed, text) = status_drop("order=a,hello,b\n", "hello");
+    assert!(changed);
+    assert_eq!(text, "order=a,b\n");
+}
+
+#[test]
+fn statusprefs_drop_removes_the_order_line_when_it_empties() {
+    let (changed, text) = status_drop("order=hello\nother.hidden=true\n", "hello");
+    assert!(changed);
+    assert_eq!(text, "other.hidden=true\n");
+}
+
+#[test]
+fn statusprefs_drop_keeps_other_lines_and_ids_alone() {
+    let src = "# mine\norder=hello-2,bike\nbike.hidden=true\n\nweird = x\n";
+    let (changed, text) = status_drop(src, "hello");
+    assert!(!changed);
+    assert_eq!(text, src, "nothing written, nothing changed");
+    let (changed, text) = status_drop("# mine\norder=hello,bike\nweird = x\n", "hello");
+    assert!(changed);
+    assert_eq!(text, "# mine\norder=bike\nweird = x\n");
+}
+
+#[test]
+fn statusprefs_has_line_sees_hidden_and_order() {
+    let f = common::fixture();
+    write_at(&f, mibsdk::STATUSPREFS, "order=a,hello\nb.hidden=true\n");
+    assert!(statusprefs::has_line(&f.layout, "hello"));
+    assert!(statusprefs::has_line(&f.layout, "b"));
+    assert!(!statusprefs::has_line(&f.layout, "hel"));
+}
+
+#[test]
+fn statusprefs_drop_falls_back_to_the_temp_file() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    write_at(&f, &format!("{}.tmp", mibsdk::STATUSPREFS), "order=hello,other\nhello.hidden=true\n");
+    assert!(statusprefs::has_line(&f.layout, "hello"));
+    assert!(statusprefs::drop(&ctx, "hello").unwrap());
+    assert_eq!(fs::read_to_string(f.layout.p(mibsdk::STATUSPREFS)).unwrap(), "order=other\n");
+}
+
+#[test]
+fn statusprefs_drop_last_duplicate_order_line_wins() {
+    let (changed, text) = status_drop("order=hello,x\nkeep=1\norder=a,hello\n", "hello");
+    assert!(changed);
+    assert_eq!(text, "order=a\nkeep=1\n", "the last order line is the one in force");
+    let (changed, text) = status_drop("order=hello,x\norder=a,b\n", "hello");
+    assert!(!changed, "an overridden order line is not the user's order");
+    assert_eq!(text, "order=hello,x\norder=a,b\n");
+}
+
+#[test]
+fn statusprefs_drop_tolerates_whitespace_around_ids() {
+    let (changed, text) = status_drop("  order = a , hello ,b \n", "hello");
+    assert!(changed);
+    assert_eq!(text, "order=a,b\n");
+}
+
+#[test]
+fn statusprefs_drop_preserves_crlf_line_endings() {
+    let (changed, text) = status_drop("order=a,hello,b\r\nhello.hidden=true\r\nb.hidden=true\r\n", "hello");
+    assert!(changed);
+    assert_eq!(text, "order=a,b\r\nb.hidden=true\r\n");
+    let (changed, text) = status_drop("order=hello\r\nb.hidden=true\r\n", "hello");
+    assert!(changed);
+    assert_eq!(text, "b.hidden=true\r\n");
+}
+
+#[test]
+fn statusprefs_reads_latin1_not_utf8() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let p = f.layout.p(mibsdk::STATUSPREFS);
+    fs::create_dir_all(p.parent().unwrap()).unwrap();
+    fs::write(&p, b"# caf\xe9\norder=a,hello\n").unwrap();
+    assert!(statusprefs::has_line(&f.layout, "hello"));
+    assert!(statusprefs::drop(&ctx, "hello").unwrap());
+    assert_eq!(fs::read(&p).unwrap(), b"# caf\xe9\norder=a\n", "the non-UTF-8 byte survives");
 }
