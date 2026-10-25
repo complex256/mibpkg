@@ -1,6 +1,8 @@
 //! Icon PNG rules (`icons::png_check`), on the vectors shared with the SDK build's `PngCheckTest`
-//! (`tests/fixtures/icons/`, byte copies of the SDK repo's `build-logic/src/test/resources/png/`),
-//! plus in-memory vectors for the rules added by the controller ruling, and `check_all`.
+//! (`tests/fixtures/icons/`, byte copies of the SDK repo's `build-logic/src/test/resources/png/`
+//! under the same names; `reflect-la-72.r.png` is its stored-deflate reflection vector), plus
+//! in-memory vectors for the rules added by the controller ruling, and `check_all`/`check_from`
+//! with the optional `icons/<name>.r.png` reflection.
 use flate2::write::ZlibEncoder;
 use flate2::{Compression, Crc};
 use mibpkg::mibsdk::icons;
@@ -195,6 +197,43 @@ fn check_all_reads_checks_and_hashes_every_declared_icon_and_writes_nothing() {
     fs::write(dir.path().join("icons/bad.png"), fixture("bad-crc.png")).unwrap();
     let e = format!("{:#}", icons::check_all(dir.path(), &["bad".to_string()]).unwrap_err());
     assert!(e.starts_with("icon bad: bad CRC"), "{e}");
+}
+
+#[test]
+fn check_from_adds_an_optional_reflection_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    fs::create_dir_all(src.join("icons")).unwrap();
+    fs::write(src.join("manifest.toml"), "[package]\nname = \"refl\"\nversion = \"1.0.0\"\n").unwrap();
+    fs::write(src.join("icons/hello.png"), fixture("ok-72.png")).unwrap();
+    fs::write(src.join("icons/small.png"), fixture("ok-20.png")).unwrap();
+    fs::write(src.join("icons/hello.r.png"), fixture("reflect-la-72.r.png")).unwrap();
+    // A `.r` for an undeclared name is never read, even when it is bad.
+    fs::write(src.join("icons/other.r.png"), fixture("bad-crc.png")).unwrap();
+    assert_eq!(icons::reflection_file_of("hello"), "icons/hello.r.png");
+    let mpk = dir.path().join("refl.mpk");
+    mibpkg::archive::pack(&src, &mpk).unwrap();
+    let pkg = mibpkg::archive::Package::read(&mpk).unwrap();
+    let names = vec!["small".to_string(), "hello".to_string()];
+    for source in [icons::Source::Dir(&src), icons::Source::Package(&pkg)] {
+        let c = icons::check_from(source, &names).unwrap();
+        let got: Vec<_> = c.iter().map(|c| (c.name.as_str(), c.w, c.h)).collect();
+        assert_eq!(got, vec![("small", 20, 20), ("hello", 72, 72), ("hello.r", 72, 68)]);
+        assert_eq!(c[2].bytes, fixture("reflect-la-72.r.png"));
+        assert_eq!(
+            icons::index_text(&c),
+            format!("hello={},72,72\nhello.r={},72,68\nsmall={},20,20\n", c[1].sha16, c[2].sha16, c[0].sha16)
+        );
+    }
+    // A bad reflection of a declared name fails the check, named `<name>.r`.
+    fs::write(src.join("icons/hello.r.png"), fixture("bad-crc.png")).unwrap();
+    let mpk = dir.path().join("bad.mpk");
+    mibpkg::archive::pack(&src, &mpk).unwrap();
+    let pkg = mibpkg::archive::Package::read(&mpk).unwrap();
+    for source in [icons::Source::Dir(&src), icons::Source::Package(&pkg)] {
+        let e = format!("{:#}", icons::check_from(source, &names).unwrap_err());
+        assert!(e.starts_with("icon hello.r: bad CRC"), "{e}");
+    }
 }
 
 #[test]

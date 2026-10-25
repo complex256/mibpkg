@@ -1507,3 +1507,109 @@ fn remove_rerun_finishes_an_orphaned_icon_dir() {
     assert!(!icon_dir(&f, "hello").exists());
     assert!(p(&f, mibsdk::ICONS).is_dir(), "only the plugin's own directory goes");
 }
+
+// ---- icon reflections (0.9.1) ----
+
+/// `plugin_src_icons` that also ships `icons/<name>.r.png` for each (name, bytes) in `reflections`,
+/// and, with `undeclared`, an `icons/other.r.png` for a name the manifest does not declare.
+fn plugin_src_icons_with_reflection(
+    dir: &Path,
+    id: &str,
+    ver: &str,
+    icons: &[(&str, Vec<u8>)],
+    reflections: &[(&str, Vec<u8>)],
+    undeclared: Option<Vec<u8>>,
+) -> PathBuf {
+    let s = plugin_src_icons(dir, id, ver, &[], icons);
+    for (n, b) in reflections {
+        write(&s.join(format!("icons/{n}.r.png")), b);
+    }
+    if let Some(b) = undeclared {
+        write(&s.join("icons/other.r.png"), &b);
+    }
+    s
+}
+
+fn hello_icons() -> Vec<(&'static str, Vec<u8>)> {
+    vec![("hello", icon("ok-72.png")), ("hello-20", icon("ok-20.png"))]
+}
+
+#[test]
+fn plugin_install_writes_reflection_file_and_index_line() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let r = icon("reflect-la-72.r.png");
+    install_src(&ctx, &plugin_src_icons_with_reflection(dir.path(), "hello", "1.0.0", &hello_icons(), &[("hello", r.clone())], None)).unwrap();
+    let (s, s2, rs) = (sha16(&icon("ok-72.png")), sha16(&icon("ok-20.png")), sha16(&r));
+    assert_eq!(
+        read(&icon_dir(&f, "hello").join("index.properties")),
+        format!("hello={s},72,72\nhello-20={s2},20,20\nhello.r={rs},72,68\n")
+    );
+    assert_eq!(fs::read(icon_dir(&f, "hello").join(format!("{rs}.png"))).unwrap(), r);
+    let mut want = vec![format!("{s}.png"), format!("{s2}.png"), format!("{rs}.png"), "index.properties".to_string()];
+    want.sort();
+    assert_eq!(icon_files(&f, "hello"), want);
+}
+
+#[test]
+fn plugin_install_without_reflection_writes_no_r_line() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    install_src(&ctx, &plugin_src_icons_with_reflection(dir.path(), "hello", "1.0.0", &hello_icons(), &[], None)).unwrap();
+    let (s, s2) = (sha16(&icon("ok-72.png")), sha16(&icon("ok-20.png")));
+    assert_eq!(read(&icon_dir(&f, "hello").join("index.properties")), format!("hello={s},72,72\nhello-20={s2},20,20\n"));
+    assert_eq!(icon_files(&f, "hello").len(), 3);
+}
+
+#[test]
+fn plugin_install_with_a_bad_reflection_writes_nothing() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    let grants_before = fs::read(p(&f, mibsdk::GRANTS)).ok();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let src = plugin_src_icons_with_reflection(dir.path(), "hello", "1.0.0", &hello_icons(), &[("hello", icon("bad-crc.png"))], None);
+    let e = err(install_src(&ctx, &src));
+    assert!(e.starts_with("icon hello.r: bad CRC"), "{e}");
+    assert!(e.ends_with("; nothing changed"), "{e}");
+    assert!(!plugin_jar(&f, "hello").exists());
+    assert_eq!(fs::read(p(&f, mibsdk::GRANTS)).ok(), grants_before);
+    assert!(!icon_dir(&f, "hello").exists());
+    assert!(!installed_pkg(&f, "hello"));
+    assert!(sys.calls.borrow().is_empty(), "remounted: {:?}", sys.calls.borrow());
+}
+
+#[test]
+fn reflection_of_an_undeclared_name_is_ignored() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    // Even a bad file is never read: `other` is not declared.
+    let src = plugin_src_icons_with_reflection(dir.path(), "hello", "1.0.0", &hello_icons(), &[], Some(icon("bad-crc.png")));
+    install_src(&ctx, &src).unwrap();
+    let (s, s2) = (sha16(&icon("ok-72.png")), sha16(&icon("ok-20.png")));
+    assert_eq!(read(&icon_dir(&f, "hello").join("index.properties")), format!("hello={s},72,72\nhello-20={s2},20,20\n"));
+    assert_eq!(icon_files(&f, "hello").len(), 3);
+}
+
+#[test]
+fn update_dropping_the_reflection_removes_its_file() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let r = icon("reflect-la-72.r.png");
+    install_src(&ctx, &plugin_src_icons_with_reflection(dir.path(), "hello", "1.0.0", &hello_icons(), &[("hello", r.clone())], None)).unwrap();
+    let rs = sha16(&r);
+    assert!(icon_dir(&f, "hello").join(format!("{rs}.png")).exists());
+    install_src(&ctx, &plugin_src_icons_with_reflection(dir.path(), "hello", "1.1.0", &hello_icons(), &[], None)).unwrap();
+    assert!(!icon_dir(&f, "hello").join(format!("{rs}.png")).exists(), "the reflection file is gone");
+    let (s, s2) = (sha16(&icon("ok-72.png")), sha16(&icon("ok-20.png")));
+    assert_eq!(read(&icon_dir(&f, "hello").join("index.properties")), format!("hello={s},72,72\nhello-20={s2},20,20\n"));
+    assert_eq!(icon_files(&f, "hello").len(), 3);
+}

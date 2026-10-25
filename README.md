@@ -132,6 +132,15 @@ lists; if the icons cannot be written, the jar, grants line and icons are put ba
 SDK removes `icons-sdk/` and the (then empty) `icons/`. `sdk push` installs the jar only and leaves
 icons alone.
 
+**Reflections.** From 0.9.1, for each declared name mibpkg also reads the optional
+`icons/<name>.r.png` (the SDK build writes one for every plugin icon taller than 20 px, the drawer's
+reflection). It is never listed in `icons = [...]` and does not count toward the 8 / 32 limits. If
+present it must pass the same rules (else `icon <name>.r: <rule>; nothing changed`), is installed
+content-addressed beside its icon, and adds the index line `<name>.r=<sha16>,<w>,<h>`, sorted with the
+rest by key (`hello` < `hello-20` < `hello.r`). If absent, no line is written; a `.r` file for an
+undeclared name is ignored. Older runtimes skip the `.r` key, because it is not a valid icon name, so
+they keep showing the icon without a reflection; mibpkg 0.9.0 ignores the extra file.
+
 **Approval.** A plugin install or update that adds a permission needs an explicit approval list
 that covers it. Without one, `install`, `install-file`, `rollback` and the GEM equivalents list the
 permissions and exit **3**; re-run with `--approve=<perm,...>`. `update-all` never approves on your
