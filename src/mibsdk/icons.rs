@@ -2,6 +2,8 @@
 //! vectors in `tests/fixtures/icons/`), and the content-addressed install of a package's icons into
 //! one directory: `<sha16>.png` per icon plus `index.properties` (`<name>=<sha16>,<w>,<h>`, sorted
 //! by name, LF). `<sha16>` is the first 16 lowercase hex characters of SHA-256 of the file bytes.
+//! A declared icon may also ship an optional reflection, `icons/<name>.r.png`: checked by the same
+//! rules and indexed as `<name>.r=<sha16>,<w>,<h>`, a key an older runtime skips (not a valid name).
 use super::sdk_pkg::on_app;
 use super::{put, ICONS};
 use crate::archive::Package;
@@ -33,6 +35,11 @@ pub fn valid_name(s: &str) -> bool {
 /// The package file an icon name needs.
 pub fn file_of(name: &str) -> String {
     format!("icons/{name}.png")
+}
+
+/// The optional reflection file for a declared icon name (never itself declared).
+pub fn reflection_file_of(name: &str) -> String {
+    format!("icons/{name}.r.png")
 }
 
 /// Plugin `id`'s icon directory on the unit.
@@ -192,24 +199,42 @@ pub fn check_all(pkg_dir: &Path, names: &[String]) -> Result<Vec<Checked>> {
     check_from(Source::Dir(pkg_dir), names)
 }
 
-/// Read and `png_check` every declared icon (`icons/<name>.png`) and compute its sha16. Writes
-/// nothing. The error is `icon <name>: <rule>`.
+/// Read and `png_check` every declared icon (`icons/<name>.png`) and compute its sha16, plus each
+/// declared name's optional reflection (`icons/<name>.r.png`) as one more entry named `<name>.r`.
+/// Writes nothing. The error is `icon <name>: <rule>` (`icon <name>.r: <rule>` for a reflection).
 pub fn check_from(src: Source, names: &[String]) -> Result<Vec<Checked>> {
     let mut out = Vec::with_capacity(names.len());
     for name in names {
         let rel = file_of(name);
-        let bytes = match src {
-            Source::Dir(d) => match fs::read(d.join(&rel)) {
-                Ok(b) => b,
-                Err(e) if e.kind() == io::ErrorKind::NotFound => bail!("icon {name}: the package has no {rel}"),
-                Err(e) => bail!("icon {name}: cannot read {rel} ({e})"),
-            },
-            Source::Package(p) => p.file(&rel).with_context(|| format!("icon {name}: the package has no {rel}"))?.to_vec(),
-        };
-        let (w, h) = png_check(&bytes, MAX_PX).map_err(|e| anyhow!("icon {name}: {e:#}"))?;
-        out.push(Checked { name: name.clone(), sha16: sha16(&bytes), w, h, bytes });
+        let bytes = read_file(src, &rel)
+            .map_err(|e| anyhow!("icon {name}: cannot read {rel} ({e})"))?
+            .with_context(|| format!("icon {name}: the package has no {rel}"))?;
+        out.push(checked(name.clone(), bytes)?);
+        if let Some(bytes) = read_file(src, &reflection_file_of(name))
+            .map_err(|e| anyhow!("icon {name}.r: cannot read {} ({e})", reflection_file_of(name)))?
+        {
+            out.push(checked(format!("{name}.r"), bytes)?);
+        }
     }
     Ok(out)
+}
+
+/// `rel` from `src`; None when it is absent.
+fn read_file(src: Source, rel: &str) -> io::Result<Option<Vec<u8>>> {
+    match src {
+        Source::Dir(d) => match fs::read(d.join(rel)) {
+            Ok(b) => Ok(Some(b)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        },
+        Source::Package(p) => Ok(p.file(rel).map(<[u8]>::to_vec)),
+    }
+}
+
+/// `bytes` checked under the index key `name`.
+fn checked(name: String, bytes: Vec<u8>) -> Result<Checked> {
+    let (w, h) = png_check(&bytes, MAX_PX).map_err(|e| anyhow!("icon {name}: {e:#}"))?;
+    Ok(Checked { sha16: sha16(&bytes), name, w, h, bytes })
 }
 
 /// The first 16 lowercase hex characters of SHA-256 of `bytes`.
@@ -217,7 +242,8 @@ pub fn sha16(bytes: &[u8]) -> String {
     Sha256::digest(bytes)[..8].iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// `index.properties` for `checked`: `<name>=<sha16>,<w>,<h>`, sorted by name, LF.
+/// `index.properties` for `checked`: `<name>=<sha16>,<w>,<h>` (`<name>.r=` for a reflection),
+/// sorted by name, LF.
 pub fn index_text(checked: &[Checked]) -> String {
     let mut sorted: Vec<&Checked> = checked.iter().collect();
     sorted.sort_by(|a, b| a.name.cmp(&b.name)); // by name: a whole-line sort puts `wifi-off=` before `wifi=`

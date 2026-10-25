@@ -2148,3 +2148,22 @@ fn sdk_install_with_a_bad_icon_is_refused_untouched() {
     assert!(sys.calls.borrow().is_empty(), "/mnt/app was remounted: {:?}", sys.calls.borrow());
     assert_eq!(tree(f.root()), before);
 }
+
+/// A fixture SDK package with one `icons/<name>.r.png` (the real SDK package ships none).
+#[test]
+fn sdk_install_writes_reflection_lines() {
+    let (f, dir) = unit();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let s = sdk_src_icons(dir.path(), "0.1.0", &[("star-72", icon("ok-72.png")), ("star-20", icon("ok-20.png"))]);
+    let r = icon("reflect-la-72.r.png");
+    write(&s.join("icons/star-72.r.png"), &r);
+    install_src(&ctx, &s).unwrap();
+    let d = p(&f, mibsdk::SDK_ICONS);
+    let (big, small, rs) = (sha16(&icon("ok-72.png")), sha16(&icon("ok-20.png")), sha16(&r));
+    assert_eq!(
+        fs::read_to_string(d.join("index.properties")).unwrap(),
+        format!("star-20={small},20,20\nstar-72={big},72,72\nstar-72.r={rs},72,68\n")
+    );
+    assert_eq!(fs::read(d.join(format!("{rs}.png"))).unwrap(), r);
+}
