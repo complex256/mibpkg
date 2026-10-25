@@ -1613,3 +1613,96 @@ fn update_dropping_the_reflection_removes_its_file() {
     assert_eq!(read(&icon_dir(&f, "hello").join("index.properties")), format!("hello={s},72,72\nhello-20={s2},20,20\n"));
     assert_eq!(icon_files(&f, "hello").len(), 3);
 }
+
+/// A 72x68 RGBA PNG whose one IDAT is a stored-deflate zlib stream (78 01, BTYPE 00), every row filter 0:
+/// the encoding the SDK's `Reflection.java` ships (about 19.7 KB).
+fn stored_deflate_reflection() -> Vec<u8> {
+    use flate2::write::ZlibEncoder;
+    use flate2::{Compression, Crc};
+    fn chunk(ty: &[u8; 4], data: &[u8]) -> Vec<u8> {
+        let mut c = Crc::new();
+        c.update(ty);
+        c.update(data);
+        let mut out = (data.len() as u32).to_be_bytes().to_vec();
+        out.extend_from_slice(ty);
+        out.extend_from_slice(data);
+        out.extend(c.sum().to_be_bytes());
+        out
+    }
+    let mut raw = Vec::new();
+    for y in 0..68u32 {
+        raw.push(0);
+        raw.extend((0..72 * 4u32).map(|x| (x + y) as u8));
+    }
+    let mut e = ZlibEncoder::new(Vec::new(), Compression::none());
+    e.write_all(&raw).unwrap();
+    let z = e.finish().unwrap();
+    assert_eq!(&z[..2], &[0x78, 0x01]);
+    let mut ihdr = 72u32.to_be_bytes().to_vec();
+    ihdr.extend(68u32.to_be_bytes());
+    ihdr.extend([8, 6, 0, 0, 0]);
+    let mut out = vec![0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n'];
+    for c in [chunk(b"IHDR", &ihdr), chunk(b"IDAT", &z), chunk(b"IEND", b"")] {
+        out.extend(c);
+    }
+    out
+}
+
+// Regression guard: passed on first run, because mibpkg accepts any valid zlib stream.
+#[test]
+fn plugin_install_accepts_a_stored_deflate_reflection() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let r = stored_deflate_reflection();
+    assert!((19_000..32_768).contains(&r.len()), "{}", r.len());
+    install_src(&ctx, &plugin_src_icons_with_reflection(dir.path(), "hello", "1.0.0", &hello_icons(), &[("hello", r.clone())], None)).unwrap();
+    let (s, s2, rs) = (sha16(&icon("ok-72.png")), sha16(&icon("ok-20.png")), sha16(&r));
+    assert_eq!(
+        read(&icon_dir(&f, "hello").join("index.properties")),
+        format!("hello={s},72,72\nhello-20={s2},20,20\nhello.r={rs},72,68\n")
+    );
+    assert_eq!(fs::read(icon_dir(&f, "hello").join(format!("{rs}.png"))).unwrap(), r);
+}
+
+#[test]
+fn plugin_update_whose_icon_write_fails_keeps_the_prior_reflection() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let r = icon("reflect-la-72.r.png");
+    let v1 = plugin_src_icons_with_reflection(dir.path(), "hello", "1.0.0", &hello_icons(), &[("hello", r.clone())], None);
+    install_src(&ctx, &v1).unwrap();
+    let (rs, index_before, files_before) = (sha16(&r), read(&icon_dir(&f, "hello").join("index.properties")), icon_files(&f, "hello"));
+    assert!(index_before.contains(&format!("hello.r={rs},72,68\n")));
+    // v2 changes the base icon; its file cannot be written (a non-empty directory sits in its place).
+    let newer = stored_deflate_reflection();
+    let new = sha16(&newer);
+    write(&icon_dir(&f, "hello").join(format!("{new}.png/x")), b"");
+    let v2 = plugin_src_icons_with_reflection(dir.path(), "hello", "1.1.0", &[("hello", newer), ("hello-20", icon("ok-20.png"))], &[], None);
+    let e = err(install_src(&ctx, &v2));
+    assert!(e.contains("were put back as they were"), "{e}");
+    assert_eq!(read(&icon_dir(&f, "hello").join("index.properties")), index_before);
+    assert_eq!(fs::read(icon_dir(&f, "hello").join(format!("{rs}.png"))).unwrap(), r, "the prior .r file is intact");
+    let mut files_after = icon_files(&f, "hello");
+    files_after.retain(|n| *n != format!("{new}.png"));
+    assert_eq!(files_after, files_before);
+    assert_eq!(State::load(&f.layout).unwrap().packages["hello"].version, "1.0.0");
+}
+
+#[test]
+fn plugin_remove_clears_the_reflection_file() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let r = icon("reflect-la-72.r.png");
+    install_src(&ctx, &plugin_src_icons_with_reflection(dir.path(), "hello", "1.0.0", &hello_icons(), &[("hello", r.clone())], None)).unwrap();
+    let rs = sha16(&r);
+    assert!(icon_dir(&f, "hello").join(format!("{rs}.png")).exists());
+    install::remove(&ctx, "hello", false).unwrap();
+    assert!(!icon_dir(&f, "hello").join(format!("{rs}.png")).exists());
+    assert!(!icon_dir(&f, "hello").exists());
+}

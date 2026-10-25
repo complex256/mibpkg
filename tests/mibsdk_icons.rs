@@ -1,6 +1,6 @@
 //! Icon PNG rules (`icons::png_check`), on the vectors shared with the SDK build's `PngCheckTest`
 //! (`tests/fixtures/icons/`, byte copies of the SDK repo's `build-logic/src/test/resources/png/`
-//! under the same names; `reflect-la-72.r.png` is its stored-deflate reflection vector), plus
+//! under the same names; `reflect-la-72.r.png` is its fixed-Huffman reflection vector), plus
 //! in-memory vectors for the rules added by the controller ruling, and `check_all`/`check_from`
 //! with the optional `icons/<name>.r.png` reflection.
 use flate2::write::ZlibEncoder;
@@ -115,6 +115,25 @@ fn in_memory_vectors_are_valid_as_built() {
     assert_eq!(icons::png_check(&ok, 72).unwrap(), (4, 3));
     // Every filter type 0..4 is accepted.
     assert!(icons::png_check(&png(&[ihdr(4, 3), chunk(b"IDAT", &zlib(&rows(4, 3, 4))), chunk(b"IEND", b"")]), 72).is_ok());
+}
+
+/// A 72x68 RGBA PNG whose single IDAT is one stored-deflate zlib stream (header 78 01, BTYPE 00),
+/// the encoding the SDK's `Reflection.java` ships (about 19.7 KB).
+fn stored_reflection() -> Vec<u8> {
+    let mut e = ZlibEncoder::new(Vec::new(), Compression::none());
+    e.write_all(&rows(72, 68, 0)).unwrap();
+    let z = e.finish().unwrap();
+    assert_eq!(&z[..2], &[0x78, 0x01], "zlib header");
+    assert_eq!(z[2] & 0b110, 0, "BTYPE 00 (stored)");
+    png(&[ihdr(72, 68), chunk(b"IDAT", &z), chunk(b"IEND", b"")])
+}
+
+// Regression guard: passed on first run, because png_check inflates any valid zlib stream.
+#[test]
+fn png_check_accepts_a_stored_deflate_reflection() {
+    let b = stored_reflection();
+    assert!((19_000..32_768).contains(&b.len()), "{}", b.len());
+    assert_eq!(icons::png_check(&b, 72).unwrap(), (72, 68));
 }
 
 #[test]
