@@ -81,7 +81,8 @@ services start while it is present.
 
 ## Plugin SDK packages
 
-mibpkg 0.8 can install the MIB SDK (`mibsdk`) and the plugins that run on it as ordinary packages.
+From 0.8 mibpkg can install the MIB SDK (`mibsdk`) and the plugins that run on it as ordinary
+packages; the `hmisystem` and `icons` keys below need 0.9.
 A manifest has one of two extra tables:
 
 - **`[sdk]`** - the SDK package itself (named `mibsdk`; the name is refused for any manifest without
@@ -89,12 +90,47 @@ A manifest has one of two extra tables:
   one `stamp`, the configurator, the bundle line and the owned class prefixes. Installing it patches
   the unit's bundle list and writes `sdk.properties`; it is refused on an HMI build it does not list.
   This replaces the `[[patch]]` idea in `docs/ideas.md`.
+
+  The install points `HMICar=` (`hmicar_stock` -> `hmicar`) at the SDK's Car activator. From 0.9 an
+  `[sdk]` may also set `hmisystem_stock` and `hmisystem` (both or neither), and `HMISystem=` is then
+  managed the same way: rewritten only if it reads exactly `HMISystem=<hmisystem_stock>` (or already
+  the SDK value, on an update), its line break kept; refused when it is anything else, missing or
+  duplicated. Without the two keys the line is copied byte for byte. Uninstall restores the stock
+  bundle list byte for byte, and after a firmware change refuses without `--force` while either line
+  still references the SDK.
 - **`[plugin]`** - one plugin (`jar`, `api`, `permissions`). The package name is the plugin id:
   2-40 characters, first `[a-z0-9]`, the rest `[a-z0-9-]`. The runtime accepts one character more
   (41), so a 41-character id still loads when pushed by hand but cannot be packaged; this is
   intended. A plugin installs only when `sdk.min_api <= plugin.api <= sdk.api`.
 
-mibpkg 0.7 refuses `[plugin]` and `[sdk]` manifests, so a unit must be on 0.8 first.
+mibpkg 0.7 refuses `[plugin]` and `[sdk]` manifests, so a unit must be on 0.8 first. mibpkg 0.8
+refuses a `[sdk]` or `[plugin]` that has `hmisystem_stock`/`hmisystem` or `icons` ("unknown field"),
+so such a package needs 0.9.
+
+**Icons.** From 0.9 `[plugin]` and `[sdk]` may list `icons = ["<name>", ...]`: names `[a-z0-9-]{1,32}`,
+no duplicates, at most 8 for a plugin and 32 for the SDK's built-in set. Each name needs the package
+file `icons/<name>.png` (`mibpkg build` refuses a package without it). At install every icon must
+pass the same PNG rules as the SDK build's `PngCheck`, or the install is refused with
+`icon <name>: <rule>; nothing changed`:
+
+- at most 32768 bytes, the PNG signature;
+- IHDR first and only once: 8-bit, colour type 6 (RGBA) or 4 (grey + alpha), compression, filter
+  and interlace 0, width and height 1..72;
+- every chunk complete with a correct CRC; no `acTL`/`fcTL`/`fdAT`; IDAT chunks consecutive; IEND
+  last, with no byte after it;
+- the IDAT data is one complete zlib stream, with nothing after its end, that inflates to exactly
+  `height * (1 + width * channels)` bytes (inflation stops at that size + 1), and every row filter
+  is 0..4.
+
+They are installed content-addressed: `/mnt/app/eso/hmi/lsd/mibsdk/icons/<plugin-id>/<sha16>.png`
+(the SDK's in `.../mibsdk/icons-sdk/`), `<sha16>` being the first 16 lowercase hex characters of
+the file's SHA-256, plus `index.properties` with one `<name>=<sha16>,<w>,<h>` line per icon, sorted
+by name, LF. An update writes the new files, then the index, then removes the files the index no longer
+lists; if the icons cannot be written, the jar, grants line and icons are put back as they were.
+`mibpkg remove <plugin>` deletes the plugin's icon directory once the SDK has confirmed the unload
+(or did not answer), and a re-run finishes a removal that left only that directory. Removing the
+SDK removes `icons-sdk/` and the (then empty) `icons/`. `sdk push` installs the jar only and leaves
+icons alone.
 
 **Approval.** A plugin install or update that adds a permission needs an explicit approval list
 that covers it. Without one, `install`, `install-file`, `rollback` and the GEM equivalents list the
@@ -118,7 +154,7 @@ so a reinstall starts enabled and shown.
 
 | Verb | What it does |
 |---|---|
-| `sdk status` | SDK, plugins, grants, safe mode and boot state; read-only |
+| `sdk status` | the live `HMICar=` and `HMISystem=` lines, SDK, plugins, grants, safe mode and boot state; read-only |
 | `sdk grant <id> <perm,...>` | set a plugin's grants (an empty list revokes all) |
 | `sdk push <id>` | install a development jar from `/tmp/mibpkg.push.<id>.jar` (+ `.stamp`) |
 | `sdk remove <id> [--purge]` | remove a plugin |

@@ -121,7 +121,7 @@ swdl-card <out> --payload DIR [--seed DIR] --version V`, and `mibpkg verify <car
 - CI smoke-gate to wire at go-public: `mibpkg swdl-card … && mibpkg verify out/card`. No dormant
   test workflow exists today (only host-release.yml); not added to the live release plumbing.
 
-## MIB SDK packages (mibpkg 0.8.1)
+## MIB SDK packages (mibpkg 0.9.0)
 | Fact | Value | Verified |
 |---|---|---|
 | HMI build | the first `HMI = ...` line of `/ifs/version_info.txt`, whitespace removed; supported `HMI_AU_MIB2_HQC_NAR_G22_C10_180803` | bench e2e |
@@ -135,3 +135,6 @@ swdl-card <out> --payload DIR [--seed DIR] --version V`, and `mibpkg verify <car
 | rw holder protocol | lock `/tmp/mibpkg.rwlock` (`create_new`, pid inside); holders `/tmp/mibpkg.rw.<app or system>.<pid>`; marker `mibpkg.rw.<tag>.withdrawn` is never a holder; remount read-only only when no live holder remains | bench e2e |
 | `/mnt/app` remounted read-only by others | any process may do so at any time (F8): re-assert `mount -uw` before each write, verify by read-back; a 0.7 supervisor ignores holders | bench e2e F8 |
 | `/tmp` | `/dev/shmem`: files only, no directories | bench e2e |
+| `HMISystem=` takeover | `/mnt/app/eso/hmi/lsd/bundles_dsitracer_enabled.properties` line `HMISystem=de.audi.tghu.system.hmi.Activator` (CRLF) is rewritten to `HMISystem=mibsdk.adapter.hqc.ui.SdkSystemActivator`, its CR kept; only that line changes (on the bench's 10171-byte file, line 62), and remove restores the stock file byte for byte. Managed only when `[sdk]` sets `hmisystem_stock`/`hmisystem`; without them the line stays stock | bench e2e (menu-icons) |
+| Plugin icons | `/mnt/app/eso/hmi/lsd/mibsdk/icons/<plugin-id>/`: one `<sha16>.png` per icon (first 16 lowercase hex characters of the file's SHA-256) plus `index.properties` (`<name>=<sha16>,<w>,<h>`, sorted by name, LF); removed with the plugin | bench e2e (menu-icons) |
+| SDK built-in icons | `/mnt/app/eso/hmi/lsd/mibsdk/icons-sdk/`: the same layout, 24 PNGs (8 names x `-20`/`-72`/`-72r`) plus `index.properties`; removed with the SDK, together with the then empty `icons/` | bench e2e (menu-icons) |

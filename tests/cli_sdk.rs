@@ -22,6 +22,9 @@ const FIX: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mibsdk");
 const SDK_MANIFEST: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/manifests/sdk-mibsdk.toml");
 const SDK_JARS: [&str; 3] = ["mibsdk-runtime.jar", "mibsdk-adapter-hqc.jar", "mibsdk-rt-retrotranslator.jar"];
 const HMICAR_SDK: &str = "HMICar=mibsdk.adapter.hqc.ui.SdkCarActivator";
+const HMISYSTEM_STOCK: &str = "HMISystem=de.audi.tghu.system.hmi.Activator";
+const HMISYSTEM_SDK: &str = "HMISystem=mibsdk.adapter.hqc.ui.SdkSystemActivator";
+const SDK_SYSTEM_MANIFEST: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/manifests/sdk-mibsdk-system.toml");
 const READ: &str = "Read vehicle state: ignition, gear, parking sensors (vehicle.read)";
 const NET: &str = "Open network connections (local network or internet) (network)";
 const NO_SDK: &str = "mibsdk is not installed (run: mibpkg install mibsdk, or mibsdk-dev install)";
@@ -346,7 +349,7 @@ fn sdk_status_lists_plugins_pushed_off_blocked_grants_ledger_and_hmicar() {
     assert_eq!(
         r.out,
         format!(
-            "{HMICAR_SDK}\nsdk: 0.1.0\napi: 1..2\nhmi: HMI_AU_MIB2_HQC_NAR_G22_C10_180803 (supported)\nrunning: no\nreboot needed: yes\n\
+            "{HMICAR_SDK}\n{HMISYSTEM_STOCK}\nsdk: 0.1.0\napi: 1..2\nhmi: HMI_AU_MIB2_HQC_NAR_G22_C10_180803 (supported)\nrunning: no\nreboot needed: yes\n\
              plugin hello 1.0.0 grants=vehicle.read blocked: network\n\
              plugin pushy pushed grants=hooks.parking,vehicle.read off\n\
              ledger: 1 override(s)\nparking.soundLevel=pushy|PERSISTENT|a|b|A\n\
@@ -374,11 +377,11 @@ fn sdk_status_without_hmicar_line_or_readable_bundles() {
     write(&p(&f, mibsdk::LOG), b"x STATUS ui=on\n");
     write(&p(&f, mibsdk::BUNDLES), b"Bundle.Startup.Autostart = A\r\n");
     let r = ok(&f, &["sdk", "status"]);
-    assert!(r.out.starts_with("HMICar=<missing>\nsdk: not installed\n"), "{}", r.out);
+    assert!(r.out.starts_with("HMICar=<missing>\nHMISystem=<missing>\nsdk: not installed\n"), "{}", r.out);
     assert!(r.out.ends_with("x STATUS ui=on\n"), "{}", r.out);
     fs::remove_file(p(&f, mibsdk::BUNDLES)).unwrap();
     let r = ok(&f, &["sdk", "status"]);
-    assert!(r.out.starts_with("HMICar=<missing>\n"), "{}", r.out);
+    assert!(r.out.starts_with("HMICar=<missing>\nHMISystem=<missing>\n"), "{}", r.out);
     assert!(r.out.ends_with("x STATUS ui=on\n"), "{}", r.out);
     assert!(r.err.contains("warning: cannot read"), "{}", r.err);
 }
@@ -901,4 +904,16 @@ fn sdk_push_during_a_pending_reboot_waits_for_the_running_runtime() {
     let r = ok(&f, &["sdk", "push", "hello"]);
     assert!(rt.join().unwrap(), "no reload requested");
     assert_eq!(r.out, "pushed hello; reload requested\nloaded: ENABLED ok\n");
+}
+
+#[test]
+fn status_prints_both_lines() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    sdk_unit(&f);
+    let src = sdk_src(dir.path());
+    fs::write(src.join("manifest.toml"), read(Path::new(SDK_SYSTEM_MANIFEST))).unwrap();
+    let sys = RecordingSys::default();
+    install_src(&Ctx::new(f.layout.clone(), &sys), &src).unwrap();
+    let r = ok(&f, &["sdk", "status"]);
+    assert!(r.out.starts_with(&format!("{HMICAR_SDK}\n{HMISYSTEM_SDK}\nsdk: 0.1.0\n")), "{}", r.out);
 }

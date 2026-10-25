@@ -5,6 +5,7 @@ pub mod ack;
 pub mod bundles;
 pub mod catalog;
 pub mod grants;
+pub mod icons;
 pub mod ledger;
 pub mod plugin_pkg;
 pub mod propsline;
@@ -46,6 +47,10 @@ pub const LOG: &str = "/tmp/mibsdk.log";
 pub const SDK_PKG: &str = crate::manifest::SDK_PACKAGE;
 /// The installed SDK's permission catalog (`api/permissions.json`).
 pub const PERMISSIONS: &str = "/mnt/app/eso/hmi/lsd/mibsdk/permissions.json";
+/// Plugin icons: `<id>/<sha16>.png` plus `<id>/index.properties`, written only by mibpkg (`icons`).
+pub const ICONS: &str = "/mnt/app/eso/hmi/lsd/mibsdk/icons";
+/// The SDK's built-in icon set, in the same format as one plugin's icon directory.
+pub const SDK_ICONS: &str = "/mnt/app/eso/hmi/lsd/mibsdk/icons-sdk";
 /// `<id>=<perm>,<perm>` per plugin, read by the runtime's `Grants.load`.
 pub const GRANTS: &str = "/mnt/app/eso/hmi/lsd/mibsdk/grants.properties";
 /// The user's on/off switches: one `<id>.off=true` line per plugin switched off (`UserToggles`).

@@ -4,7 +4,8 @@
 //!
 //! Every key in the bundle list other than the configurator and `Bundle.Startup.Autostart` is a
 //! bundle definition to LSD, so `generate` touches exactly: the serviceDelegateConfigurator line,
-//! the `Bundle.Startup.Autostart` value, the `HMICar=` value, and one appended SDK bundle line.
+//! the `Bundle.Startup.Autostart` value, the `HMICar=` value, the `HMISystem=` value (only when
+//! the spec has `hmisystem`), and one appended SDK bundle line.
 //! Everything else is copied byte for byte. SDK settings never go in the bundle list; they belong
 //! in `sdk.properties`.
 use crate::manifest::SdkSpec;
@@ -13,6 +14,7 @@ use anyhow::{bail, Result};
 const CONFIGURATOR_KEY: &[u8] = b"de.audi.tghu.serviceDelegateConfigurator";
 const AUTOSTART_KEY: &[u8] = b"Bundle.Startup.Autostart";
 const HMICAR_KEY: &[u8] = b"HMICar";
+const HMISYSTEM_KEY: &[u8] = b"HMISystem";
 /// DSITracer's bundle name: first in the autostart list while the tracer is activated.
 const TRACER_BUNDLE: &[u8] = b"DSITracer";
 
@@ -85,7 +87,8 @@ fn latin1_stripped(b: &[u8]) -> String {
 
 /// The bundle list for an SDK install: `stock` with the configurator set to `sdk.configurator`,
 /// the SDK bundle (and DSITracer when `tracer_active`) first in `Bundle.Startup.Autostart`,
-/// `HMICar=` pointed at `sdk.hmicar` and `sdk.bundle` appended when no line defines that bundle.
+/// `HMICar=` pointed at `sdk.hmicar`, `HMISystem=` at `sdk.hmisystem` when set (else copied as
+/// is), and `sdk.bundle` appended when no line defines that bundle.
 /// Each changed line keeps its own line break. The output is a fixed point: generating from it
 /// again gives the same bytes.
 pub fn generate(stock: &[u8], sdk: &SdkSpec, tracer_active: bool) -> Result<Vec<u8>> {
@@ -130,26 +133,10 @@ pub fn generate(stock: &[u8], sdk: &SdkSpec, tracer_active: bool) -> Result<Vec<
     let list: Vec<&[u8]> = head.iter().copied().chain(rest).collect();
     lines[auto[0]] = [prefix, &list.join(&b","[..]), eol].concat();
 
-    let hmi: Vec<usize> =
-        (0..lines.len()).filter(|&i| after_key_eq(split_eol(&lines[i]).0, HMICAR_KEY).is_some()).collect();
-    if hmi.len() != 1 {
-        bail!("expected exactly one HMICar= line, found {}", hmi.len());
+    rewrite_line(&mut lines, HMICAR_KEY, &sdk.hmicar_stock, &sdk.hmicar)?;
+    if let (Some(stock_value), Some(value)) = (&sdk.hmisystem_stock, &sdk.hmisystem) {
+        rewrite_line(&mut lines, HMISYSTEM_KEY, stock_value, value)?;
     }
-    // The key as the HMI's Properties.load reads it must name that same line and no other.
-    let props = hmicar_lines(&lines);
-    if props != hmi {
-        let n = if props.is_empty() { 0 } else { props.len() + usize::from(!props.contains(&hmi[0])) };
-        bail!("expected exactly one HMICar= line, found {n}");
-    }
-    let (body, eol) = split_eol(&lines[hmi[0]]);
-    refuse_bare_cr(body, HMICAR_KEY)?;
-    // Exact bytes; the SDK's own value is accepted too, so generate() is a fixed point.
-    let accepted = [&sdk.hmicar_stock, &sdk.hmicar].map(|v| [HMICAR_KEY, b"=", v.as_bytes()].concat());
-    if !accepted.iter().any(|a| a == body) {
-        let value = body.splitn(2, |c| *c == b'=').nth(1).unwrap_or_default();
-        bail!("HMICar is not stock ({}); refusing", latin1_stripped(value));
-    }
-    lines[hmi[0]] = [&accepted[1], eol].concat();
 
     if !lines.iter().any(|l| after_key_eq(l, bundle_name).is_some()) {
         let eol: &[u8] = if lines.last().is_some_and(|l| l.ends_with(b"\r\n")) { b"\r\n" } else { b"\n" };
@@ -161,6 +148,33 @@ pub fn generate(stock: &[u8], sdk: &SdkSpec, tracer_active: bool) -> Result<Vec<
         lines.push([bundle_line, eol].concat());
     }
     Ok(lines.concat())
+}
+
+/// Points the single `<key>=` line at `value`, keeping its line break. The line must be the only
+/// one defining `key`, both as written and as `Properties.load` reads it, and must read exactly
+/// `<key>=<stock>` or (so that `generate` is a fixed point) `<key>=<value>`.
+fn rewrite_line(lines: &mut [Vec<u8>], key: &[u8], stock: &str, value: &str) -> Result<()> {
+    let name = latin1(key);
+    let hits: Vec<usize> = (0..lines.len()).filter(|&i| after_key_eq(split_eol(&lines[i]).0, key).is_some()).collect();
+    if hits.len() != 1 {
+        bail!("expected exactly one {name}= line, found {}", hits.len());
+    }
+    // The key as the HMI's Properties.load reads it must name that same line and no other.
+    let props = key_lines(lines, &name);
+    if props != hits {
+        let n = if props.is_empty() { 0 } else { props.len() + usize::from(!props.contains(&hits[0])) };
+        bail!("expected exactly one {name}= line, found {n}");
+    }
+    let (body, eol) = split_eol(&lines[hits[0]]);
+    refuse_bare_cr(body, key)?;
+    // Exact bytes; the SDK's own value is accepted too, so generate() is a fixed point.
+    let accepted = [stock, value].map(|v| [key, b"=", v.as_bytes()].concat());
+    if !accepted.iter().any(|a| a == body) {
+        let shown = body.splitn(2, |c| *c == b'=').nth(1).unwrap_or_default();
+        bail!("{name} is not stock ({}); refusing", latin1_stripped(shown));
+    }
+    lines[hits[0]] = [&accepted[1], eol].concat();
+    Ok(())
 }
 
 /// `sdk.properties`: `chain.configurator=<tracer configurator>` while the tracer is activated
@@ -177,20 +191,25 @@ pub fn sdk_properties(sdk: &SdkSpec, tracer_active: bool) -> Vec<u8> {
     out
 }
 
-/// Port of `mibsdk-dev`'s `check_hmicar`, counting the key as `java.util.Properties` reads it:
-/// `text` must define the key `HMICar` exactly once, in any spelling (`hmicar_lines`), and that
-/// line (without its `\r\n` / `\n`) must equal one of the `allowed` full lines byte for byte.
+/// Port of `mibsdk-dev`'s `check_hmicar`, over any key and counting it as `java.util.Properties`
+/// reads it: `text` must define `key` exactly once, in any spelling (`key_lines`), and that line
+/// (without its `\r\n` / `\n`) must equal one of the `allowed` full lines byte for byte.
 /// Properties keeps the last of several, so any extra spelling refuses. `what` names the file in
 /// the refusal.
-pub fn check_hmicar(text: &[u8], what: &str, allowed: &[&str]) -> Result<()> {
+pub fn check_line(text: &[u8], key: &str, what: &str, allowed: &[&str]) -> Result<()> {
     let lines = split_lines(text);
-    let hits = hmicar_lines(&lines);
+    let hits = key_lines(&lines, key);
     let got = hits.last().map(|&i| split_eol(&lines[i]).0);
     if hits.len() != 1 || !allowed.iter().any(|a| Some(a.as_bytes()) == got) {
-        let shown = got.map_or_else(|| "no HMICar= line".to_string(), latin1);
-        bail!("HMICar is not stock in {what} ({shown}); refusing; nothing changed");
+        let shown = got.map_or_else(|| format!("no {key}= line"), latin1);
+        bail!("{key} is not stock in {what} ({shown}); refusing; nothing changed");
     }
     Ok(())
+}
+
+/// `check_line` for `HMICar`.
+pub fn check_hmicar(text: &[u8], what: &str, allowed: &[&str]) -> Result<()> {
+    check_line(text, "HMICar", what, allowed)
 }
 
 /// Refuses a line about to be rewritten whose break is a lone `\r`: `split_eol` keeps that `\r`
@@ -216,10 +235,10 @@ fn is_props_blank(c: &u8) -> bool {
 }
 
 /// The indexes (into `split_lines`) of the lines that start a logical line whose key
-/// `Properties.load` reads as `HMICar`: leading blanks skipped; `#` / `!` comment lines skipped
+/// `Properties.load` reads as `key`: leading blanks skipped; `#` / `!` comment lines skipped
 /// (they never continue); a line ending in an odd number of backslashes continues onto the next,
 /// which is then part of its value (or key), never a key of its own.
-fn hmicar_lines(lines: &[Vec<u8>]) -> Vec<usize> {
+fn key_lines(lines: &[Vec<u8>], key: &str) -> Vec<usize> {
     let mut hits = Vec::new();
     let mut open: Option<(usize, Vec<u8>)> = None;
     for (i, line) in lines.iter().enumerate() {
@@ -238,12 +257,12 @@ fn hmicar_lines(lines: &[Vec<u8>]) -> Vec<usize> {
             continue;
         }
         logical.extend_from_slice(text);
-        if properties_key(&logical).as_deref() == Some("HMICar") {
+        if properties_key(&logical).as_deref() == Some(key) {
             hits.push(start);
         }
     }
     if let Some((start, logical)) = open {
-        if properties_key(&logical).as_deref() == Some("HMICar") {
+        if properties_key(&logical).as_deref() == Some(key) {
             hits.push(start);
         }
     }

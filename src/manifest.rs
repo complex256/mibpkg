@@ -42,6 +42,9 @@ pub struct PluginSpec {
     pub jar: String,
     pub api: u32,
     pub permissions: Vec<String>,
+    /// Icon names (`[a-z0-9-]{1,32}`, at most 8); each needs the package file `icons/<name>.png`.
+    #[serde(default)]
+    pub icons: Vec<String>,
 }
 
 /// `[sdk]`: the values the SDK install writes into the unit's bundle list and sdk.properties.
@@ -61,6 +64,12 @@ pub struct SdkSpec {
     /// Class names; the bundle-list line is `HMICar=<value>`.
     pub hmicar_stock: String,
     pub hmicar: String,
+    /// Class names; the bundle-list line is `HMISystem=<value>`. Both or neither: with them the
+    /// install manages `HMISystem=` exactly as `HMICar=`; without them the line is left alone.
+    #[serde(default)]
+    pub hmisystem_stock: Option<String>,
+    #[serde(default)]
+    pub hmisystem: Option<String>,
     /// Class path prefixes only the SDK may define, e.g. "de/audi/tghu/car/hmi/".
     pub owned: Vec<String>,
     /// sdk.properties lines.
@@ -68,6 +77,9 @@ pub struct SdkSpec {
     pub properties: Vec<String>,
     /// The permission catalog file, e.g. "permissions.json".
     pub permissions: String,
+    /// The built-in icon set's names (`[a-z0-9-]{1,32}`, at most 32); each needs `icons/<name>.png`.
+    #[serde(default)]
+    pub icons: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,11 +202,16 @@ impl Manifest {
     /// Files a [plugin] or [sdk] package must carry (`archive::pack` checks them).
     pub fn kind_files(&self) -> Vec<String> {
         match (&self.plugin, &self.sdk) {
-            (Some(p), _) => vec![p.jar.clone(), format!("{}.stamp", p.jar)],
+            (Some(p), _) => {
+                let mut v = vec![p.jar.clone(), format!("{}.stamp", p.jar)];
+                v.extend(p.icons.iter().map(|n| crate::mibsdk::icons::file_of(n)));
+                v
+            }
             (None, Some(s)) => {
                 let mut v = s.jars.clone();
                 v.push(s.stamp.clone());
                 v.push(s.permissions.clone());
+                v.extend(s.icons.iter().map(|n| crate::mibsdk::icons::file_of(n)));
                 v
             }
             (None, None) => Vec::new(),
@@ -292,6 +309,7 @@ impl Manifest {
                     bail!("permission {perm:?} must be 1 or more of [A-Za-z0-9._-]");
                 }
             }
+            icon_names("[plugin]", &p.icons, crate::mibsdk::icons::PLUGIN_MAX)?;
         }
         if let Some(s) = &self.sdk {
             if name != SDK_PACKAGE {
@@ -328,11 +346,26 @@ impl Manifest {
                     bail!("[sdk] {key} {v:?} must be a Java class name ([A-Za-z_$][A-Za-z0-9_$.]*)");
                 }
             }
+            match (&s.hmisystem_stock, &s.hmisystem) {
+                (Some(stock), Some(ours)) => {
+                    for (key, v) in [("hmisystem_stock", stock), ("hmisystem", ours)] {
+                        if !class_name(v) {
+                            bail!("[sdk] {key} {v:?} must be a Java class name ([A-Za-z_$][A-Za-z0-9_$.]*)");
+                        }
+                    }
+                }
+                (None, None) => {}
+                _ => bail!("[sdk] hmisystem and hmisystem_stock go together"),
+            }
             let bundle_ok = s.bundle.split_once('=').is_some_and(|(k, class)| {
-                !k.is_empty() && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') && k != "HMICar" && class_name(class)
+                !k.is_empty()
+                    && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                    && k != "HMICar"
+                    && k != "HMISystem"
+                    && class_name(class)
             });
             if !bundle_ok {
-                bail!("[sdk] bundle {:?} must be <[A-Za-z0-9_]+>=<class name>, and not HMICar", s.bundle);
+                bail!("[sdk] bundle {:?} must be <[A-Za-z0-9_]+>=<class name>, and not HMICar or HMISystem", s.bundle);
             }
             for p in &s.properties {
                 property_line(p).with_context(|| format!("[sdk] properties entry {p:?}"))?;
@@ -345,6 +378,7 @@ impl Manifest {
                     bail!("[sdk] owned prefix {o:?} must be a class path like de/audi/tghu/car/hmi/ (no leading /)");
                 }
             }
+            icon_names("[sdk]", &s.icons, crate::mibsdk::icons::SDK_MAX)?;
         }
         Ok(())
     }
@@ -361,6 +395,23 @@ fn file_name(what: &str, v: &str, ext: &str) -> Result<()> {
     let p = safe_rel(v).with_context(|| format!("{what} {v:?}"))?;
     if p.components().count() != 1 || !v.ends_with(ext) || v.len() == ext.len() {
         bail!("{what} {v:?} must be a single file name ending {ext}");
+    }
+    Ok(())
+}
+
+/// `icons`: at most `max` names, each `[a-z0-9-]{1,32}`, none twice.
+fn icon_names(table: &str, names: &[String], max: usize) -> Result<()> {
+    if names.len() > max {
+        bail!("{table} icons: {} declared, at most {max}", names.len());
+    }
+    let mut seen = HashSet::new();
+    for n in names {
+        if !crate::mibsdk::icons::valid_name(n) {
+            bail!("{table} icon name {n:?} must be 1-32 of [a-z0-9-]");
+        }
+        if !seen.insert(n.as_str()) {
+            bail!("{table} icon {n} is declared twice");
+        }
     }
     Ok(())
 }
