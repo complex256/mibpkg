@@ -1,0 +1,12 @@
+.md-typeset table:not([class]) {
+  display: table;
+  width: 100%;
+}
+
+.md-typeset table:not([class]) th {
+  white-space: nowrap;
+}
+
+.md-typeset code {
+  word-break: break-word;
+}
