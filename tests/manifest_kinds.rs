@@ -136,7 +136,22 @@ fn both_tables_are_refused() {
 }
 
 #[test]
-fn declarative_kinds_refuse_files_services_configs_and_scripts() {
+fn a_plugin_may_carry_native_files_services_configs_and_scripts() {
+    let extras = [
+        "[[file]]\nsrc = \"x\"\n",
+        "[[file]]\nsrc = \"bin/x\"\n[[service]]\nname = \"x\"\nexec = \"@pkg/bin/x\"\n",
+        "[[config]]\npath = \"x.conf\"\n",
+        "[scripts]\npost_install = \"x.sh\"\n",
+    ];
+    for extra in extras {
+        let m = Manifest::parse(&format!("{HELLO}\n{extra}")).unwrap();
+        assert_eq!(m.kind(), Kind::Plugin);
+        assert_eq!(m.plugin_id(), Some("hello"));
+    }
+}
+
+#[test]
+fn sdk_refuses_files_services_configs_and_scripts() {
     let extras = [
         "[[file]]\nsrc = \"x\"\n",
         "[[file]]\nsrc = \"x\"\n[[service]]\nname = \"x\"\nexec = \"@pkg/x\"\n",
@@ -144,17 +159,27 @@ fn declarative_kinds_refuse_files_services_configs_and_scripts() {
         "[scripts]\npost_install = \"x.sh\"\n",
     ];
     for extra in extras {
-        refused(&format!("{HELLO}\n{extra}"), "plugin and sdk packages are declarative: no files, services, configs or scripts");
-        refused(
-            &format!("{}\n{extra}", sdk("mibsdk")),
-            "plugin and sdk packages are declarative: no files, services, configs or scripts",
-        );
+        refused(&format!("{}\n{extra}", sdk("mibsdk")), "sdk packages are declarative");
     }
 }
 
 #[test]
+fn a_plugin_id_may_differ_from_the_package_name() {
+    let text = "[package]\nname = \"tailscale\"\nversion = \"1.0.0\"\n\n[plugin]\nid = \"tailscale-status\"\njar = \"tailscale-status.jar\"\napi = 6\npermissions = []\n";
+    let m = Manifest::parse(text).unwrap();
+    assert_eq!(m.kind(), Kind::Plugin);
+    assert_eq!(m.plugin_id(), Some("tailscale-status"));
+    assert_eq!(m.plugin.unwrap().id("tailscale"), "tailscale-status");
+
+    refused(
+        "[package]\nname = \"tailscale\"\nversion = \"1.0.0\"\n\n[plugin]\nid = \"tailscale-status\"\njar = \"tailscale.jar\"\napi = 6\npermissions = []\n",
+        "must be tailscale-status.jar",
+    );
+}
+
+#[test]
 fn plugin_id_shorter_than_two_is_refused() {
-    refused(&plugin("a", "jar = \"a.jar\"\napi = 1\npermissions = []"), "must be 2-40 characters");
+    refused(&plugin("a", "jar = \"a.jar\"\napi = 1\npermissions = []"), "must be 2-40");
     refused(&plugin("a", "jar = \"a.jar\"\napi = 1\npermissions = []"), "plugin id");
 }
 

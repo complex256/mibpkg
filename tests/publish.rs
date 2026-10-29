@@ -253,7 +253,8 @@ fn new_scaffolds_a_package_that_builds() {
     let dir = f.root().join("mytool");
     let files = mibpkg::scaffold::new_package(&dir, "mytool").unwrap();
     assert!(files.iter().any(|p| p.ends_with(".github/workflows/mibpkg-release.yml")));
-    fs::write(dir.join("bin/mytool"), "#!/bin/sh\nsleep 60\n").unwrap();
+    assert!(dir.join("bin/mytool").is_file());
+    assert!(dir.join(".gitignore").is_file());
     let m = mibpkg::archive::pack(&dir, &f.root().join("mytool.mpk")).unwrap();
     assert_eq!((m.package.name.as_str(), m.package.version.as_str()), ("mytool", "0.1.0"));
     assert!(mibpkg::scaffold::new_package(&dir, "mytool").unwrap_err().to_string().contains("not empty"));

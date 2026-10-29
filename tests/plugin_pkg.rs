@@ -439,7 +439,7 @@ fn plugin_install_takes_over_a_pushed_jar() {
     assert!(installed_pkg(&f, "hello"));
     // The package owns the id now: the SDK uninstall names it as a plugin package.
     let e = format!("{:#}", install::remove(&ctx, "mibsdk", false).unwrap_err());
-    assert!(e.starts_with("remove these plugins first: hello"), "{e}");
+    assert!(e.starts_with("remove these plugin packages first: hello"), "{e}");
     // An update is no takeover.
     let msg = install_src(&ctx, &plugin_src(dir.path(), "hello", "1.1.0", 2, &["vehicle.read"])).unwrap();
     assert!(!msg.contains("replaced the pushed"), "{msg}");
@@ -1705,4 +1705,49 @@ fn plugin_remove_clears_the_reflection_file() {
     install::remove(&ctx, "hello", false).unwrap();
     assert!(!icon_dir(&f, "hello").join(format!("{rs}.png")).exists());
     assert!(!icon_dir(&f, "hello").exists());
+}
+
+/// A combined product package: native file + service, plus the `[plugin]` status half.
+fn combined_src(dir: &Path, product: &str, plugin_id: &str, ver: &str) -> PathBuf {
+    let s = dir.join(format!("src-{product}-{ver}"));
+    fs::create_dir_all(s.join("bin")).unwrap();
+    fs::write(
+        s.join("manifest.toml"),
+        format!(
+            "[package]\nname = \"{product}\"\nversion = \"{ver}\"\n\n\
+             [[file]]\nsrc = \"bin/{product}\"\nmode = \"755\"\n\n\
+             [[service]]\nname = \"{product}\"\nexec = \"@pkg/bin/{product}\"\n\n\
+             [plugin]\nid = \"{plugin_id}\"\njar = \"{plugin_id}.jar\"\napi = 2\npermissions = []\n"
+        ),
+    )
+    .unwrap();
+    fs::write(s.join(format!("bin/{product}")), "#!/bin/sh\nsleep 60\n").unwrap();
+    fs::set_permissions(s.join(format!("bin/{product}")), fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(s.join(format!("{plugin_id}.jar")), format!("{plugin_id} {ver} jar\n")).unwrap();
+    write_stamp(&s, &format!("{plugin_id}.jar.stamp"), "plugin", Some((plugin_id, false)), &[&format!("{plugin_id}.jar")]);
+    s
+}
+
+#[test]
+fn combined_product_installs_and_removes_both_halves() {
+    let f = common::fixture();
+    let dir = tempfile::tempdir().unwrap();
+    with_sdk(&f, dir.path());
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let src = combined_src(dir.path(), "product", "product-status", "1.0.0");
+    let msg = install_src(&ctx, &src).unwrap();
+    assert!(msg.contains("installed product 1.0.0"), "{msg}");
+
+    let st = State::load(&f.layout).unwrap();
+    let inst = st.packages.get("product").expect("product package recorded");
+    assert_eq!(inst.services, vec!["product.product"]);
+    assert!(plugin_jar(&f, "product-status").exists());
+    assert!(f.layout.pkg_dir("product").join("1.0.0/bin/product").exists());
+
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    install::remove(&ctx, "product", false).unwrap();
+    assert!(!plugin_jar(&f, "product-status").exists());
+    assert!(!f.layout.pkg_dir("product").exists());
+    assert!(!State::load(&f.layout).unwrap().packages.contains_key("product"));
 }

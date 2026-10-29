@@ -732,8 +732,8 @@ fn sdk(ctx: &Ctx, args: &[String], purge: bool, after: &dyn Fn(&Ctx)) -> Result<
 /// catalog decides (failing closed when it is missing or unreadable). Revoking all is always fine.
 fn grantable(ctx: &Ctx, id: &str, perms: &std::collections::BTreeSet<String>) -> Result<()> {
     let l = &ctx.layout;
-    if State::load(l)?.packages.contains_key(id) {
-        let m = install::current_manifest(l, id).with_context(|| format!("reading the manifest of the {id} package"))?;
+    if let Some(pkg) = crate::install::package_owning_plugin(l, id) {
+        let m = install::current_manifest(l, &pkg).with_context(|| format!("reading the manifest of the {pkg} package"))?;
         let Some(plugin) = m.plugin.as_ref() else {
             bail!("{id} is not a plugin package; only plugins have permissions");
         };
@@ -741,6 +741,9 @@ fn grantable(ctx: &Ctx, id: &str, perms: &std::collections::BTreeSet<String>) ->
             bail!("{id} does not declare {p}; it can only be granted: {}", plugin.permissions.join(", "));
         }
         return Ok(());
+    }
+    if State::load(l)?.packages.contains_key(id) {
+        bail!("{id} is not a plugin package; only plugins have permissions");
     }
     if perms.is_empty() {
         return Ok(());
@@ -807,6 +810,12 @@ fn sdk_action(ctx: &Ctx, verb: &str, rest: &[String], purge: bool) -> Result<Str
             plugin_pkg::check_id(id)?;
             if id == crate::mibsdk::SDK_PKG {
                 bail!("mibsdk is the SDK itself; remove it with: mibpkg remove mibsdk");
+            }
+            if let Some(pkg) = crate::install::package_owning_plugin(l, id) {
+                if pkg != id {
+                    bail!("{id} is the plugin inside the {pkg} package; remove the package instead: mibpkg remove {pkg}");
+                }
+                return install::remove(ctx, id, purge);
             }
             if !State::load(l)?.packages.contains_key(id) {
                 return plugin_pkg::remove_id(ctx, id, purge);
@@ -1291,7 +1300,7 @@ fn host_new(args: &[String]) -> Result<i32> {
     for f in crate::scaffold::new_package(&dir, name)? {
         crate::say!("{}", f.display());
     }
-    crate::say!("next: put your program at {}/bin/{name}, then `mibpkg release` (see README.md)", dir.display());
+    crate::say!("next: replace {}/bin/{name} with your program, then run `mibpkg build {} out` (see README.md)", dir.display(), dir.display());
     Ok(0)
 }
 

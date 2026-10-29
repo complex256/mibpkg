@@ -1170,7 +1170,7 @@ fn sdk_remove_refuses_with_plugins_installed() {
     install_plugin(&ctx, dir.path(), "hello", 2);
     ctx.force = true; // --force does not cover installed plugin packages
     let e = format!("{:#}", install::remove(&ctx, "mibsdk", false).unwrap_err());
-    assert!(e.starts_with("remove these plugins first: bike-rack, hello"), "{e}");
+    assert!(e.starts_with("remove these plugin packages first: bike-rack, hello"), "{e}");
     assert_still_installed(&f);
 }
 

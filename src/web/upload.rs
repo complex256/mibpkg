@@ -161,6 +161,8 @@ pub struct Inspection {
     pub ask: bool,
     /// "plugin" or "sdk"; None for a plain package. (`kind` above is fresh/upgrade/same/older.)
     pub package_kind: Option<String>,
+    /// The plugin id when this package carries a `[plugin]` table; may differ from `name`.
+    pub plugin_id: Option<String>,
     /// A plugin's declared permissions, in plain words.
     pub permissions: Vec<crate::catalog::Perm>,
     /// The permissions installing this file asks the user to approve (what it adds over the
@@ -173,11 +175,11 @@ pub struct Inspection {
 
 /// What installing a plugin declaring `declared` asks for, as `plugin_pkg::check` plans it: the
 /// permissions it adds over the installed package's manifest (all of them for a fresh install).
-fn approval_plan(layout: &Layout, name: &str, declared: &[String]) -> crate::mibsdk::grants::Approval {
-    let installed = State::load(layout).unwrap_or_default().packages.contains_key(name);
-    let old = if installed { crate::install::current_manifest(layout, name).ok() } else { None };
+fn approval_plan(layout: &Layout, package: &str, plugin_id: &str, declared: &[String]) -> crate::mibsdk::grants::Approval {
+    let installed = State::load(layout).unwrap_or_default().packages.contains_key(package);
+    let old = if installed { crate::install::current_manifest(layout, package).ok() } else { None };
     let declared_old = old.as_ref().and_then(|o| o.plugin.as_ref()).map(|p| p.permissions.as_slice());
-    let current = crate::mibsdk::grants::read(layout).ok().and_then(|mut g| g.remove(name)).unwrap_or_default();
+    let current = crate::mibsdk::grants::read(layout).ok().and_then(|mut g| g.remove(plugin_id)).unwrap_or_default();
     crate::mibsdk::grants::plan(declared, declared_old, &current)
 }
 
@@ -209,9 +211,11 @@ pub fn inspect(layout: &Layout, unit: &UnitInfo, colls: &[Collection], id: &str,
     i.services = m.services.iter().map(|s| format!("{name}.{}", s.name)).collect();
     i.package_kind = m.kind().name();
     if let Some(plugin) = &m.plugin {
+        let plugin_id = plugin.id(&name).to_string();
+        i.plugin_id = Some(plugin_id.clone());
         let cat = crate::mibsdk::catalog::installed(layout).ok().flatten();
         i.permissions = crate::catalog::permissions(cat.as_deref(), &plugin.permissions, None);
-        let plan = approval_plan(layout, &name, &plugin.permissions);
+        let plan = approval_plan(layout, &name, &plugin_id, &plugin.permissions);
         i.stays_blocked = crate::mibsdk::grants::missing(&plugin.permissions, &plan.grant);
         i.needs_approval = plan.ask;
     }

@@ -35,16 +35,27 @@ pub struct Manifest {
     pub sdk: Option<SdkSpec>,
 }
 
-/// `[plugin]`. The package name is the plugin id; the jar's stamp is `<jar>.stamp`.
+/// `[plugin]`. The jar's stamp is `<jar>.stamp`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginSpec {
+    /// The plugin id; defaults to the package name. A product package such as `tailscale` can
+    /// carry the plugin `tailscale-status` without renaming either.
+    #[serde(default)]
+    pub id: Option<String>,
     pub jar: String,
     pub api: u32,
     pub permissions: Vec<String>,
     /// Icon names (`[a-z0-9-]{1,32}`, at most 8); each needs the package file `icons/<name>.png`.
     #[serde(default)]
     pub icons: Vec<String>,
+}
+
+impl PluginSpec {
+    /// The plugin id, defaulting to the package name.
+    pub fn id<'a>(&'a self, package_name: &'a str) -> &'a str {
+        self.id.as_deref().unwrap_or(package_name)
+    }
 }
 
 /// `[sdk]`: the values the SDK install writes into the unit's bundle list and sdk.properties.
@@ -199,6 +210,11 @@ impl Manifest {
         }
     }
 
+    /// The plugin id, when this is a plugin package.
+    pub fn plugin_id(&self) -> Option<&str> {
+        self.plugin.as_ref().map(|p| p.id(self.package.name.as_str()))
+    }
+
     /// Files a [plugin] or [sdk] package must carry (`archive::pack` checks them).
     pub fn kind_files(&self) -> Vec<String> {
         match (&self.plugin, &self.sdk) {
@@ -290,16 +306,21 @@ impl Manifest {
         if self.kind() == Kind::Plain {
             return Ok(());
         }
-        if !self.files.is_empty() || !self.services.is_empty() || !self.configs.is_empty() || self.uses_scripts() {
-            bail!("plugin and sdk packages are declarative: no files, services, configs or scripts");
+        // A plugin package may also carry native files, configs, services and scripts: one package
+        // can install a daemon and its status UI together. The SDK package stays declarative.
+        if self.sdk.is_some()
+            && (!self.files.is_empty() || !self.services.is_empty() || !self.configs.is_empty() || self.uses_scripts())
+        {
+            bail!("sdk packages are declarative: no files, services, configs or scripts");
         }
         if let Some(p) = &self.plugin {
-            if name.len() < 2 {
-                bail!("plugin id {name:?} must be 2-40 characters");
+            let id = p.id(name);
+            if !valid_name(id) || id.len() < 2 {
+                bail!("plugin id {id:?} must be 2-40 of [a-z0-9-], starting with a letter or digit");
             }
             file_name("[plugin] jar", &p.jar, ".jar")?;
-            if p.jar != format!("{name}.jar") {
-                bail!("[plugin] jar {:?} must be {name}.jar (the plugin id)", p.jar);
+            if p.jar != format!("{id}.jar") {
+                bail!("[plugin] jar {:?} must be {id}.jar (the plugin id)", p.jar);
             }
             if p.api < 1 {
                 bail!("[plugin] api must be at least 1");

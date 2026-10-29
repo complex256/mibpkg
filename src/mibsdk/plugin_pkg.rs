@@ -84,7 +84,7 @@ pub fn on_unit(layout: &crate::paths::Layout, id: &str) -> bool {
 /// Every declared icon is read from `src` (the package being installed) and must pass `png_check`.
 pub fn check(ctx: &Ctx, m: &Manifest, old: Option<&Manifest>, src: icons::Source) -> Result<Approval> {
     let plugin = m.plugin.as_ref().context("not a [plugin] package")?;
-    let id = m.package.name.as_str();
+    let id = plugin.id(&m.package.name);
     let l = &ctx.layout;
     let Some((_, sdk, _)) = installed_sdk(l) else {
         bail!("{id} is a plugin for the mibsdk runtime: install the mibsdk package first");
@@ -207,7 +207,7 @@ impl Drop for Deployed<'_, '_> {
 /// Caller contract: holds the action lock and `ctx.mounts.rw("/mnt/app")`.
 pub fn deploy<'c, 'a>(ctx: &'c Ctx<'a>, m: &Manifest, ver_dir: &Path, approval: &Approval) -> Result<Deployed<'c, 'a>> {
     let plugin = m.plugin.as_ref().context("not a [plugin] package")?;
-    let id = m.package.name.as_str();
+    let id = plugin.id(&m.package.name);
     let l = &ctx.layout;
     let jar = ver_dir.join(&plugin.jar);
     let verified = stamp::verify(&ver_dir.join(format!("{}.stamp", plugin.jar)), stamp::StampKind::Plugin, Some(id), &[&jar])
@@ -224,7 +224,9 @@ pub fn deploy<'c, 'a>(ctx: &'c Ctx<'a>, m: &Manifest, ver_dir: &Path, approval: 
         grants: grants::read(l)?.remove(id),
         icons: icons::snapshot(l, &icon_dir)?,
     };
-    let takeover = prior.jar.is_some() && !State::load(l)?.packages.contains_key(id);
+    let takeover = prior.jar.is_some()
+        && !State::load(l)?.packages.contains_key(id)
+        && crate::install::package_owning_plugin(l, id).is_none();
     ensure_plugins_dir(ctx)?;
     put_file(ctx, &target, &jar, JAR_MODE)?;
     let written = grants::set(ctx, id, &approval.grant).and_then(|()| icons::install(ctx, &icon_dir, &checked));
@@ -257,7 +259,7 @@ pub fn deploy<'c, 'a>(ctx: &'c Ctx<'a>, m: &Manifest, ver_dir: &Path, approval: 
 /// notes. Caller contract as `deploy`.
 pub fn redeploy(ctx: &Ctx, m: &Manifest, ver_dir: &Path) -> Result<Vec<String>> {
     let plugin = m.plugin.as_ref().context("not a [plugin] package")?;
-    let current = grants::read(&ctx.layout)?.remove(&m.package.name).unwrap_or_default();
+    let current = grants::read(&ctx.layout)?.remove(plugin.id(&m.package.name)).unwrap_or_default();
     let approval = grants::plan(&plugin.permissions, Some(&plugin.permissions), &current);
     Ok(deploy(ctx, m, ver_dir, &approval)?.commit())
 }
@@ -338,8 +340,11 @@ fn await_load(ctx: &Ctx, id: &str, base: &ack::Baseline, token: &str, timeout: D
 pub fn push(ctx: &Ctx, id: &str, jar: &[u8], stamp: Option<&[u8]>) -> Result<String> {
     check_id(id)?;
     let l = &ctx.layout;
-    if State::load(l)?.packages.contains_key(id) {
-        bail!("{id} is installed as a package; remove it first or install a newer version");
+    if let Some(pkg) = crate::install::package_owning_plugin(l, id) {
+        if pkg == id {
+            bail!("{id} is installed as a package; remove it first or install a newer version");
+        }
+        bail!("{id} is the plugin inside the {pkg} package; remove the package first or install a newer version");
     }
     let name = format!("{id}.jar");
     let verified = stamp::verify_bytes(stamp, stamp::StampKind::Plugin, Some(id), &[(&name, jar)]).map_err(|e| {

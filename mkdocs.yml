@@ -1,0 +1,127 @@
+site_name: mibpkg
+site_description: An app store and package manager for the MIB2 High head unit.
+site_url: https://complex256.github.io/mibpkg/
+repo_url: https://github.com/complex256/mibpkg
+repo_name: complex256/mibpkg
+edit_uri: edit/main/docs/
+docs_dir: docs
+site_dir: build/docs-site
+use_directory_urls: true
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+
+exclude_docs: |
+  internal/**
+  requirements.txt
+  install-images/README.md
+
+extra_css:
+  - stylesheets/extra.css
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/complex256/mibpkg
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Overview: getting-started/index.md
+      - Requirements: getting-started/requirements.md
+      - Install: getting-started/install.md
+      - Custom-script install: getting-started/install-custom-script.md
+      - First use: getting-started/first-use.md
+      - Update mibpkg: getting-started/update.md
+      - Remove and recover: getting-started/remove-and-recover.md
+  - Guides:
+      - Web interface: guides/web-interface.md
+      - Packages: guides/packages.md
+      - Plugin packages: guides/plugin-packages.md
+      - Real packages: guides/real-packages.md
+      - Online sources: guides/online-sources.md
+      - Config, logs and restart: guides/config-logs-restart.md
+      - Web settings and PIN: guides/web-settings-pin.md
+      - Recovery and DISABLE: guides/recovery-disable.md
+      - Troubleshooting: guides/troubleshooting.md
+      - Your first package: guides/your-first-package.md
+      - Publishing a collection: guides/publishing-a-collection.md
+      - GitHub Action: guides/github-action.md
+  - Reference:
+      - CLI: reference/cli.md
+      - manifest.toml: reference/manifest.md
+      - Package layout: reference/package-layout.md
+      - Collection index: reference/collection-index.md
+      - Service conditions: reference/service-conditions.md
+      - Paths and status: reference/paths-and-status.md
+      - Units: reference/units.md
+      - Web API: reference/web-api.md
+  - Explanation:
+      - Architecture: explanation/architecture.md
+      - Safety and recovery: explanation/safety-and-recovery.md
+      - Boot and supervisor: explanation/boot-and-supervisor.md
+      - Online updates: explanation/online-updates.md
+      - Install methods: explanation/install-methods.md
+  - Contributing:
+      - Overview: contributing/index.md
+      - Build: contributing/build.md
+      - Test: contributing/test.md
+      - Release: contributing/release.md
+      - Docs style guide: contributing/docs-style-guide.md

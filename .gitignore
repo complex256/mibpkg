@@ -3,3 +3,6 @@
 /spikes/*/target
 .superpowers/
 .playwright-mcp/
+
+.venv/
+build/

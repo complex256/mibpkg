@@ -27,13 +27,30 @@ fn stock_dir() -> String {
 const STOCK_BUNDLES_MODE: u32 = 0o777;
 const LOST: &str = "(nothing was lost; run the install again)";
 
-/// Installed `[plugin]` packages and their plugin api, by id.
+/// Installed plugins and their plugin api, by plugin id. Combined product packages are found by
+/// the `[plugin].id` in their manifest, which may differ from the package name.
 pub fn plugin_packages(layout: &Layout) -> Result<Vec<(String, u32)>> {
     let st = State::load(layout)?;
     Ok(st
         .packages
         .keys()
-        .filter_map(|n| install::current_manifest(layout, n).ok().and_then(|m| m.plugin).map(|p| (n.clone(), p.api)))
+        .filter_map(|n| {
+            install::current_manifest(layout, n).ok().and_then(|m| {
+                let api = m.plugin.as_ref()?.api;
+                Some((m.plugin_id()?.to_string(), api))
+            })
+        })
+        .collect())
+}
+
+/// Installed package names that carry a `[plugin]` table (plugin-only or combined).
+pub fn plugin_package_names(layout: &Layout) -> Result<Vec<String>> {
+    let st = State::load(layout)?;
+    Ok(st
+        .packages
+        .keys()
+        .filter(|n| install::current_manifest(layout, n).is_ok_and(|m| m.plugin.is_some()))
+        .cloned()
         .collect())
 }
 
@@ -782,9 +799,9 @@ fn remove_tree(l: &Layout, abs: &str) -> std::io::Result<()> {
 /// fails anywhere can be run again. The caller holds /mnt/app read-write.
 pub fn undeploy(ctx: &Ctx, purge: bool) -> Result<String> {
     let l = &ctx.layout;
-    let plugins: Vec<String> = plugin_packages(l)?.into_iter().map(|(id, _)| id).collect();
+    let plugins = plugin_package_names(l)?;
     if !plugins.is_empty() {
-        bail!("remove these plugins first: {}", plugins.join(", "));
+        bail!("remove these plugin packages first: {}", plugins.join(", "));
     }
     let pushed: Vec<String> = match names(l, &format!("{BASE}/plugins")) {
         Ok(v) => v.into_iter().filter_map(|n| n.strip_suffix(".jar").map(String::from)).collect(),

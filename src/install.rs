@@ -41,6 +41,19 @@ pub fn current_manifest(layout: &Layout, pkg: &str) -> Result<Manifest> {
     Manifest::parse(&fs::read_to_string(d.join("manifest.toml"))?)
 }
 
+/// The installed package that carries plugin `id`, if any. A plugin-only package is its own
+/// owner; a combined product package (for example `tailscale` carrying `tailscale-status`) is
+/// found by its manifest.
+pub fn package_owning_plugin(layout: &Layout, id: &str) -> Option<String> {
+    let st = State::load(layout).ok()?;
+    st.packages.keys().find_map(|n| {
+        current_manifest(layout, n)
+            .ok()
+            .filter(|m| m.plugin_id() == Some(id))
+            .map(|_| n.clone())
+    })
+}
+
 /// Remove `<version>.new` dirs left by an interrupted install. Caller holds /mnt/app rw.
 pub fn cleanup_stale(layout: &Layout) -> Result<()> {
     let dir = layout.pkgs_dir();
@@ -237,6 +250,7 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
     let layout = &ctx.layout;
     let name = pkg.manifest.package.name.as_str();
     let version = pkg.manifest.package.version.clone();
+    let plugin_id = pkg.manifest.plugin_id().map(str::to_string);
     let mut state = State::load(layout)?;
     let previous = state.packages.get(name).cloned();
     // `current` already names this version but the state file doesn't: power was lost after
@@ -397,7 +411,8 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
     if kind == Kind::Plugin {
         // No /mnt/app read-write guard is held while the runtime is waited for.
         drop(rw);
-        msg.push_str(&plugin_tail(ctx, name, &plugin_notes));
+        let id = plugin_id.as_deref().context("plugin package without a plugin id")?;
+        msg.push_str(&plugin_tail(ctx, id, &plugin_notes));
     }
     Ok(msg)
 }
@@ -547,10 +562,12 @@ pub fn remove(ctx: &Ctx, name: &str, purge: bool) -> Result<String> {
     state.save(layout)?;
     if is_plugin {
         // The plugin itself: jar, grants line, switch and data, waiting for the runtime with no
-        // /mnt/app read-write guard held.
+        // /mnt/app read-write guard held. A combined product package removes the plugin by its
+        // own id, not by the product name.
+        let id = manifest.as_ref().ok().and_then(|m| m.plugin_id()).unwrap_or(name).to_string();
         drop(rw);
-        return plugin_pkg::remove_package(ctx, name, purge).with_context(|| {
-            format!("the {name} package was removed, but taking the plugin off the unit did not finish; run: mibpkg sdk remove {name}")
+        return plugin_pkg::remove_package(ctx, &id, purge).with_context(|| {
+            format!("the {name} package was removed, but taking the plugin {id} off the unit did not finish; run: mibpkg sdk remove {id}")
         });
     }
     let mut msg = format!("removed {name}{}", if purge { " and its config" } else { "" });
@@ -631,7 +648,8 @@ pub fn rollback(ctx: &Ctx, name: &str) -> Result<String> {
     let mut msg = format!("rolled back {name} {} -> {prev}{suffix}{notes}", inst.version);
     if kind == Kind::Plugin {
         drop(rw);
-        msg.push_str(&plugin_tail(ctx, name, &plugin_notes));
+        let id = m.plugin_id().context("plugin package without a plugin id")?;
+        msg.push_str(&plugin_tail(ctx, id, &plugin_notes));
     }
     Ok(msg)
 }
