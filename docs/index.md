@@ -51,4 +51,4 @@ See [Units](reference/units.md) for compatibility and `[compat]`.
 
 ## Status
 
-mibpkg 0.10.0. The docs describe the current `main` branch.
+mibpkg 0.11.0. The docs describe the current `main` branch.

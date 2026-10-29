@@ -26,6 +26,8 @@ A wrong PIN returns 401. Too many wrong PINs returns 429 with `retry_after`.
 | `DELETE` | `/api/sources` | Remove `{source}` |
 | `GET` | `/api/settings` | Web settings |
 | `PUT` | `/api/settings` | Save web settings |
+| `GET` | `/api/wifi` | The Wi-Fi uplink: saved SSID, on/off, live state; no password |
+| `PUT` | `/api/wifi` | Write `wifi.toml` (the same file the car page edits) |
 | `GET` | `/api/logs` | Known logs |
 | `GET` | `/api/logs/<id>?bytes=N` | Tail a log |
 | `POST` | `/api/actions` | Start an action job |
@@ -62,6 +64,27 @@ An upload is inspected before install: name, version, kind, compatibility, servi
 
 If the new settings would make the current connection unable to reach the page, the API returns **409**
 with `needs_confirm`. Send `confirm: true` to save anyway.
+
+## Wi-Fi body
+
+```json
+{
+  "enabled": true,
+  "ssid": "my-phone",
+  "password": "secret",
+  "dhcp": true,
+  "ip": "",
+  "netmask": "",
+  "gateway": "",
+  "dns": ""
+}
+```
+
+Omit `password` (or send `null`) to keep the saved one; send `""` to clear it. Omitted address fields
+keep their saved values. With `"dhcp": false`, `ip` and `netmask` are required and may not be empty.
+The reply has `configured`, `enabled`, `ssid`, `password_set`, `dhcp`, `ip`, `netmask`, `gateway`,
+`dns`, `state`, `active_ssid`, `ipv4`, `live_netmask`, `live_gateway`, `live_dns`, `error` and
+`connected`. The password is never returned.
 
 ## Errors
 

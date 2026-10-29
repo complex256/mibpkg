@@ -1,9 +1,11 @@
 //! Read-only JSON handlers. Nothing here writes to flash or takes the action lock.
-use super::http::Response;
+use super::http::{Request, Response};
 use super::App;
 use crate::catalog;
 use crate::install::{current_dir, current_manifest, updates_available};
+use crate::mibsdk::wifi;
 use crate::state::State;
+use serde::Deserialize;
 use serde_json::json;
 use std::fs;
 use std::io::Read;
@@ -36,8 +38,80 @@ pub fn status(app: &App) -> Response {
             "updates": updates,
             "last_result": state.results.get("_"),
             "installed": state.packages.len(),
+            "wifi": wifi_json(),
         }),
     )
+}
+
+/// The core Wi-Fi uplink, as the SDK last reported it; `configured` is false until the SDK has run.
+fn wifi_json() -> serde_json::Value {
+    let cfg = wifi::load().ok().flatten();
+    let st = wifi::status();
+    json!({
+        "configured": cfg.is_some(),
+        "enabled": cfg.as_ref().map(|c| c.enabled).or_else(|| st.as_ref().map(|s| s.enabled)).unwrap_or(false),
+        "ssid": cfg.as_ref().map(|c| c.ssid.clone()).unwrap_or_default(),
+        "password_set": cfg.as_ref().map(|c| !c.password.is_empty()).or_else(|| st.as_ref().map(|s| s.password_set)).unwrap_or(false),
+        "dhcp": cfg.as_ref().map(|c| c.dhcp).unwrap_or(true),
+        "ip": cfg.as_ref().map(|c| c.ip.clone()).unwrap_or_default(),
+        "netmask": cfg.as_ref().map(|c| c.netmask.clone()).unwrap_or_default(),
+        "gateway": cfg.as_ref().map(|c| c.gateway.clone()).unwrap_or_default(),
+        "dns": cfg.as_ref().map(|c| c.dns.clone()).unwrap_or_default(),
+        "state": st.as_ref().map(|s| s.state.clone()).unwrap_or_default(),
+        "active_ssid": st.as_ref().map(|s| s.ssid.clone()).unwrap_or_default(),
+        "ipv4": st.as_ref().map(|s| s.ipv4.clone()).unwrap_or_default(),
+        "live_netmask": st.as_ref().map(|s| s.netmask.clone()).unwrap_or_default(),
+        "live_gateway": st.as_ref().map(|s| s.gateway.clone()).unwrap_or_default(),
+        "live_dns": st.as_ref().map(|s| s.dns.clone()).unwrap_or_default(),
+        "error": st.as_ref().map(|s| s.error.clone()).unwrap_or_default(),
+        "connected": st.as_ref().map(|s| s.connected()).unwrap_or(false),
+    })
+}
+
+/// GET /api/wifi
+pub fn wifi_get() -> Response {
+    Response::json(200, &wifi_json())
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WifiSave {
+    pub enabled: bool,
+    pub ssid: String,
+    /// Omitted or null keeps the saved password; an empty string clears it.
+    #[serde(default)]
+    pub password: Option<String>,
+    /// Omitted fields keep their saved values.
+    #[serde(default)]
+    pub dhcp: Option<bool>,
+    #[serde(default)]
+    pub ip: Option<String>,
+    #[serde(default)]
+    pub netmask: Option<String>,
+    #[serde(default)]
+    pub gateway: Option<String>,
+    #[serde(default)]
+    pub dns: Option<String>,
+}
+
+/// PUT /api/wifi — write the same wifi.toml the car's own Internet page writes.
+pub fn wifi_save(req: &Request) -> Response {
+    let body: WifiSave = match serde_json::from_slice(&req.body) {
+        Ok(b) => b,
+        Err(e) => return Response::error(400, format!("bad request body: {e}")),
+    };
+    let old = wifi::load().ok().flatten().unwrap_or_default();
+    let dhcp = body.dhcp.unwrap_or(old.dhcp);
+    let ip = body.ip.unwrap_or(old.ip);
+    let netmask = body.netmask.unwrap_or(old.netmask);
+    let gateway = body.gateway.unwrap_or(old.gateway);
+    let dns = body.dns.unwrap_or(old.dns);
+    match wifi::save(body.enabled, &body.ssid, body.password.as_deref(), dhcp, &ip, &netmask, &gateway,
+        &dns)
+    {
+        Ok(_) => Response::json(200, &wifi_json()),
+        Err(e) => Response::error(400, format!("{e:#}")),
+    }
 }
 
 /// GET /api/packages

@@ -15,12 +15,13 @@ The interface has four tabs:
 | **Discover** | Browse packages on the card and online collections |
 | **Updates** | See available updates and update everything |
 | **Installed** | Inspect, configure, restart, roll back or remove packages |
-| **More** | Install from file, logs, sources, web settings, health |
+| **More** | Install from file, internet, logs, sources, web settings, health |
 
 !!! note "No SIM data?"
-    The car's hotspot still works, so you can install packages from the card or a file. Online sources
-    and updates need an internet uplink. A phone-hotspot or USB-tethering uplink is under investigation
-    and is not part of 0.10.0.
+    The car's hotspot still works, so you can install packages from the card or a file. For online
+    sources and updates, use **More → Internet** to enter your phone's hotspot name and password. The
+    mibsdk package drives that uplink; with no SIM present it is on by default once a hotspot is saved.
+    You can also set it in the car: **Plugins → SDK → Internet**.
 
 ## Install a package
 

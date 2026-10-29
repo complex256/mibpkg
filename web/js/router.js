@@ -24,6 +24,7 @@ import * as upload from './views/upload.js';
 import * as logs from './views/logs.js';
 import * as sources from './views/sources.js';
 import * as settings from './views/settings.js';
+import * as wifi from './views/wifi.js';
 import * as login from './views/login.js';
 
 // [pattern, view, tab to highlight]. Patterns capture parameters in order.
@@ -39,6 +40,7 @@ const ROUTES = [
   [/^#\/logs\/([a-z0-9.-]+)$/, logs, 'more'],
   [/^#\/sources$/, sources, 'more'],
   [/^#\/settings$/, settings, 'more'],
+  [/^#\/wifi$/, wifi, 'more'],
   [/^#\/login$/, login, null],
 ];
 

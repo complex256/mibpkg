@@ -108,6 +108,8 @@ fn api_route(app: &App, req: &Request, local: IpAddr) -> Response {
         ("POST", ["sources"]) | ("DELETE", ["sources"]) => source_change(app, req),
         ("GET", ["settings"]) => api::settings(app),
         ("PUT", ["settings"]) => settings_save(app, req, local),
+        ("GET", ["wifi"]) => api::wifi_get(),
+        ("PUT", ["wifi"]) => api::wifi_save(req),
         ("POST", ["actions"]) => action(app, req),
         ("GET", ["jobs", id]) => match app.jobs.get(id) {
             Some(job) => Response::json(200, &job.json(req.query("since").and_then(|s| s.parse().ok()).unwrap_or(0))),
@@ -119,7 +121,7 @@ fn api_route(app: &App, req: &Request, local: IpAddr) -> Response {
             app.uploads.discard(id);
             Response::json(200, &json!({ "ok": true }))
         }
-        (_, ["session" | "login" | "logout" | "status" | "packages" | "logs" | "sources" | "settings" | "actions" | "jobs" | "uploads", ..]) => {
+        (_, ["session" | "login" | "logout" | "status" | "packages" | "logs" | "sources" | "settings" | "wifi" | "actions" | "jobs" | "uploads", ..]) => {
             Response::error(405, "method not allowed")
         }
         _ => Response::error(404, "not found"),

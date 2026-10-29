@@ -123,5 +123,5 @@ release flow.
 
 ## License
 
-Version 0.10.0. Licensed under MIT. Nothing here is affiliated with or endorsed by the vehicle or
+Version 0.11.0. Licensed under MIT. Nothing here is affiliated with or endorsed by the vehicle or
 head-unit manufacturers.

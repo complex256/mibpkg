@@ -49,6 +49,14 @@ export async function render() {
     : null;
 
   const disabled = status.disabled ? h('div', { class: 'notice' }, 'DISABLE card present: mibpkg starts no services until it is removed.') : null;
+  const noUplink = status.wifi && status.wifi.configured && status.wifi.enabled && !status.wifi.connected
+    ? h(
+        'a',
+        { class: 'notice', href: '#/wifi', style: 'display:block' },
+        h('strong', {}, 'No internet uplink. '),
+        'Use your phone’s hotspot for online updates. Set it up ›',
+      )
+    : null;
 
-  return h('div', {}, pageHead('Discover', uploadButton), disabled, search, hero, lists);
+  return h('div', {}, pageHead('Discover', uploadButton), disabled, noUplink, search, hero, lists);
 }

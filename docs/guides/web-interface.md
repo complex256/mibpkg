@@ -51,6 +51,7 @@ The package page has:
 ### More
 
 - **Install from file** — upload a `.mpk` from the phone.
+- **Internet** — the car's Wi-Fi uplink: the phone hotspot name, password and on/off switch. This is the same setting as the car's **Plugins → SDK → Internet** page.
 - **Logs** — the web server, supervisor and package logs.
 - **Sources** — online collections and the card's `sources.toml`.
 - **Web settings** — listen addresses, port, hotspot interface and PIN.

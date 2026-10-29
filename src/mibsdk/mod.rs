@@ -13,6 +13,7 @@ pub mod sdk_pkg;
 pub mod stamp;
 pub mod statusprefs;
 pub mod toggles;
+pub mod wifi;
 pub mod zipnames;
 
 use crate::ctx::Ctx;

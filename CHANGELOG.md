@@ -3,6 +3,19 @@
 All notable changes to mibpkg. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow semver.
 
+## 0.11.0 — 2026-10-29
+
+### Added
+
+- **More → Internet.** The web UI now edits the core mibsdk Wi-Fi uplink: hotspot name, password and
+  on/off switch. It writes the same `/mnt/persist/mibsdk/wifi.toml` as the car's
+  **Plugins → SDK → Internet** page, so either surface applies within a second. The page chooses DHCP
+  or a manual IPv4 address, netmask, gateway and optional DNS; with DHCP on it shows the live lease
+  (IP, netmask, gateway, DNS). The password is never returned by the API.
+- **A no-uplink banner on Discover** linking to the Internet page when the uplink is on but not
+  connected.
+- `GET /api/wifi` and `PUT /api/wifi`, plus `wifi` in `GET /api/status`.
+
 ## 0.10.0 — 2026-10-28
 
 ### Added

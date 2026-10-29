@@ -5,8 +5,9 @@ mibpkg can check GitHub releases for new package versions.
 ## An uplink is required
 
 Online updates need an internet uplink: SIM data, a working Wi-Fi client, or another route. The car's
-hotspot is local only. Without an uplink, use the card or a phone upload; **Discover** and **Updates**
-still show the local collections.
+hotspot is local only. Use **More → Internet** to save a phone hotspot as the car's uplink; the mibsdk
+package applies it within a second and keeps the car's hotspot available. Without an uplink, use the
+card or a phone upload; **Discover** and **Updates** still show the local collections.
 
 ## Sources
 

@@ -61,6 +61,7 @@ export async function render() {
       'ul',
       { class: 'menu' },
       link('#/upload', 'Install from file', '.mpk'),
+      link('#/wifi', 'Internet', status.wifi && status.wifi.connected ? status.wifi.active_ssid : ''),
       link('#/logs', 'Logs'),
       link('#/sources', 'Sources'),
       link('#/settings', 'Web settings'),
