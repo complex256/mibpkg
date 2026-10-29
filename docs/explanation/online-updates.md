@@ -2,6 +2,12 @@
 
 mibpkg can check GitHub releases for new package versions.
 
+## An uplink is required
+
+Online updates need an internet uplink: SIM data, a working Wi-Fi client, or another route. The car's
+hotspot is local only. Without an uplink, use the card or a phone upload; **Discover** and **Updates**
+still show the local collections.
+
 ## Sources
 
 A source is a GitHub repository with releases made by `mibpkg release`:

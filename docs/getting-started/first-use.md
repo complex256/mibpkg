@@ -17,6 +17,11 @@ The interface has four tabs:
 | **Installed** | Inspect, configure, restart, roll back or remove packages |
 | **More** | Install from file, logs, sources, web settings, health |
 
+!!! note "No SIM data?"
+    The car's hotspot still works, so you can install packages from the card or a file. Online sources
+    and updates need an internet uplink. A phone-hotspot or USB-tethering uplink is under investigation
+    and is not part of 0.10.0.
+
 ## Install a package
 
 1. Open **Discover**.

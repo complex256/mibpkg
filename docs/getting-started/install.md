@@ -10,16 +10,31 @@ GUID/GPT makes the SD-card option in the update menu greyed out.
 
 === "macOS"
 
-    1. Open **Disk Utility** and choose **View → Show All Devices**.
-    2. Select the **whole SD card device**, not the volume under it.
-    3. Click **Erase**, set **Format** to `MS-DOS (FAT)` and **Scheme** to `Master Boot Record`.
-    4. Erase.
+    1. Open **Disk Utility** and turn on **View → Show All Devices**. The card then appears as a
+       top-level device, not only as a volume.
+
+        ![Disk Utility: View → Show All Devices](../install-images/sd-macos-1-view.svg)
+
+    2. Select the **whole SD card device** (the top-level entry), not the volume under it.
+
+        ![Disk Utility: select the SD card device](../install-images/sd-macos-2-select.svg)
+
+    3. Click **Erase**, choose **MS-DOS (FAT)** and **Master Boot Record**, then click **Erase**.
+
+        ![Disk Utility: Erase with MS-DOS (FAT) and Master Boot Record](../install-images/sd-macos-3-erase.svg)
 
 === "Windows"
 
-    Use **SD Memory Card Formatter**, or `diskpart`. The card must end up FAT32 on an MBR disk, not a
-    single GUID/GPT partition.
+    1. Open **SD Memory Card Formatter**, select the SD card (not a hard drive) and click **Format**.
 
+        ![SD Card Formatter: select the card](../install-images/sd-windows-1-select.svg)
+
+    2. Choose **FAT32** and **Master Boot Record (MBR)**, then start.
+
+        ![Format options: FAT32 on MBR](../install-images/sd-windows-2-format.svg)
+
+    If you use `diskpart` instead, run `list disk`, `select disk <n>`, `clean`, `create partition
+    primary`, `format fs=fat32 quick`, and make sure the disk is MBR. Do not choose GPT/GUID.
 
 ## 2. Copy the image
 
