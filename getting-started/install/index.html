@@ -1968,15 +1968,34 @@ GUID/GPT makes the SD-card option in the update menu greyed out.</p>
 <div class="tabbed-content">
 <div class="tabbed-block">
 <ol>
-<li>Open <strong>Disk Utility</strong> and choose <strong>View → Show All Devices</strong>.</li>
-<li>Select the <strong>whole SD card device</strong>, not the volume under it.</li>
-<li>Click <strong>Erase</strong>, set <strong>Format</strong> to <code>MS-DOS (FAT)</code> and <strong>Scheme</strong> to <code>Master Boot Record</code>.</li>
-<li>Erase.</li>
+<li>
+<p>Open <strong>Disk Utility</strong> and turn on <strong>View → Show All Devices</strong>. The card then appears as a
+   top-level device, not only as a volume.</p>
+<p><img alt="Disk Utility: View → Show All Devices" src="../../install-images/sd-macos-1-view.svg" /></p>
+</li>
+<li>
+<p>Select the <strong>whole SD card device</strong> (the top-level entry), not the volume under it.</p>
+<p><img alt="Disk Utility: select the SD card device" src="../../install-images/sd-macos-2-select.svg" /></p>
+</li>
+<li>
+<p>Click <strong>Erase</strong>, choose <strong>MS-DOS (FAT)</strong> and <strong>Master Boot Record</strong>, then click <strong>Erase</strong>.</p>
+<p><img alt="Disk Utility: Erase with MS-DOS (FAT) and Master Boot Record" src="../../install-images/sd-macos-3-erase.svg" /></p>
+</li>
 </ol>
 </div>
 <div class="tabbed-block">
-<p>Use <strong>SD Memory Card Formatter</strong>, or <code>diskpart</code>. The card must end up FAT32 on an MBR disk, not a
-single GUID/GPT partition.</p>
+<ol>
+<li>
+<p>Open <strong>SD Memory Card Formatter</strong>, select the SD card (not a hard drive) and click <strong>Format</strong>.</p>
+<p><img alt="SD Card Formatter: select the card" src="../../install-images/sd-windows-1-select.svg" /></p>
+</li>
+<li>
+<p>Choose <strong>FAT32</strong> and <strong>Master Boot Record (MBR)</strong>, then start.</p>
+<p><img alt="Format options: FAT32 on MBR" src="../../install-images/sd-windows-2-format.svg" /></p>
+</li>
+</ol>
+<p>If you use <code>diskpart</code> instead, run <code>list disk</code>, <code>select disk &lt;n&gt;</code>, <code>clean</code>, <code>create partition
+primary</code>, <code>format fs=fat32 quick</code>, and make sure the disk is MBR. Do not choose GPT/GUID.</p>
 </div>
 </div>
 </div>

@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="500" viewBox="0 0 820 500" role="img">
+  <rect width="820" height="500" fill="#f4f5f7"/>
+
+  <rect x="90" y="50" width="640" height="400" rx="10" fill="#ffffff" stroke="#d1d5db"/>
+  <rect x="90" y="50" width="640" height="38" rx="10" fill="#e5e7eb"/>
+  <rect x="90" y="78" width="640" height="10" fill="#e5e7eb"/>
+  <circle cx="108" cy="69" r="5" fill="#ef4444"/>
+  <circle cx="124" cy="69" r="5" fill="#f59e0b"/>
+  <circle cx="140" cy="69" r="5" fill="#10b981"/>
+  <text x="410.0" y="74" text-anchor="middle" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-size="14" font-weight="600" fill="#1d2433">Disk Utility</text>
+
+  <rect x="90" y="88" width="150" height="362" fill="#f8fafc"/>
+  <text x="108" y="116" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-size="12" fill="#6b7280">DEVICES</text>
+
+  <rect x="102" y="126" width="126" height="30" rx="6" fill="transparent"/>
+  <text x="114" y="146" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-size="14" fill="#6b7280">Macintosh HD</text>
+
+
+  <rect x="102" y="160" width="126" height="30" rx="6" fill="transparent"/>
+  <text x="114" y="180" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-size="14" fill="#6b7280">SD Card</text>
+
+  <rect x="240" y="88" width="490" height="362" fill="#ffffff"/>
+  <text x="270" y="150" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-size="22" font-weight="600" fill="#1d2433">Disk Utility</text>
+  <text x="270" y="180" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-size="14" fill="#6b7280">Turn on View → Show All Devices so the card itself appears.</text>
+  <rect x="270" y="205" width="430" height="42" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="286" y="231" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-size="14" fill="#1d2433">View</text>
+  <text x="330" y="231" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-size="14" fill="#6b7280">Show All Devices</text>
+  <rect x="320" y="208" width="160" height="36" rx="6" fill="#dbeafe" stroke="#2563eb"/>
+  <text x="330" y="231" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-size="14" fill="#1d2433">Show All Devices</text>
+
+  <circle cx="510" cy="250" r="16" fill="#2563eb"/>
+  <text x="510" y="255" text-anchor="middle" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-size="15" font-weight="700" fill="#ffffff">1</text>
+  <rect x="534" y="234" width="260" height="32" rx="16" fill="#dbeafe"/>
+  <text x="548" y="255" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-size="14" fill="#1d2433">Turn on Show All Devices</text>
+
+  <text x="270" y="310" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-size="13" fill="#6b7280">The card then shows as a top-level device, not only as a volume.</text>
+
+</svg>
