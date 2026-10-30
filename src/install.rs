@@ -21,6 +21,14 @@ use std::time::Duration;
 
 pub const SELF: &str = "mibpkg";
 const SCRIPT_TIMEOUT: Duration = Duration::from_secs(120);
+
+fn script_timeout(m: &Manifest) -> Duration {
+    m.scripts
+        .timeout
+        .as_deref()
+        .map(|t| Duration::from_secs(crate::conditions::parse_timeout(t).expect("validated")))
+        .unwrap_or(SCRIPT_TIMEOUT)
+}
 /// Appended to the result of an SDK install, update or rollback: the HMI loads it at boot.
 const SDK_START: &str = "; reboot the unit (or restart the HMI) to start it";
 const SDK_REMOVED: &str = "; reboot the unit (or restart the HMI) to finish removing it";
@@ -313,7 +321,7 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
         if let Some(s) = &pkg.manifest.scripts.post_install {
             (ctx.progress)("running post_install");
             ctx.sys
-                .run_script(&ver_dir.join(s), &[], &script_env(layout, name, &ver_dir, &version), SCRIPT_TIMEOUT)
+                .run_script(&ver_dir.join(s), &[], &script_env(layout, name, &ver_dir, &version), script_timeout(&pkg.manifest))
                 .context("post_install script failed")?;
         }
         if let Some(a) = &approval {
@@ -542,7 +550,7 @@ pub fn remove(ctx: &Ctx, name: &str, purge: bool) -> Result<String> {
     if let (Ok(m), Some(dir)) = (current_manifest(layout, name), current_dir(layout, name)) {
         if let Some(s) = &m.scripts.pre_remove {
             ctx.sys
-                .run_script(&dir.join(s), &[], &script_env(layout, name, &dir, &m.package.version), SCRIPT_TIMEOUT)
+                .run_script(&dir.join(s), &[], &script_env(layout, name, &dir, &m.package.version), script_timeout(&m))
                 .context("pre_remove script failed; package left installed")?;
         }
     }

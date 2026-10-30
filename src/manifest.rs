@@ -188,6 +188,9 @@ pub enum Restart {
 pub struct Scripts {
     pub post_install: Option<String>,
     pub pre_remove: Option<String>,
+    /// Per-script timeout (`30s`, `5m`, `2h`); defaults to 120 s.
+    #[serde(default)]
+    pub timeout: Option<String>,
 }
 
 impl Manifest {
@@ -291,6 +294,9 @@ impl Manifest {
         }
         for s in [&self.scripts.post_install, &self.scripts.pre_remove].into_iter().flatten() {
             safe_rel(s)?;
+        }
+        if let Some(t) = &self.scripts.timeout {
+            crate::conditions::parse_timeout(t).with_context(|| "[scripts] timeout")?;
         }
         Ok(())
     }

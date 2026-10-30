@@ -93,8 +93,10 @@ See [Service conditions](service-conditions.md).
 |---|---|
 | `post_install` | Runs after the files are staged, before the version is committed |
 | `pre_remove` | Runs before removal; a failure leaves the package installed |
+| `timeout` | Per-script limit, default `120s`. `30s`, `5m` or `2h` |
 
-Scripts are relative paths inside the package. They run with a timeout.
+Scripts are relative paths inside the package. They run with a timeout. A wrapped system installer
+that has its own save/sync wait should raise it, for example `timeout = "5m"`.
 
 ## `[plugin]`
 

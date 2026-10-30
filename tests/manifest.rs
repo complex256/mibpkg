@@ -79,6 +79,14 @@ fn scripts_are_detected() {
 }
 
 #[test]
+fn script_timeout_is_validated() {
+    let m = Manifest::parse(&with("[scripts]\npost_install = \"post.sh\"\ntimeout = \"5m\"\n")).unwrap();
+    assert_eq!(m.scripts.timeout.as_deref(), Some("5m"));
+    assert!(Manifest::parse(&with("[scripts]\ntimeout = \"soon\"\n")).is_err());
+    assert!(Manifest::parse(&with("[scripts]\ntimeout = \"0s\"\n")).is_err());
+}
+
+#[test]
 fn safe_rel_and_resolve() {
     assert!(safe_rel("a/b").is_ok());
     for bad in ["", "/abs", "../x", "a/../b", "./a"] {

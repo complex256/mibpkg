@@ -3,6 +3,15 @@
 All notable changes to mibpkg. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow semver.
 
+## 0.11.3 — 2026-10-29
+
+### Added
+
+- **Per-package script timeout.** `[scripts] timeout = "5m"` raises the limit for a
+  `post_install` or `pre_remove` script. The default stays 120 s. Wrapped system installers that do
+  their own save/sync wait need the larger limit; the bench CarPlay uninstaller exceeded 120 s on
+  the unit's flash.
+
 ## 0.11.2 — 2026-10-29
 
 ### Added
