@@ -2243,6 +2243,15 @@ configs, services and scripts.</p>
 </code></pre></div>
 <p>The plugin jar and its <code>.stamp</code> are installed as <code>plugins/&lt;id&gt;.jar</code>; the icons as
 <code>icons/&lt;id&gt;/&lt;sha16&gt;.png</code>. The package name remains the install/update identity.</p>
+<p>A plugin may also carry a <code>requires.toml</code> at the package root:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">[mibsdk]</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">min</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"0.6.3"</span>
+</code></pre></div>
+<p>This is a dependency on the SDK package, not just an API range. mibpkg refuses to install the
+plugin on an older <code>mibsdk</code>, and refuses to install or roll back an SDK that is older than an
+installed plugin's requirement. <code>update-all</code> updates <code>mibsdk</code> before the plugins. The file is
+separate from <code>manifest.toml</code> so older mibpkg releases, which reject unknown manifest fields,
+still install the package. Missing <code>requires.toml</code> means no version constraint.</p>
 <h2 id="sdk"><code>[sdk]</code><a class="headerlink" href="#sdk" title="Permanent link">&para;</a></h2>
 <p>Reserved for the SDK package (<code>name = "mibsdk"</code>). It is declarative: no files, services, configs or
 scripts.</p>
