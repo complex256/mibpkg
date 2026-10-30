@@ -88,6 +88,7 @@ fn index_entry_carries_kind_and_permissions_and_omits_them_for_plain_packages() 
         "[package]\nname = \"hello\"\nversion = \"1.0.0\"\n\n[plugin]\njar = \"hello.jar\"\napi = 1\npermissions = [\"vehicle.read\", \"network\"]\n",
     )
     .unwrap();
+    fs::write(hello.join("requires.toml"), "[mibsdk]\nmin = \"0.6.2\"\n").unwrap();
     fs::write(hello.join("hello.jar"), b"jar").unwrap();
     fs::write(hello.join("hello.jar.stamp"), b"stamp").unwrap();
     let dir = common::collection(&t.path().join("sd"), "c", &[plain, hello]);
@@ -96,18 +97,22 @@ fn index_entry_carries_kind_and_permissions_and_omits_them_for_plain_packages() 
     let h = c.latest("hello").unwrap();
     assert_eq!(h.kind.as_deref(), Some("plugin"));
     assert_eq!(h.permissions, vec!["vehicle.read", "network"]);
+    assert_eq!(h.min_sdk.as_deref(), Some("0.6.2"));
     let a = c.latest("alpha").unwrap();
     assert_eq!(a.kind, None);
     assert!(a.permissions.is_empty());
+    assert_eq!(a.min_sdk, None);
 
     let json: serde_json::Value = serde_json::from_str(&fs::read_to_string(dir.join("index.json")).unwrap()).unwrap();
     let entries = json["packages"].as_array().unwrap();
     let raw = |n: &str| entries.iter().find(|e| e["name"] == n).unwrap().as_object().unwrap().clone();
     let alpha = raw("alpha");
     assert!(!alpha.contains_key("kind") && !alpha.contains_key("permissions"), "{alpha:?}");
+    assert!(!alpha.contains_key("min_sdk"), "{alpha:?}");
     let hello = raw("hello");
     assert_eq!(hello["kind"], "plugin");
     assert_eq!(hello["permissions"], serde_json::json!(["vehicle.read", "network"]));
+    assert_eq!(hello["min_sdk"], "0.6.2");
 }
 
 #[test]

@@ -7,6 +7,7 @@ A package has two layouts: the source directory you build, and the directory mib
 ```text
 hello/
 ├── manifest.toml
+├── requires.toml
 ├── bin/
 │   └── hello
 ├── hello.conf.example
@@ -22,6 +23,7 @@ hello/
 | Path | Purpose |
 |---|---|
 | `manifest.toml` | Package metadata and payload list |
+| `requires.toml` | Optional package dependencies, such as the oldest `mibsdk` the plugin runs on |
 | `bin/` | Programs copied to the package directory |
 | `*.example` | Config examples |
 | `icons/` | Plugin icons, declared in `[plugin].icons` |
@@ -35,6 +37,7 @@ hello/
 ```text
 hello-1.0.0.mpk                 gzip'd ustar
 ├── manifest.toml
+├── requires.toml
 ├── bin/hello
 ├── hello.conf.example
 ├── hello-status.jar

@@ -313,7 +313,7 @@ fn uninstall_self(ctx: &Ctx, purge: bool, force: bool) -> Result<String> {
     // Without mibpkg nothing could restore the stock bundle list or the plugins' overrides.
     let mut held: Vec<String> =
         State::load(&ctx.layout)?.packages.keys().filter(|n| n.as_str() == crate::mibsdk::SDK_PKG).cloned().collect();
-    held.extend(crate::mibsdk::sdk_pkg::plugin_packages(&ctx.layout)?.into_iter().map(|(id, _)| id));
+    held.extend(crate::mibsdk::sdk_pkg::plugin_packages(&ctx.layout)?.into_iter().map(|(id, _, _)| id));
     if !held.is_empty() {
         bail!(
             "remove the SDK packages first ({}): mibpkg remove <name>, plugins before mibsdk; without mibpkg nothing can restore the stock bundle list",

@@ -48,11 +48,14 @@ pub struct IndexEntry {
     /// A plugin's declared permissions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub permissions: Vec<String>,
+    /// The oldest mibsdk package version a plugin runs on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_sdk: Option<String>,
 }
 
 impl IndexEntry {
     /// The entry for a package whose archive is `file` (a path or URL).
-    pub fn new(m: &Manifest, file: String, sha256: String, size: u64) -> IndexEntry {
+    pub fn new(m: &Manifest, requires: &crate::requires::Requires, file: String, sha256: String, size: u64) -> IndexEntry {
         IndexEntry {
             name: m.package.name.clone(),
             version: m.package.version.clone(),
@@ -64,6 +67,7 @@ impl IndexEntry {
             uses_scripts: m.uses_scripts(),
             kind: m.kind().name(),
             permissions: m.plugin.as_ref().map(|p| p.permissions.clone()).unwrap_or_default(),
+            min_sdk: requires.min_sdk().map(str::to_string),
         }
     }
 }
@@ -101,6 +105,10 @@ impl Collection {
             }
             semver::Version::parse(&e.version)
                 .with_context(|| format!("{}: {} version {:?} is not semver", p.display(), e.name, e.version))?;
+            if let Some(v) = &e.min_sdk {
+                semver::Version::parse(v)
+                    .with_context(|| format!("{}: {} min_sdk {:?} is not semver", p.display(), e.name, v))?;
+            }
             safe_rel(&e.file).with_context(|| format!("{}: package {}", p.display(), e.name))?;
         }
         Ok(Collection { dir: dir.to_path_buf(), index, base_url: None })
@@ -121,6 +129,10 @@ impl Collection {
                 bail!("package name {:?} must be 1-40 of [a-z0-9-]", e.name);
             }
             semver::Version::parse(&e.version).with_context(|| format!("{} version {:?}", e.name, e.version))?;
+            if let Some(v) = &e.min_sdk {
+                semver::Version::parse(v)
+                    .with_context(|| format!("{} min_sdk {:?} is not semver", e.name, v))?;
+            }
             if !e.file.starts_with("https://") {
                 if e.file.contains("://") {
                     bail!("{}: package URL must be https://", e.name);
@@ -211,7 +223,7 @@ fn index_dir(pkgs: &Path, id: &str, name: &str, prefix: &str) -> Result<Index> {
             bail!("{fname} holds {} {}; it must be named {want}", m.package.name, m.package.version);
         }
         let (sha256, size) = sha256_file(&f)?;
-        packages.push(IndexEntry::new(m, format!("{prefix}{fname}"), sha256, size));
+        packages.push(IndexEntry::new(m, &pkg.requires()?, format!("{prefix}{fname}"), sha256, size));
     }
     Ok(Index {
         format: FORMAT,

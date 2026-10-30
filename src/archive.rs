@@ -204,6 +204,11 @@ impl Package {
         self.entries.iter().find(|e| !e.dir && e.path == Path::new(rel)).map(|e| e.data.as_slice())
     }
 
+    /// The package's optional `requires.toml` (no requirements when absent).
+    pub fn requires(&self) -> Result<crate::requires::Requires> {
+        crate::requires::read(crate::mibsdk::icons::Source::Package(self))
+    }
+
     pub fn unpacked_size(&self) -> u64 {
         self.entries.iter().map(|e| e.data.len() as u64).sum()
     }

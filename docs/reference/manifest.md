@@ -135,6 +135,19 @@ icons = ["mqtt-on", "mqtt-off"]
 The plugin jar and its `.stamp` are installed as `plugins/<id>.jar`; the icons as
 `icons/<id>/<sha16>.png`. The package name remains the install/update identity.
 
+A plugin may also carry a `requires.toml` at the package root:
+
+```toml
+[mibsdk]
+min = "0.6.3"
+```
+
+This is a dependency on the SDK package, not just an API range. mibpkg refuses to install the
+plugin on an older `mibsdk`, and refuses to install or roll back an SDK that is older than an
+installed plugin's requirement. `update-all` updates `mibsdk` before the plugins. The file is
+separate from `manifest.toml` so older mibpkg releases, which reject unknown manifest fields,
+still install the package. Missing `requires.toml` means no version constraint.
+
 ## `[sdk]`
 
 Reserved for the SDK package (`name = "mibsdk"`). It is declarative: no files, services, configs or

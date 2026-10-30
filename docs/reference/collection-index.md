@@ -54,6 +54,7 @@ A flat collection puts the `.mpk` files next to `index.json` and uses `--flat` w
 | `packages[].uses_scripts` | Whether the package runs scripts |
 | `packages[].kind` | `plugin` or `sdk`, absent for a plain package |
 | `packages[].permissions` | A plugin's declared permissions |
+| `packages[].min_sdk` | A plugin's oldest supported `mibsdk` version, when declared |
 | `signatures` | Reserved; ignored in v1 |
 
 ## Build it

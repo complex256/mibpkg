@@ -151,6 +151,13 @@ fn plugin_src_with(dir: &Path, id: &str, ver: &str, api: u32, perms: &[&str], st
     s
 }
 
+/// A plugin source that also declares the oldest mibsdk it runs on.
+fn plugin_src_requiring(dir: &Path, id: &str, ver: &str, api: u32, min_sdk: &str) -> PathBuf {
+    let s = plugin_src(dir, id, ver, api, &[]);
+    fs::write(s.join("requires.toml"), format!("[mibsdk]\nmin = \"{min_sdk}\"\n")).unwrap();
+    s
+}
+
 /// A jar `mibsdk-dev push` left in BASE/plugins (no package).
 fn pushed(f: &common::Fixture, id: &str) {
     write(&plugin_jar(f, id), format!("pushed {id}\n").as_bytes());
@@ -328,6 +335,30 @@ fn plugin_install_refused_on_api_out_of_range() {
     let e = err(install_src(&ctx, &plugin_src(dir.path(), "hello", "1.0.0", 3, &[])));
     assert_eq!(e, "hello needs plugin api 3; the installed SDK supports 1..2");
     assert!(!plugin_jar(&f, "hello").exists() && !installed_pkg(&f, "hello"));
+}
+
+#[test]
+fn plugin_install_refused_when_min_sdk_is_newer() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let e = err(install_src(&ctx, &plugin_src_requiring(dir.path(), "hello", "1.0.0", 2, "0.2.0")));
+    assert_eq!(
+        e,
+        "hello needs mibsdk 0.2.0 or newer; the installed SDK is 0.1.0; update mibsdk first"
+    );
+    assert!(!plugin_jar(&f, "hello").exists() && !installed_pkg(&f, "hello"));
+}
+
+#[test]
+fn plugin_install_accepts_min_sdk_at_the_installed_version() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    install_src(&ctx, &plugin_src_requiring(dir.path(), "hello", "1.0.0", 2, "0.1.0")).unwrap();
+    assert!(plugin_jar(&f, "hello").is_file());
 }
 
 #[test]
@@ -818,6 +849,29 @@ fn update_all_reports_needs_approval_and_updates_the_rest() {
     assert!(out.contains(&"hello: needs permission approval (network)".to_string()), "{out:?}");
     assert!(out.iter().any(|l| l.starts_with("updated tool 1.0.0 -> 1.1.0")), "{out:?}");
     assert_eq!(install::current_version(&f.layout, "hello").as_deref(), Some("1.0.0"));
+}
+
+#[test]
+fn update_all_installs_sdk_before_a_plugin_that_needs_it() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path()); // 0.1.0
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let p1 = plugin_src_requiring(dir.path(), "hello", "1.0.0", 2, "0.1.0");
+    let coll = common::collection(&f.sd(), "test", &[p1]);
+    let colls = mibpkg::media::loaded(&mibpkg::media::scan(&f.layout));
+    install::install(&ctx, &[f.sd()], &colls[0], "hello").unwrap();
+    fs::remove_dir_all(coll).unwrap();
+
+    let sdk2 = sdk_src(dir.path(), "0.2.0");
+    let p2 = plugin_src_requiring(dir.path(), "hello", "1.1.0", 2, "0.2.0");
+    common::collection(&f.sd(), "test", &[sdk2, p2]);
+    let colls = mibpkg::media::loaded(&mibpkg::media::scan(&f.layout));
+    let out = install::update_all(&ctx, &[f.sd()], &colls).unwrap();
+    assert!(out.iter().any(|l| l.starts_with("updated mibsdk 0.1.0 -> 0.2.0")), "{out:?}");
+    assert!(out.iter().any(|l| l.starts_with("updated hello 1.0.0 -> 1.1.0")), "{out:?}");
+    assert_eq!(install::current_version(&f.layout, "mibsdk").as_deref(), Some("0.2.0"));
+    assert_eq!(install::current_version(&f.layout, "hello").as_deref(), Some("1.1.0"));
 }
 
 #[test]

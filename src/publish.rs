@@ -183,7 +183,7 @@ pub fn release(o: &ReleaseOpts, fetcher: &dyn Fetcher, publisher: &dyn Publisher
             continue;
         }
         let fname = f.file_name().unwrap().to_string_lossy().to_string();
-        entries.push(IndexEntry::new(m, download_url(&o.repo, &o.tag, &fname), sha256, size));
+        entries.push(IndexEntry::new(m, &pkg.requires()?, download_url(&o.repo, &o.tag, &fname), sha256, size));
         added.push(format!("{} {}", m.package.name, m.package.version));
     }
 

@@ -7,6 +7,7 @@ use super::sdk_pkg::on_app;
 use super::{ack, catalog, icons, ledger, stamp, statusprefs, toggles};
 use super::{installed_sdk, put, put_file, BASE, LOG, PERMISSIONS, PERSIST};
 use crate::ctx::Ctx;
+use crate::index::cmp_versions;
 use crate::manifest::Manifest;
 use crate::state::State;
 use anyhow::{anyhow, bail, Context, Result};
@@ -86,11 +87,17 @@ pub fn check(ctx: &Ctx, m: &Manifest, old: Option<&Manifest>, src: icons::Source
     let plugin = m.plugin.as_ref().context("not a [plugin] package")?;
     let id = plugin.id(&m.package.name);
     let l = &ctx.layout;
-    let Some((_, sdk, _)) = installed_sdk(l) else {
+    let Some((sdk_version, sdk, _)) = installed_sdk(l) else {
         bail!("{id} is a plugin for the mibsdk runtime: install the mibsdk package first");
     };
     if !(sdk.min_api <= plugin.api && plugin.api <= sdk.api) {
         bail!("{id} needs plugin api {}; the installed SDK supports {}..{}", plugin.api, sdk.min_api, sdk.api);
+    }
+    let requires = crate::requires::read(src)?;
+    if let Some(need) = requires.min_sdk() {
+        if cmp_versions(&sdk_version, need) == std::cmp::Ordering::Less {
+            bail!("{id} needs mibsdk {need} or newer; the installed SDK is {sdk_version}; update mibsdk first");
+        }
     }
     let hmi = crate::unit::hmi_version(l);
     if !hmi.as_ref().is_some_and(|v| sdk.hmi.contains(v)) {

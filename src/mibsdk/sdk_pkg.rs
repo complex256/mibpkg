@@ -7,11 +7,13 @@ use super::{installed_sdk, put, put_file, put_with, reboot_flag, FileOps, StdOps
 use super::{BASE, BUNDLES, HMI_ROOT, ICONS, JARS, LEDGER, MARKER, OLD_LEDGER, PERMISSIONS, PERSIST, RAM, SDK_ICONS, TRACER_JAR};
 use crate::backups;
 use crate::ctx::Ctx;
+use crate::index::cmp_versions;
 use crate::install;
 use crate::manifest::{Manifest, SdkSpec};
 use crate::paths::Layout;
 use crate::state::State;
 use anyhow::{anyhow, bail, Context, Result};
+use std::cmp::Ordering;
 use std::ffi::OsString;
 use std::fs;
 use std::io;
@@ -29,18 +31,19 @@ const LOST: &str = "(nothing was lost; run the install again)";
 
 /// Installed plugins and their plugin api, by plugin id. Combined product packages are found by
 /// the `[plugin].id` in their manifest, which may differ from the package name.
-pub fn plugin_packages(layout: &Layout) -> Result<Vec<(String, u32)>> {
+pub fn plugin_packages(layout: &Layout) -> Result<Vec<(String, u32, Option<String>)>> {
     let st = State::load(layout)?;
-    Ok(st
-        .packages
-        .keys()
-        .filter_map(|n| {
-            install::current_manifest(layout, n).ok().and_then(|m| {
-                let api = m.plugin.as_ref()?.api;
-                Some((m.plugin_id()?.to_string(), api))
-            })
-        })
-        .collect())
+    let mut out = Vec::new();
+    for n in st.packages.keys() {
+        let Ok(m) = install::current_manifest(layout, n) else { continue };
+        let Some(plugin) = m.plugin.as_ref() else { continue };
+        let Some(dir) = install::current_dir(layout, n) else { continue };
+        let min_sdk = crate::requires::read_dir(&dir)?.min_sdk().map(str::to_string);
+        if let Some(id) = m.plugin_id() {
+            out.push((id.to_string(), plugin.api, min_sdk));
+        }
+    }
+    Ok(out)
 }
 
 /// Installed package names that carry a `[plugin]` table (plugin-only or combined).
@@ -238,9 +241,17 @@ pub fn check(ctx: &Ctx, m: &Manifest, pkg_dir: Option<&Path>, src: icons::Source
     }
 
     if pkg_dir.is_some() {
-        for (id, api) in plugin_packages(l)? {
+        for (id, api, min_sdk) in plugin_packages(l)? {
             if api < sdk.min_api || api > sdk.api {
                 bail!("{id} needs plugin api {api}; this SDK supports {}..{}; nothing changed", sdk.min_api, sdk.api);
+            }
+            if let Some(need) = min_sdk {
+                if cmp_versions(&m.package.version, &need) == Ordering::Less {
+                    bail!(
+                        "{id} needs mibsdk {need} or newer; this package is {}; nothing changed",
+                        m.package.version
+                    );
+                }
             }
         }
     }

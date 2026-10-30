@@ -3,6 +3,18 @@
 All notable changes to mibpkg. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow semver.
 
+## 0.11.1 — 2026-10-29
+
+### Added
+
+- **Package dependencies on the SDK.** A package may carry `requires.toml` with `[mibsdk] min = "..."`
+  (the SDK build writes the version a plugin was compiled against). mibpkg refuses to install a plugin
+  on an older SDK, refuses an SDK update or rollback that would be older than an installed plugin's
+  requirement, and updates `mibsdk` before plugins in `update-all`. The file is a sidecar rather than a
+  manifest field, so older mibpkg releases still install the package and simply ignore the constraint.
+- `min_sdk` in collection index entries, filled from `requires.toml`, so the web interface and
+  `mibpkg verify` see the same requirement.
+
 ## 0.11.0 — 2026-10-29
 
 ### Added

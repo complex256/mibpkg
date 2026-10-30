@@ -495,10 +495,13 @@ pub fn updates_available(state: &State, colls: &[Collection], unit: &crate::unit
 
 pub fn update_all(ctx: &Ctx, media: &[PathBuf], colls: &[Collection]) -> Result<Vec<String>> {
     let state = State::load(&ctx.layout)?;
-    let todo = updates_available(&state, colls, &ctx.unit);
+    let mut todo = updates_available(&state, colls, &ctx.unit);
     if todo.is_empty() {
         return Ok(vec!["everything is up to date".into()]);
     }
+    // SDK first: a plugin build may require the newer SDK, and the plugin check reads the
+    // package that is installed rather than the runtime that is still running until the reboot.
+    todo.sort_by_key(|(name, _)| if name == crate::mibsdk::SDK_PKG { 0 } else { 1 });
     let mut out = Vec::new();
     for (name, _) in todo {
         let coll = pick_collection(&state, colls, &name, None, &ctx.unit)?;

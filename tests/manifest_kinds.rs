@@ -129,6 +129,8 @@ fn plugin_with_no_permissions_parses() {
     assert!(m.plugin.unwrap().permissions.is_empty());
 }
 
+
+
 #[test]
 fn both_tables_are_refused() {
     let text = format!("{}\n[plugin]\njar = \"x.jar\"\napi = 1\npermissions = []\n", sdk("mibsdk"));

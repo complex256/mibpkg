@@ -25,6 +25,7 @@ pub mod swdl;
 pub mod fsutil;
 pub mod paths;
 pub mod manifest;
+pub mod requires;
 pub mod archive;
 pub mod index;
 pub mod unit;

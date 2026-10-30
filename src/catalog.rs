@@ -28,6 +28,9 @@ pub struct Avail {
     pub sha256: String,
     /// "plugin" or "sdk"; None for a plain package.
     pub kind: Option<String>,
+    /// A plugin's declared minimum mibsdk version.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_sdk: Option<String>,
     /// A plugin's declared permissions, in plain words.
     pub permissions: Vec<Perm>,
 }
@@ -215,6 +218,7 @@ pub fn build(layout: &Layout, unit: &UnitInfo) -> Vec<PkgView> {
                 uses_scripts: e.uses_scripts,
                 sha256: e.sha256.clone(),
                 kind: e.kind.clone(),
+                min_sdk: e.min_sdk.clone(),
                 permissions: permissions(cat, &e.permissions, None),
             });
         }

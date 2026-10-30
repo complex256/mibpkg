@@ -191,6 +191,28 @@ fn install_plugin(ctx: &Ctx, dir: &Path, id: &str, api: u32) {
     install_src(ctx, &s).unwrap();
 }
 
+fn install_plugin_requiring(ctx: &Ctx, dir: &Path, id: &str, api: u32, min_sdk: &str) {
+    let s = dir.join(format!("src-{id}-{min_sdk}"));
+    fs::create_dir_all(&s).unwrap();
+    fs::write(
+        s.join("manifest.toml"),
+        format!(
+            "[package]\nname = \"{id}\"\nversion = \"1.0.0\"\n\n[plugin]\njar = \"{id}.jar\"\napi = {api}\npermissions = []\n"
+        ),
+    )
+    .unwrap();
+    fs::write(s.join("requires.toml"), format!("[mibsdk]\nmin = \"{min_sdk}\"\n")).unwrap();
+    fs::write(s.join(format!("{id}.jar")), "jar").unwrap();
+    let jar = format!("{id}.jar");
+    let (h, _) = archive::sha256_file(&s.join(&jar)).unwrap();
+    fs::write(
+        s.join(format!("{jar}.stamp")),
+        format!("format=1\nkind=plugin\nchecks=classVersion48\nplugin.id={id}\nplugin.unrestricted=false\nsha256.{jar}={h}\n"),
+    )
+    .unwrap();
+    install_src(ctx, &s).unwrap();
+}
+
 fn err(r: anyhow::Result<String>) -> String {
     format!("{:#}", r.expect_err("expected a refusal"))
 }
@@ -986,6 +1008,22 @@ fn sdk_update_accepts_api_1_plugin_on_api_2_sdk() {
     install_sdk(&ctx, dir.path(), "0.1.0").unwrap();
     install_plugin(&ctx, dir.path(), "bike-rack", 1);
     install_sdk(&ctx, dir.path(), "0.2.0").unwrap();
+    assert_eq!(install::current_version(&f.layout, "mibsdk").as_deref(), Some("0.2.0"));
+}
+
+#[test]
+fn sdk_rollback_refused_while_plugin_needs_newer_min_sdk() {
+    let (f, dir) = unit();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    install_sdk(&ctx, dir.path(), "0.1.0").unwrap();
+    install_sdk(&ctx, dir.path(), "0.2.0").unwrap();
+    install_plugin_requiring(&ctx, dir.path(), "bike-rack", 2, "0.2.0");
+    let e = format!("{:#}", install::rollback(&ctx, "mibsdk").unwrap_err());
+    assert_eq!(
+        e,
+        "bike-rack needs mibsdk 0.2.0 or newer; this package is 0.1.0; nothing changed"
+    );
     assert_eq!(install::current_version(&f.layout, "mibsdk").as_deref(), Some("0.2.0"));
 }
 
