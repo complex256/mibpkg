@@ -1974,6 +1974,9 @@ for every change.</p>
 <p>The previous version is kept after an update. Rolling back restores its files, services, config
 handling and — for a plugin — its jar, grants and icons. Grants never grow on a rollback; a permission
 that only the previous version declares needs approval.</p>
+<p>A package that wraps a system installer can disable rollback with <code>[rollback] supported = false</code> in
+<code>requires.toml</code>. For those packages, remove the current package (which runs its uninstall script) and
+install the older one instead.</p>
 <h2 id="remove">Remove<a class="headerlink" href="#remove" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>mibpkg<span class="w"> </span>remove<span class="w"> </span>&lt;name&gt;
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>mibpkg<span class="w"> </span>remove<span class="w"> </span>&lt;name&gt;<span class="w"> </span>--purge

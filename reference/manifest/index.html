@@ -2252,6 +2252,13 @@ plugin on an older <code>mibsdk</code>, and refuses to install or roll back an S
 installed plugin's requirement. <code>update-all</code> updates <code>mibsdk</code> before the plugins. The file is
 separate from <code>manifest.toml</code> so older mibpkg releases, which reject unknown manifest fields,
 still install the package. Missing <code>requires.toml</code> means no version constraint.</p>
+<p>A wrapped system installer can disable <code>mibpkg rollback</code> because a file switch is not enough for
+it; its own uninstall script must run first:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">[rollback]</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">supported</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
+</code></pre></div>
+<p>The web interface hides the rollback action, and <code>mibpkg rollback</code> refuses with instructions to
+remove and install the older package instead.</p>
 <h2 id="sdk"><code>[sdk]</code><a class="headerlink" href="#sdk" title="Permanent link">&para;</a></h2>
 <p>Reserved for the SDK package (<code>name = "mibsdk"</code>). It is declarative: no files, services, configs or
 scripts.</p>
