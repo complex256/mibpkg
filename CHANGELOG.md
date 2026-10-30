@@ -3,6 +3,15 @@
 All notable changes to mibpkg. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow semver.
 
+## 0.11.2 — 2026-10-29
+
+### Added
+
+- **Per-package rollback policy.** `requires.toml` may carry `[rollback] supported = false`. The web
+  interface then hides the rollback action and `mibpkg rollback` refuses, telling the user to remove
+  the package and install the older one. This is for packages that wrap a system installer: their
+  uninstall script must run before any file switch.
+
 ## 0.11.1 — 2026-10-29
 
 ### Added

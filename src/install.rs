@@ -600,6 +600,10 @@ pub fn rollback(ctx: &Ctx, name: &str) -> Result<String> {
     let mut state = State::load(layout)?;
     let inst = state.packages.get(name).cloned().with_context(|| format!("{name} is not installed"))?;
     let prev = inst.previous.clone().with_context(|| format!("no earlier version of {name} is kept"))?;
+    let current = current_dir(layout, name).with_context(|| format!("{name} has no active version"))?;
+    if !crate::requires::read_dir(&current)?.rollback_supported() {
+        bail!("{name} {} does not support rollback; remove it, then install the older package", inst.version);
+    }
     let prev_dir = layout.pkg_dir(name).join(&prev);
     let m = Manifest::parse(
         &fs::read_to_string(prev_dir.join("manifest.toml"))

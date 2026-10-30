@@ -148,6 +148,17 @@ installed plugin's requirement. `update-all` updates `mibsdk` before the plugins
 separate from `manifest.toml` so older mibpkg releases, which reject unknown manifest fields,
 still install the package. Missing `requires.toml` means no version constraint.
 
+A wrapped system installer can disable `mibpkg rollback` because a file switch is not enough for
+it; its own uninstall script must run first:
+
+```toml
+[rollback]
+supported = false
+```
+
+The web interface hides the rollback action, and `mibpkg rollback` refuses with instructions to
+remove and install the older package instead.
+
 ## `[sdk]`
 
 Reserved for the SDK package (`name = "mibsdk"`). It is declarative: no files, services, configs or

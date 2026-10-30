@@ -269,10 +269,13 @@ pub fn build(layout: &Layout, unit: &UnitInfo) -> Vec<PkgView> {
                             .collect()
                     })
                     .unwrap_or_default();
+                let rollback_supported = crate::requires::read_dir(&layout.pkg_dir(&name).join(&i.version))
+                    .map(|r| r.rollback_supported())
+                    .unwrap_or(true);
                 Inst {
                     version: i.version.clone(),
                     collection: i.collection.clone(),
-                    previous: i.previous.clone(),
+                    previous: if rollback_supported { i.previous.clone() } else { None },
                     services,
                     uses_scripts: i.uses_scripts,
                     missing_config: manifest.as_ref().map(|m| missing_required(layout, m)).unwrap_or_default(),

@@ -58,6 +58,10 @@ The previous version is kept after an update. Rolling back restores its files, s
 handling and — for a plugin — its jar, grants and icons. Grants never grow on a rollback; a permission
 that only the previous version declares needs approval.
 
+A package that wraps a system installer can disable rollback with `[rollback] supported = false` in
+`requires.toml`. For those packages, remove the current package (which runs its uninstall script) and
+install the older one instead.
+
 ## Remove
 
 ```sh

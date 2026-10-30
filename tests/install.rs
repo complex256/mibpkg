@@ -52,6 +52,25 @@ fn update_keeps_one_previous_and_rollback_switches_back() {
 }
 
 #[test]
+fn rollback_refused_when_the_package_disables_it() {
+    let f = common::fixture();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let v1 = common::pkg_src(f.root(), "demo", "1.0.0", "sleep 30", "");
+    let v2 = common::pkg_src(f.root(), "demo", "1.1.0", "sleep 30", "");
+    let requires = "[rollback]\nsupported = false\n";
+    fs::write(v1.join("requires.toml"), requires).unwrap();
+    fs::write(v2.join("requires.toml"), requires).unwrap();
+    let c1 = Collection::load(&common::collection(&f.sd(), "complex256", &[v1.clone()])).unwrap();
+    install::install(&ctx, &[f.sd()], &c1, "demo").unwrap();
+    let c2 = Collection::load(&common::collection(&f.sd(), "complex256", &[v1, v2])).unwrap();
+    install::install(&ctx, &[f.sd()], &c2, "demo").unwrap();
+    let e = format!("{:#}", install::rollback(&ctx, "demo").unwrap_err());
+    assert_eq!(e, "demo 1.1.0 does not support rollback; remove it, then install the older package");
+    assert_eq!(install::current_version(&f.layout, "demo").as_deref(), Some("1.1.0"));
+}
+
+#[test]
 fn corrupt_or_truncated_archive_changes_nothing() {
     let f = common::fixture();
     let sys = RecordingSys::default();

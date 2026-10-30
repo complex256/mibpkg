@@ -16,11 +16,23 @@ use serde::Deserialize;
 pub struct Requires {
     #[serde(default)]
     pub mibsdk: Option<Mibsdk>,
+    #[serde(default)]
+    pub rollback: Option<Rollback>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Mibsdk {
     pub min: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Rollback {
+    #[serde(default = "default_true")]
+    pub supported: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Requires {
@@ -35,6 +47,13 @@ impl Requires {
 
     pub fn min_sdk(&self) -> Option<&str> {
         self.mibsdk.as_ref().map(|m| m.min.as_str())
+    }
+
+    /// Whether `mibpkg rollback` may switch to the kept previous version. A wrapper around a
+    /// system installer sets this false: its uninstall script, not a file switch, is the only
+    /// safe rollback.
+    pub fn rollback_supported(&self) -> bool {
+        self.rollback.as_ref().map_or(true, |r| r.supported)
     }
 }
 
