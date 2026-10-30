@@ -2178,9 +2178,14 @@
 <td><code>pre_remove</code></td>
 <td>Runs before removal; a failure leaves the package installed</td>
 </tr>
+<tr>
+<td><code>timeout</code></td>
+<td>Per-script limit, default <code>120s</code>. <code>30s</code>, <code>5m</code> or <code>2h</code></td>
+</tr>
 </tbody>
 </table>
-<p>Scripts are relative paths inside the package. They run with a timeout.</p>
+<p>Scripts are relative paths inside the package. They run with a timeout. A wrapped system installer
+that has its own save/sync wait should raise it, for example <code>timeout = "5m"</code>.</p>
 <h2 id="plugin"><code>[plugin]</code><a class="headerlink" href="#plugin" title="Permanent link">&para;</a></h2>
 <p>A plugin package carries one SDK plugin. It may be plugin-only, or combined with native files,
 configs, services and scripts.</p>
