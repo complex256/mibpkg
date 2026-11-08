@@ -424,9 +424,83 @@ fn sdk_grant_rewrites_line_and_writes_marker() {
     assert_eq!(grants_text(&f), "# kept\nother=network\nhello=network,vehicle.read\nhello-menu=vehicle.read\n");
 }
 
+/// A combined product package: native file + service, plus the `[plugin]` status half (as `tailscale` ships).
+fn combined_src(dir: &Path, product: &str, plugin_id: &str, ver: &str, perms: &[&str]) -> PathBuf {
+    let s = dir.join(format!("src-{product}-{ver}"));
+    fs::create_dir_all(s.join("bin")).unwrap();
+    let list: Vec<String> = perms.iter().map(|p| format!("{p:?}")).collect();
+    fs::write(
+        s.join("manifest.toml"),
+        format!(
+            "[package]\nname = \"{product}\"\nversion = \"{ver}\"\n\n\
+             [[file]]\nsrc = \"bin/{product}\"\nmode = \"755\"\n\n\
+             [[service]]\nname = \"{product}\"\nexec = \"@pkg/bin/{product}\"\n\n\
+             [plugin]\nid = \"{plugin_id}\"\njar = \"{plugin_id}.jar\"\napi = 2\npermissions = [{}]\n",
+            list.join(", ")
+        ),
+    )
+    .unwrap();
+    fs::write(s.join(format!("bin/{product}")), "#!/bin/sh\nsleep 60\n").unwrap();
+    fs::write(s.join(format!("{plugin_id}.jar")), format!("{plugin_id} {ver} jar\n")).unwrap();
+    write_stamp(&s, &format!("{plugin_id}.jar.stamp"), "plugin", Some((plugin_id, perms.contains(&"platform.unrestricted"))), &[&format!("{plugin_id}.jar")]);
+    s
+}
+
+/// The car's `tailscale` case: the web UI names the package, while `grants.properties` is keyed by the plugin id.
+/// Granting by either id must reach the plugin (and the page must show the grants as granted).
 #[test]
-fn sdk_grant_empty_list_revokes_all() {
+fn sdk_grant_accepts_the_package_name_of_a_combined_package() {
     let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    let sys = RecordingSys::default();
+    let mut ctx = Ctx::new(f.layout.clone(), &sys);
+    ctx.approved = Some(vec!["network".to_string(), "ui.slot.statusbar".to_string()]);
+    install_src(&ctx, &combined_src(dir.path(), "tailscale", "tailscale-status", "1.0.0",
+        &["network", "ui.slot.statusbar"])).unwrap();
+    assert_eq!(grants_text(&f), "tailscale-status=network,ui.slot.statusbar\n");
+
+    // The web interface's package page: the grants are the plugin's, shown as granted.
+    let views = mibpkg::catalog::build(&f.layout, &mibpkg::unit::detect(&f.layout));
+    let inst = views.iter().find(|v| v.name == "tailscale").unwrap().installed.as_ref().unwrap();
+    assert_eq!(inst.kind.as_deref(), Some("plugin"));
+    assert!(inst.permissions.iter().all(|permission| permission.granted == Some(true)), "{:?}", inst.permissions);
+    assert!(inst.blocked.is_empty());
+
+    running(&f);
+    let rt = fake_runtime(&f, "tailscale-status", "ENABLED ok");
+    let r = ok(&f, &["sdk", "grant", "tailscale", "network"]);
+    assert!(rt.join().unwrap(), "no reload requested for the plugin");
+    assert_eq!(r.out, "granted tailscale-status: network\nloaded: ENABLED ok\n");
+    assert_eq!(grants_text(&f), "tailscale-status=network\n");
+
+    // The plugin id itself keeps working (the CLI's own name for it).
+    let rt = fake_runtime(&f, "tailscale-status", "BLOCKED_PERMISSIONS missing permissions: ui.slot.statusbar");
+    let r = ok(&f, &["sdk", "grant", "tailscale-status", "network,ui.slot.statusbar"]);
+    assert!(rt.join().unwrap());
+    assert_eq!(r.out, "granted tailscale-status: network,ui.slot.statusbar\n\
+        loaded: BLOCKED_PERMISSIONS missing permissions: ui.slot.statusbar\n");
+    assert_eq!(grants_text(&f), "tailscale-status=network,ui.slot.statusbar\n");
+
+    // A permission the plugin does not declare is refused, whichever id names it.
+    for id in ["tailscale", "tailscale-status"] {
+        let r = failed(&f, &["sdk", "grant", id, "vehicle.read"]);
+        assert!(r.err.contains(&format!("{id} does not declare vehicle.read")), "{}", r.err);
+    }
+    // A plain package (no `[plugin]`) still is not a plugin.
+    assert!(grants_text(&f).starts_with("tailscale-status="));
+
+    // The plugin's data file is keyed by plugin id: either name clears it.
+    let d = p(&f, &format!("{}/data", mibsdk::PERSIST));
+    for id in ["tailscale", "tailscale-status"] {
+        write(&d.join("tailscale-status.properties"), b"token=1\n");
+        let r = ok(&f, &["sdk", "data-clear", id]);
+        assert!(r.out.starts_with("cleared the data of tailscale-status (") , "{id}: {}", r.out);
+        assert!(!d.join("tailscale-status.properties").exists(), "{id}: the data must be gone");
+    }
+}
+
+#[test]
+fn sdk_grant_empty_list_revokes_all() {    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
     with_sdk(&f, dir.path());
     install_plugin(&f, dir.path(), "hello", &["vehicle.read"]);
     running(&f);

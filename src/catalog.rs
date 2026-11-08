@@ -237,7 +237,10 @@ pub fn build(layout: &Layout, unit: &UnitInfo) -> Vec<PkgView> {
             let manifest = current_manifest(layout, &name).ok();
             let installed = state.packages.get(&name).map(|i| {
                 let declared = manifest.as_ref().and_then(|m| m.plugin.as_ref()).map(|p| p.permissions.clone()).unwrap_or_default();
-                let grant = grants.as_ref().ok().map(|g| g.get(&name).cloned().unwrap_or_default());
+                // `grants.properties` is keyed by plugin id, which differs from the package name for a combined
+                // product package (`tailscale` carries `tailscale-status`).
+                let grant_key = manifest.as_ref().and_then(|m| m.plugin_id()).unwrap_or(&name);
+                let grant = grants.as_ref().ok().map(|g| g.get(grant_key).cloned().unwrap_or_default());
                 let previous_declared = i
                     .previous
                     .as_ref()

@@ -3,6 +3,18 @@
 All notable changes to mibpkg. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow semver.
 
+## 0.11.4 — 2026-11-08
+
+### Fixed
+
+- **Permissions on a combined product package.** The web interface's permission page for `tailscale` (a
+  package that carries the plugin `tailscale-status`) showed every permission as revoked, and saving it was
+  refused with "tailscale is not a plugin package; only plugins have permissions". `grants.properties` is
+  keyed by plugin id, so the catalog now reads the grants for the manifest's `[plugin].id`, and
+  `mibpkg sdk grant` accepts a plugin id or the name of an installed package that carries one, writing the
+  line for the plugin. `mibpkg sdk data-clear` follows the same id, and `mibpkg sdk status` lists a combined
+  package's plugin under its plugin id.
+
 ## 0.11.3 — 2026-10-29
 
 ### Added

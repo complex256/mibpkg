@@ -88,6 +88,9 @@ mibpkg sdk grant <plugin-id> network,ui.slot.statusbar
 mibpkg sdk grant <plugin-id> ""
 ```
 
+A combined product package carries its plugin under another id (`tailscale` carries `tailscale-status`);
+either the product name or the plugin id may be used.
+
 ## Related
 
 - [Real packages](real-packages.md)

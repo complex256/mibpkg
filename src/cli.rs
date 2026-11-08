@@ -727,32 +727,37 @@ fn sdk(ctx: &Ctx, args: &[String], purge: bool, after: &dyn Fn(&Ctx)) -> Result<
     Ok(0)
 }
 
-/// What `sdk grant` may grant `id`: a package's grants are a subset of what its `[plugin]`
-/// declares (any other package is refused); a pushed jar has no manifest, so the installed SDK's
-/// catalog decides (failing closed when it is missing or unreadable). Revoking all is always fine.
-fn grantable(ctx: &Ctx, id: &str, perms: &std::collections::BTreeSet<String>) -> Result<()> {
+/// What `sdk grant` may grant `id`: the plugin id the grants line is keyed by. `id` may be a plugin id or the name
+/// of an installed package that carries one (a combined product package such as `tailscale` carries the plugin
+/// `tailscale-status`). A package's grants are a subset of what its `[plugin]` declares; a pushed jar has no
+/// manifest, so the installed SDK's catalog decides (failing closed when it is missing or unreadable). Revoking
+/// all is always fine.
+fn grantable(ctx: &Ctx, id: &str, perms: &std::collections::BTreeSet<String>) -> Result<String> {
     let l = &ctx.layout;
-    if let Some(pkg) = crate::install::package_owning_plugin(l, id) {
-        let m = install::current_manifest(l, &pkg).with_context(|| format!("reading the manifest of the {pkg} package"))?;
+    let plugin_of = |pkg: &str| -> Result<String> {
+        let m = install::current_manifest(l, pkg).with_context(|| format!("reading the manifest of the {pkg} package"))?;
         let Some(plugin) = m.plugin.as_ref() else {
             bail!("{id} is not a plugin package; only plugins have permissions");
         };
         if let Some(p) = perms.iter().find(|p| !plugin.permissions.contains(p)) {
             bail!("{id} does not declare {p}; it can only be granted: {}", plugin.permissions.join(", "));
         }
-        return Ok(());
+        Ok(plugin.id(&m.package.name).to_string())
+    };
+    if let Some(pkg) = install::package_owning_plugin(l, id) {
+        return plugin_of(&pkg);
     }
     if State::load(l)?.packages.contains_key(id) {
-        bail!("{id} is not a plugin package; only plugins have permissions");
+        return plugin_of(id);
     }
     if perms.is_empty() {
-        return Ok(());
+        return Ok(id.to_string());
     }
     let cat = crate::mibsdk::catalog::installed(l)?.with_context(|| format!("{} is missing", crate::mibsdk::PERMISSIONS))?;
     if let Some(p) = perms.iter().find(|p| !cat.iter().any(|c| &c.id == *p)) {
         bail!("the installed SDK does not know the permission {p}");
     }
-    Ok(())
+    Ok(id.to_string())
 }
 
 fn need_sdk(ctx: &Ctx) -> Result<()> {
@@ -789,7 +794,8 @@ fn sdk_action(ctx: &Ctx, verb: &str, rest: &[String], purge: bool) -> Result<Str
     let boot_state = format!("{PERSIST}/boot.state");
     match verb {
         "grant" => {
-            // Any id the runtime accepts (a pushed plugin's id need not be a package name).
+            // Any id the runtime accepts (a pushed plugin's id need not be a package name), or the name of an
+            // installed package that carries one.
             let id = arg(rest, 0, "plugin id")?;
             plugin_pkg::check_id(id)?;
             let list = arg(rest, 1, "permission list (empty to revoke all)")?;
@@ -797,13 +803,13 @@ fn sdk_action(ctx: &Ctx, verb: &str, rest: &[String], purge: bool) -> Result<Str
                 bail!("invalid permission list {list:?}");
             }
             let perms: std::collections::BTreeSet<String> = list.split(',').filter(|p| !p.is_empty()).map(String::from).collect();
-            grantable(ctx, id, &perms)?;
+            let plugin_id = grantable(ctx, id, &perms)?;
             {
                 let _rw = ctx.mounts.rw("/mnt/app")?;
-                crate::mibsdk::grants::set(ctx, id, &perms)?;
+                crate::mibsdk::grants::set(ctx, &plugin_id, &perms)?;
             }
             let shown = if perms.is_empty() { "<none>".to_string() } else { perms.iter().cloned().collect::<Vec<_>>().join(",") };
-            Ok(format!("granted {id}: {shown}\n{}", plugin_pkg::activate(ctx, id)))
+            Ok(format!("granted {plugin_id}: {shown}\n{}", plugin_pkg::activate(ctx, &plugin_id)))
         }
         "remove" => {
             let id = arg(rest, 0, "plugin id")?;
@@ -865,8 +871,15 @@ fn sdk_action(ctx: &Ctx, verb: &str, rest: &[String], purge: bool) -> Result<Str
             Ok(format!("boot.state: wrapBoots={n} (other keys kept); it is read on the next HMI start"))
         }
         "data-clear" => {
-            let id = arg(rest, 0, "plugin id")?;
-            plugin_pkg::check_id(id)?;
+            let arg0 = arg(rest, 0, "plugin id")?;
+            plugin_pkg::check_id(arg0)?;
+            // The data file is keyed by plugin id. A combined product package (`tailscale`) carries its plugin
+            // under another id (`tailscale-status`), and either name may be given; a pushed jar has no package,
+            // so its id is the argument itself.
+            let id = install::current_manifest(l, arg0)
+                .ok()
+                .and_then(|m| m.plugin_id().map(str::to_string))
+                .unwrap_or_else(|| arg0.to_string());
             let data = format!("{PERSIST}/data/{id}.properties");
             let tmp = format!("{data}.tmp");
             if !l.p(&data).exists() && !l.p(&tmp).exists() {
@@ -950,12 +963,15 @@ fn sdk_status(ctx: &Ctx) {
     crate::say!("running: {}", yes(sdk_running(l)));
     crate::say!("reboot needed: {}", yes(reboot_flag(l).exists()));
 
-    // Packages (version, declared permissions) and pushed jars (no package), by id.
+    // Packages (version, declared permissions) and pushed jars (no package), by plugin id: a combined product
+    // package (`tailscale`) carries its plugin under another id (`tailscale-status`).
     let mut plugins: std::collections::BTreeMap<String, (String, Option<Vec<String>>)> = Default::default();
     if let Ok(st) = State::load(l) {
         for (name, inst) in &st.packages {
-            if let Some(pl) = install::current_manifest(l, name).ok().and_then(|m| m.plugin) {
-                plugins.insert(name.clone(), (inst.version.clone(), Some(pl.permissions)));
+            if let Ok(m) = install::current_manifest(l, name) {
+                if let Some(pl) = m.plugin.as_ref() {
+                    plugins.insert(pl.id(&m.package.name).to_string(), (inst.version.clone(), Some(pl.permissions.clone())));
+                }
             }
         }
     }

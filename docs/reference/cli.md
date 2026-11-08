@@ -148,7 +148,7 @@ Runs the web server in the foreground. The supervisor normally runs it as `mibpk
 
 ```sh
 mibpkg sdk status
-mibpkg sdk grant <plugin-id> <perm,...>
+mibpkg sdk grant <plugin-id|package> <perm,...>
 mibpkg sdk push <plugin-id>
 mibpkg sdk remove <plugin-id> [--purge]
 mibpkg sdk safe-mode on|off
