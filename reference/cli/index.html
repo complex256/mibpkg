@@ -2344,7 +2344,10 @@ method, but the engineering-menu entry will not be accepted.</p>
 <a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>mibpkg<span class="w"> </span>sdk<span class="w"> </span>safe-mode<span class="w"> </span>on<span class="p">|</span>off
 <a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>mibpkg<span class="w"> </span>sdk<span class="w"> </span>boot-state<span class="w"> </span>set-wrap<span class="w"> </span>&lt;n&gt;
 <a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>mibpkg<span class="w"> </span>sdk<span class="w"> </span>data-clear<span class="w"> </span>&lt;plugin-id&gt;
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>mibpkg<span class="w"> </span>sdk<span class="w"> </span>catalog
 </code></pre></div>
+<p><code>sdk catalog</code> rewrites <code>/tmp/mibpkg.catalog</code>, the snapshot the SDK's Plugins menu reads (every package
+action and every supervised boot rewrite it too).</p>
 <p>A bundled plugin cannot be removed with <code>sdk remove</code>; remove its product package instead.</p>
 <h3 id="installer-and-gem">Installer and GEM<a class="headerlink" href="#installer-and-gem" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>mibpkg<span class="w"> </span>bootstrap
