@@ -781,6 +781,10 @@ pub fn run(layout: &Layout, sys: &dyn Sys, timing: Timing) -> Result<()> {
     if let Err(e) = gem_once(&ctx) {
         println!("mibpkg: gem enable skipped: {e:#}");
     }
+    // The MMI's Plugins menu reads this snapshot; a failure only costs a stale page.
+    if let Err(e) = crate::mibsdk::pkgcat::refresh(layout) {
+        println!("mibpkg: package catalog skipped: {e:#}");
+    }
     let mut sup = Supervisor::new(layout, sys, timing.clone());
     sup.reload();
     // Until time sync the unit clock reads seconds since boot, which makes these log lines a

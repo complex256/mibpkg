@@ -36,7 +36,7 @@ const USAGE: &str = "usage:
     install-file <pkg> <upload-id> [collection|-]
     (install, install-file, rollback and gem install/install-file/rollback take --approve=<perm,...> for a plugin's permissions)
     sdk status | sdk grant <id> <perm,...> | sdk push <id> | sdk remove <id> [--purge|--purge-data]
-    sdk safe-mode on|off | sdk boot-state set-wrap <n> | sdk data-clear <id>
+    sdk safe-mode on|off | sdk boot-state set-wrap <n> | sdk data-clear <id> | sdk catalog
     rollback <pkg> [--approve=<perm,...>] | restart <pkg> | rescan | update-all | gem <action> [args..]
     config-resolve <pkg> keep|card [config]
     (install, rescan and update-all take --config=keep|card to settle config conflicts)
@@ -128,6 +128,10 @@ pub fn run(args: &[String]) -> Result<i32> {
     let after = |ctx: &Ctx| {
         if let Err(e) = gem::regenerate(ctx) {
             crate::warn!("warning: updating GEM screens: {e:#}");
+        }
+        // The MMI's Plugins menu reads this snapshot; it is a cache, so a failure only costs a stale page.
+        if let Err(e) = crate::mibsdk::pkgcat::refresh(&ctx.layout) {
+            crate::warn!("warning: writing the package catalog: {e:#}");
         }
         if !no_supervisor {
             if let Err(e) = control::ensure_supervisor(&ctx.layout, ctx.sys) {
@@ -701,6 +705,7 @@ fn sdk(ctx: &Ctx, args: &[String], purge: bool, after: &dyn Fn(&Ctx)) -> Result<
         "status" => rest.is_empty(),
         "grant" => rest.len() == 2,
         "push" | "remove" | "data-clear" => rest.len() == 1,
+        "catalog" => rest.is_empty(),
         "safe-mode" => rest.len() == 1 && matches!(w(0), Some("on" | "off")),
         "boot-state" => rest.len() == 2 && w(0) == Some("set-wrap") && w(1).is_some_and(wrap_count),
         _ => false,
@@ -869,6 +874,10 @@ fn sdk_action(ctx: &Ctx, verb: &str, rest: &[String], purge: bool) -> Result<Str
             fs::create_dir_all(l.p(PERSIST)).with_context(|| format!("creating {PERSIST}"))?;
             crate::mibsdk::put(ctx, &boot_state, &set_wrap(&old, n), 0o644)?;
             Ok(format!("boot.state: wrapBoots={n} (other keys kept); it is read on the next HMI start"))
+        }
+        "catalog" => {
+            crate::mibsdk::pkgcat::refresh(l)?;
+            Ok(format!("wrote the package catalog: {}", crate::mibsdk::pkgcat::path(l).display()))
         }
         "data-clear" => {
             let arg0 = arg(rest, 0, "plugin id")?;

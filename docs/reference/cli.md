@@ -154,7 +154,11 @@ mibpkg sdk remove <plugin-id> [--purge]
 mibpkg sdk safe-mode on|off
 mibpkg sdk boot-state set-wrap <n>
 mibpkg sdk data-clear <plugin-id>
+mibpkg sdk catalog
 ```
+
+`sdk catalog` rewrites `/tmp/mibpkg.catalog`, the snapshot the SDK's Plugins menu reads (every package
+action and every supervised boot rewrite it too).
 
 A bundled plugin cannot be removed with `sdk remove`; remove its product package instead.
 

@@ -3,6 +3,15 @@
 All notable changes to mibpkg. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow semver.
 
+## 0.12.0 — 2026-11-09
+
+### Added
+
+- **`mibpkg sdk catalog`**, and the snapshot it writes: `/tmp/mibpkg.catalog`. Every package action and
+  every supervised boot rewrite it too. It is what the SDK's Plugins menu (Installed, Updates, Available)
+  reads, so the car can show what is installed and offered, and install or update a package from the MMI,
+  without the SDK talking to mibpkg.
+
 ## 0.11.4 — 2026-11-08
 
 ### Fixed

@@ -991,3 +991,30 @@ fn status_prints_both_lines() {
     let r = ok(&f, &["sdk", "status"]);
     assert!(r.out.starts_with(&format!("{HMICAR_SDK}\n{HMISYSTEM_SDK}\nsdk: 0.1.0\n")), "{}", r.out);
 }
+
+// ---- sdk catalog (the MMI's Plugins menu snapshot) ----
+
+/// The file the SDK's Plugins menu polls: one line per field, and a granted permission list for an
+/// installed plugin. Written by every package action (`after`) and by `mibpkg sdk catalog`.
+#[test]
+fn sdk_catalog_snapshot_describes_installed_plugins() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    install_plugin(&f, dir.path(), "hello", &["vehicle.read"]);
+    let out = tempfile::tempdir().unwrap();
+    let path = out.path().join("mibpkg.catalog");
+    mibpkg::mibsdk::pkgcat::write_to(&path, &f.layout).unwrap();
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.starts_with("# mibpkg package catalog"), "{text}");
+    assert!(text.contains("\nformat=1\n"), "{text}");
+    assert!(text.contains("\ncount="), "{text}");
+    assert!(text.contains("\npkg.hello.desc="), "{text}");
+    assert!(text.contains("\npkg.hello.kind=plugin\n"), "{text}");
+    assert!(text.contains("\npkg.hello.installed=1.0.0\n"), "{text}");
+    assert!(text.contains("\npkg.hello.granted=vehicle.read\n"), "{text}");
+    assert!(text.contains("\npkg.hello.perm.vehicle.read="), "{text}");
+    // The verb writes the real path and says so.
+    let r = ok(&f, &["sdk", "catalog"]);
+    assert!(r.out.starts_with("wrote the package catalog: "), "{}", r.out);
+    assert!(mibpkg::mibsdk::pkgcat::path(&f.layout).is_file());
+}

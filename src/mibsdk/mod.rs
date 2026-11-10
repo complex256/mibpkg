@@ -9,6 +9,7 @@ pub mod icons;
 pub mod ledger;
 pub mod plugin_pkg;
 pub mod propsline;
+pub mod pkgcat;
 pub mod sdk_pkg;
 pub mod stamp;
 pub mod statusprefs;
