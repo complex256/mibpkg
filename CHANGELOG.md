@@ -3,6 +3,17 @@
 All notable changes to mibpkg. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow semver.
 
+## 0.12.1 — 2026-11-10
+
+### Fixed
+
+- **Coexistence of `mibsdk` and `mibpkg`-managed `carplay-rgi`, while refusing unmanaged `carplay-rgi` installs.**
+  `sdk_pkg::check` now allows installing and updating `mibsdk` when `carplay-rgi` is installed and managed by
+  `mibpkg` (`check_owned_classes` and `bundles::check_line` still enforce no class or bundle-line overlap),
+  while continuing to refuse when an unmanaged (non-`mibpkg`) `carplay-rgi` (`*carplay*` jar in `lsd/jars` or
+  `*.carplay-stock` files under `/mnt/app/eso/hmi`) is present. Installing the `carplay-rgi` package through
+  `mibpkg` now also refuses if an unmanaged `carplay-rgi` is already on the unit.
+
 ## 0.12.0 — 2026-11-09
 
 ### Added

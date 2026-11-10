@@ -704,8 +704,10 @@ fn sdk_install_refusals_change_nothing() {
         ("unsupported HMI 'HMI_OTHER' (supported: HMI_AU_MIB2_HQC_NAR_G22_C10_180803)", |f| {
             write(&p(f, mibsdk::VERSION_INFO), b"HMI = HMI_OTHER\n")
         }),
-        ("carplay-rgi is installed", |f| write(&p(f, &format!("{}/CarPlay-RGI.jar", mibsdk::JARS)), b"x")),
-        ("carplay-rgi is installed", |f| {
+        ("unmanaged carplay-rgi is installed", |f| {
+            write(&p(f, &format!("{}/CarPlay-RGI.jar", mibsdk::JARS)), b"x")
+        }),
+        ("unmanaged carplay-rgi is installed", |f| {
             write(&p(f, &format!("{}/lsd/kzbs/foo.kzb.carplay-stock", mibsdk::HMI_ROOT)), b"x")
         }),
         ("spike jar mibsdk-spike-ui.jar is installed; run spikes/hmi-ui/run.sh uninstall first", |f| {
@@ -732,10 +734,14 @@ fn sdk_install_refusals_change_nothing() {
 
 // was: test_refuses_when_carplay_stock_files_exist_anywhere_under_hmi
 #[test]
-fn check_refuses_carplay_stock_files_anywhere_under_hmi() {
+fn check_refuses_unmanaged_carplay_stock_files_anywhere_under_hmi() {
     let (f, dir) = unit();
     write(&p(&f, "/mnt/app/eso/hmi/lsd/kzbs/deep/foo.kzb.carplay-stock"), b"x");
-    assert_refused_untouched(&f, dir.path(), "carplay-rgi is installed (*.carplay-stock files exist); the SDK does not support it (spec §13)");
+    assert_refused_untouched(
+        &f,
+        dir.path(),
+        "unmanaged carplay-rgi is installed (*.carplay-stock files exist, not managed by mibpkg)",
+    );
 }
 
 #[test]
@@ -753,6 +759,53 @@ fn check_fails_closed_when_hmi_cannot_be_searched() {
         assert!(!backups::has_backup(&f.layout, mibsdk::BUNDLES));
     }
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[test]
+fn carplay_rgi_package_refuses_over_unmanaged_carplay_then_allows_sdk_once_managed() {
+    let (f, dir) = unit();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+
+    // Build a minimal carplay-rgi package.
+    let cp_src = dir.path().join("carplay-rgi-src");
+    fs::create_dir_all(&cp_src).unwrap();
+    write(
+        &cp_src.join("manifest.toml"),
+        b"[package]\nname = \"carplay-rgi\"\nversion = \"2026.11.4\"\ndescription = \"CarPlay\"\n\n[[file]]\nsrc = \"README\"\n",
+    );
+    write(&cp_src.join("README"), b"ok\n");
+
+    // 1. If an unmanaged carplay-rgi jar is already on the unit, installing carplay-rgi via mibpkg is refused.
+    let cp_jar = p(&f, &format!("{}/carplay_hook.jar", mibsdk::JARS));
+    jar_with(
+        &cp_jar,
+        &["de/audi/tghu/system/sm/Activator.class", "de/audi/tghu/tone/hmi/Activator.class"],
+    );
+    let e = err(install_src(&ctx, &cp_src));
+    assert!(e.contains("unmanaged carplay-rgi is installed"), "{e}");
+
+    // 2. Same if an unmanaged *.carplay-stock file exists on the unit.
+    fs::remove_file(&cp_jar).unwrap();
+    let cp_stock = p(&f, &format!("{}/lang_data.zip.carplay-stock", mibsdk::JARS));
+    write(&cp_stock, b"stock");
+    let e = err(install_src(&ctx, &cp_src));
+    assert!(e.contains("unmanaged carplay-rgi is installed"), "{e}");
+
+    // 3. Clean unit -> install carplay-rgi via mibpkg -> now carplay_hook.jar and *.carplay-stock are managed.
+    fs::remove_file(&cp_stock).unwrap();
+    install_src(&ctx, &cp_src).unwrap();
+    jar_with(
+        &cp_jar,
+        &["de/audi/tghu/system/sm/Activator.class", "de/audi/tghu/tone/hmi/Activator.class"],
+    );
+    write(&cp_stock, b"stock");
+
+    // 4. With carplay-rgi managed by mibpkg, mibsdk installs and updates cleanly alongside it.
+    install_sdk(&ctx, dir.path(), "0.1.0").unwrap();
+    install_sdk(&ctx, dir.path(), "0.2.0").unwrap();
+    assert!(cp_jar.is_file());
+    assert!(cp_stock.is_file());
 }
 
 // was: test_refuses_jar_defining_owned_class

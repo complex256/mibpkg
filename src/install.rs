@@ -278,6 +278,10 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
     }
 
     let kind = pkg.manifest.kind();
+    if name == sdk_pkg::CARPLAY_PKG && previous.is_none() && !repair {
+        // Refuse installing the mibpkg carplay-rgi package over an unmanaged (SD-card) carplay-rgi install.
+        sdk_pkg::check_no_unmanaged_carplay(layout, None)?;
+    }
     if kind == Kind::Sdk && !repair {
         // The guards run before /mnt/app goes read-write: a refusal changes nothing at all.
         sdk_pkg::check(ctx, &pkg.manifest, current_dir(layout, name).as_deref(), icons::Source::Package(pkg))?;

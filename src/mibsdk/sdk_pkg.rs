@@ -65,6 +65,55 @@ fn names(layout: &Layout, abs: &str) -> io::Result<Vec<String>> {
     Ok(v)
 }
 
+pub const CARPLAY_PKG: &str = "carplay-rgi";
+
+/// True when `carplay-rgi` is installed and managed by mibpkg.
+pub fn carplay_managed_by_mibpkg(layout: &Layout) -> Result<bool> {
+    let st = State::load(layout)?;
+    Ok(st.packages.contains_key(CARPLAY_PKG) && install::current_dir(layout, CARPLAY_PKG).is_some())
+}
+
+/// Refuse when a non-mibpkg `carplay-rgi` install is on the unit (a `*carplay*` jar in `JARS` or
+/// `*.carplay-stock` files under `HMI_ROOT` without `carplay-rgi` managed by mibpkg). Used both by
+/// `mibsdk` installs/updates and by a fresh `carplay-rgi` package install.
+pub fn check_no_unmanaged_carplay(l: &Layout, jars: Option<&[String]>) -> Result<()> {
+    if carplay_managed_by_mibpkg(l)? {
+        return Ok(());
+    }
+    let owned_jars;
+    let jars: &[String] = match jars {
+        Some(j) => j,
+        None => {
+            owned_jars = match names(l, JARS) {
+                Ok(j) => j,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => Vec::new(),
+                Err(e) => bail!("cannot list {JARS} ({e}); nothing changed"),
+            };
+            &owned_jars
+        }
+    };
+    if jars.iter().any(|n| n.to_ascii_lowercase().contains("carplay")) {
+        bail!(
+            "unmanaged carplay-rgi is installed (a *carplay* jar is in {JARS}, not managed by mibpkg); \
+             uninstall it with its own uninstaller first; nothing changed"
+        );
+    }
+    let hmi_root = l.p(HMI_ROOT);
+    if !hmi_root.exists() && jars.is_empty() {
+        return Ok(());
+    }
+    match find_carplay_stock(&hmi_root) {
+        Ok(None) => Ok(()),
+        Ok(Some(_)) => bail!(
+            "unmanaged carplay-rgi is installed (*.carplay-stock files exist, not managed by mibpkg); \
+             uninstall it with its own uninstaller first; nothing changed"
+        ),
+        Err((p, e)) => {
+            bail!("could not verify the absence of carplay-rgi ({}: {e}); nothing changed", l.unit_path(&p))
+        }
+    }
+}
+
 /// The first `*.carplay-stock` name in the tree under `dir` (as `ls -R` lists it: symlinked
 /// directories are not followed). A directory that cannot be read is an error.
 fn find_carplay_stock(dir: &Path) -> std::result::Result<Option<PathBuf>, (PathBuf, io::Error)> {
@@ -198,18 +247,7 @@ pub fn check(ctx: &Ctx, m: &Manifest, pkg_dir: Option<&Path>, src: icons::Source
     }
 
     let jars = names(l, JARS).map_err(|e| anyhow!("cannot list {JARS} ({e}); nothing changed"))?;
-    if jars.iter().any(|n| n.to_ascii_lowercase().contains("carplay")) {
-        bail!("carplay-rgi is installed (a *carplay* jar is in {JARS}); the SDK does not support it (spec §13); nothing changed");
-    }
-    match find_carplay_stock(&l.p(HMI_ROOT)) {
-        Ok(None) => {}
-        Ok(Some(_)) => bail!(
-            "carplay-rgi is installed (*.carplay-stock files exist); the SDK does not support it (spec §13); nothing changed"
-        ),
-        Err((p, e)) => {
-            bail!("could not verify the absence of carplay-rgi ({}: {e}); nothing changed", l.unit_path(&p))
-        }
-    }
+    check_no_unmanaged_carplay(l, Some(&jars))?;
 
     if let Some(j) = jars.iter().find(|n| n.starts_with("mibsdk-spike-") && n.ends_with(".jar")) {
         bail!("spike jar {j} is installed; run spikes/hmi-ui/run.sh uninstall first; nothing changed");
