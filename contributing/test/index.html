@@ -1911,7 +1911,7 @@
 </ul>
 <h2 id="web">Web<a class="headerlink" href="#web" title="Permanent link">&para;</a></h2>
 <p>The front end uses Node's built-in test runner:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>node<span class="w"> </span>--test<span class="w"> </span>web/tests/*.test.mjs
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>npm<span class="w"> </span>--prefix<span class="w"> </span>web<span class="w"> </span><span class="nb">test</span>
 </code></pre></div>
 <h2 id="package-examples">Package examples<a class="headerlink" href="#package-examples" title="Permanent link">&para;</a></h2>
 <p>Build a package and verify it:</p>
@@ -1928,7 +1928,7 @@
 </code></pre></div>
 <h2 id="before-a-release">Before a release<a class="headerlink" href="#before-a-release" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>cargo<span class="w"> </span><span class="nb">test</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>node<span class="w"> </span>--test<span class="w"> </span>web/tests/*.test.mjs
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>npm<span class="w"> </span>--prefix<span class="w"> </span>web<span class="w"> </span><span class="nb">test</span>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>python3<span class="w"> </span>tools/check_docs.py
 <a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>mkdocs<span class="w"> </span>build<span class="w"> </span>--strict
 </code></pre></div>

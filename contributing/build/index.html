@@ -1914,11 +1914,16 @@
 <p><code>scripts/bundle.sh</code> builds the host binary, stages the unit binary, builds the official collection and
 calls <code>mibpkg swdl-card</code>. Pass <code>--signed-header FILE</code> to make the engineering-menu entry accepted.</p>
 <h2 id="web-assets">Web assets<a class="headerlink" href="#web-assets" title="Permanent link">&para;</a></h2>
-<p><code>web/</code> is plain HTML, CSS and JavaScript with no build step. The files are embedded in the binary as
-written.</p>
-<p>For local development:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>scripts/web-fixture.sh<span class="w"> </span>/tmp/mibpkg-fixture
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nv">MIBPKG_WEB_DIR</span><span class="o">=</span>web<span class="w"> </span>./target/debug/mibpkg<span class="w"> </span>--root<span class="w"> </span>/tmp/mibpkg-fixture<span class="w"> </span>web
+<p>The front end is React + TypeScript + Tailwind with shadcn/ui components under <code>web/src/</code>. Vite
+builds it into <code>web/dist</code> (<code>index.html</code>, <code>style.css</code>, <code>app.js</code>); those three files are committed and
+embedded in the binary by <code>src/web/assets.rs</code>. The Rust build never runs npm, so a checkout builds
+without Node installed.</p>
+<p>When you change anything under <code>web/src</code> or <code>web/index.html</code>, rebuild and commit <code>web/dist</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nb">cd</span><span class="w"> </span>web<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>npm<span class="w"> </span>install<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>npm<span class="w"> </span>run<span class="w"> </span>build
+</code></pre></div>
+<p>Run the built front end against a local fixture:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>scripts/web-fixture.sh<span class="w"> </span>/tmp/mibpkg-fixture
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="nv">MIBPKG_WEB_DIR</span><span class="o">=</span>web/dist<span class="w"> </span>./target/debug/mibpkg<span class="w"> </span>--root<span class="w"> </span>/tmp/mibpkg-fixture<span class="w"> </span>web
 </code></pre></div>
 <h2 id="layout">Layout<a class="headerlink" href="#layout" title="Permanent link">&para;</a></h2>
 <table>
