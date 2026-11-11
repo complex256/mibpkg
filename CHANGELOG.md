@@ -3,6 +3,29 @@
 All notable changes to mibpkg. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow semver.
 
+## 0.12.3 — 2026-11-10
+
+### Changed
+
+- **The `More → Internet` page looks like the rest of the interface.** It has a `‹ More` back link;
+  its text fields and checkboxes use the same `.field` and `.choice` rows as Web settings and the
+  permission sheets, and a connected uplink is shown in a raised card with its live addresses.
+- **The PIN pad is not a place to navigate from.** The tab bar is hidden while the page is locked,
+  and the empty PIN field shows dim placeholder dots instead of a lone dash.
+- **Touch and layout polish.** Larger tap areas for pills and round buttons, press feedback on rows,
+  buttons and the PIN pad, visible keyboard focus, labels that no longer break mid-word in the
+  information lists, and a package action pill that tolerates two lines.
+
+### Fixed
+
+- **The package page goes back where it came from.** A package opened from **Updates** or
+  **Installed** now shows `‹ Updates` / `‹ Installed` instead of always `‹ Discover`, matching the
+  tab that stays highlighted.
+- **A change started in Sources, Updates or More is visible where it was tapped.** The job output on
+  Sources is drawn above the lists, and the button that started a job spins (or greys out) while the
+  car takes it: Sources, Check for updates, Update all, Rescan SD card, Save and restart, and the
+  config-conflict choices. A second tap can no longer start the same action twice.
+
 ## 0.12.2 — 2026-11-10
 
 ### Changed

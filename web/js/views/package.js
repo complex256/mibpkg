@@ -18,6 +18,7 @@ import { packageIcon } from '../icons.js';
 import { approvalSheet, grantsEditor, newlyAsked, permissionList } from '../permissions.js';
 import { isSelfUpdate, jobView, redrawSoon, startAction, waitForRestart } from '../jobs.js';
 import { compareVersions, offeringCollections } from '../rows.js';
+import { backTab } from '../tabs.js';
 
 // The last job started from a package page: shown again (finished) after the redraw,
 // so the user can still read its output. { name, id }
@@ -25,13 +26,14 @@ let lastJob = null;
 
 export async function render(name) {
   const [packages, status] = await Promise.all([api('GET', '/api/packages'), api('GET', '/api/status')]);
+  const back = backTab();
   const p = packages.find((x) => x.name === name);
   if (!p) {
     // Just removed from this page (and offered nowhere): keep showing how the removal went.
     if (lastJob && lastJob.name === name) {
-      return h('div', {}, backLink('#/discover', 'Discover'), h('div', { class: 'notice ok' }, `${name} is no longer on the car.`), jobView(lastJob.id));
+      return h('div', {}, backLink(back.href, back.label), h('div', { class: 'notice ok' }, `${name} is no longer on the car.`), jobView(lastJob.id));
     }
-    return h('div', {}, backLink('#/discover', 'Discover'), h('div', { class: 'notice error' }, `No package named ${name} on the car, the card, or online.`));
+    return h('div', {}, backLink(back.href, back.label), h('div', { class: 'notice error' }, `No package named ${name} on the car, the card, or online.`));
   }
 
   const inst = p.installed;
@@ -111,7 +113,7 @@ export async function render(name) {
   const page = h(
     'div',
     {},
-    backLink('#/discover', 'Discover'),
+    backLink(back.href, back.label),
     header(p, install, mainSlot),
     sheetArea,
     facts(p),

@@ -15,6 +15,7 @@ const FILES: &[(&str, &str, &str, &[u8])] = &[
     ("/js/permissions.js", "js/permissions.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/permissions.js")),
     ("/js/router.js", "js/router.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/router.js")),
     ("/js/rows.js", "js/rows.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/rows.js")),
+    ("/js/tabs.js", "js/tabs.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/tabs.js")),
     ("/js/views/config.js", "js/views/config.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/views/config.js")),
     ("/js/views/discover.js", "js/views/discover.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/views/discover.js")),
     ("/js/views/installed.js", "js/views/installed.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/views/installed.js")),

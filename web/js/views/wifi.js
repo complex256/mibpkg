@@ -7,7 +7,7 @@
   stays blank and the API only says whether one is saved.
 */
 import { api } from '../api.js';
-import { h, pageHead, replace, toast } from '../dom.js';
+import { backLink, h, pageHead, replace, toast } from '../dom.js';
 
 function stateLine(w) {
   if (!w.configured) {
@@ -28,8 +28,14 @@ function stateLine(w) {
   return w.ssid ? `No uplink yet. The car will try ${w.ssid} again.` : 'No hotspot set up yet.';
 }
 
+/** A labelled text field, styled like the rest of the forms. */
 function labelled(label, input) {
-  return h('label', {}, h('span', {}, label), input);
+  return h('label', { class: 'field' }, h('span', {}, label), input);
+}
+
+/** A checkbox as a tappable card, so it does not have to be hit precisely. */
+function toggle(label, input, detail = null) {
+  return h('label', { class: 'choice' }, input, h('span', {}, label, detail ? h('small', {}, detail) : null));
 }
 
 export async function render() {
@@ -50,7 +56,7 @@ export async function render() {
   const gateway = h('input', { type: 'text', value: w.gateway || '', maxlength: 15, placeholder: '192.168.1.1', inputmode: 'decimal' });
   const dns = h('input', { type: 'text', value: w.dns || '', maxlength: 64, placeholder: '1.1.1.1 (optional)', inputmode: 'decimal' });
   const clear = h('input', { type: 'checkbox', id: 'wifi-clear' });
-  const manual = h('div', { class: 'form' }, labelled('IP address', ip), labelled('Netmask', netmask), labelled('Gateway', gateway), labelled('DNS', dns));
+  const manual = h('div', {}, labelled('IP address', ip), labelled('Netmask', netmask), labelled('Gateway', gateway), labelled('DNS', dns));
   const result = h('div', {});
 
   function showManual() {
@@ -100,6 +106,7 @@ export async function render() {
   return h(
     'div',
     {},
+    backLink('#/more', 'More'),
     pageHead('Internet'),
     h(
       'div',
@@ -120,12 +127,12 @@ export async function render() {
     ),
     h(
       'div',
-      { class: 'form' },
-      h('label', { for: 'wifi-enabled' }, enabled, ' Use Wi-Fi for internet'),
+      {},
+      toggle('Use Wi-Fi for internet', enabled),
       labelled('Hotspot name', ssid),
       labelled('Password', password),
-      w.password_set ? h('label', {}, clear, ' Remove the saved password') : null,
-      h('label', { for: 'wifi-dhcp' }, dhcp, ' Use DHCP (automatic address)'),
+      w.password_set ? toggle('Remove the saved password', clear) : null,
+      toggle('Use DHCP (automatic address)', dhcp),
       manual,
       save,
     ),

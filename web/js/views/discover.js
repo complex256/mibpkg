@@ -13,7 +13,7 @@ import { packageRow } from '../rows.js';
 export async function render() {
   const [packages, status] = await Promise.all([api('GET', '/api/packages'), api('GET', '/api/status')]);
 
-  const uploadButton = h('a', { class: 'round-button', href: '#/upload', title: 'Install from file', 'aria-label': 'Install from file', style: 'display:flex;align-items:center;justify-content:center' }, '⤒');
+  const uploadButton = h('a', { class: 'round-button', href: '#/upload', title: 'Install from file', 'aria-label': 'Install from file' }, '⤒');
   const search = h('input', { class: 'search', type: 'search', placeholder: 'Search packages', 'aria-label': 'Search packages' });
   const lists = h('div', {});
 

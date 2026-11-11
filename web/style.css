@@ -94,6 +94,27 @@ button {
   color: inherit;
 }
 
+/* Keyboard users see where they are; the mouse/touch does not get a ring on every tap. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The car's page is tapped, not clicked: no grey flash, a pressed state instead (below). */
+.app-row,
+.menu a,
+.menu button,
+.pill,
+.button,
+.round-button,
+.pin-pad button {
+  -webkit-tap-highlight-color: transparent;
+}
+
 [hidden] {
   display: none !important;
 }
@@ -206,19 +227,28 @@ button {
 
 .back {
   display: inline-block;
-  margin: 2px 0 10px;
+  margin: 0 0 6px;
+  padding: 8px 12px 8px 0;
   font-size: 14px;
 }
 
 .round-button {
-  width: 34px;
-  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
   border: 0;
   border-radius: 50%;
   background: var(--surface-2);
   color: var(--accent);
   font-size: 17px;
   cursor: pointer;
+}
+
+.round-button:active {
+  opacity: 0.75;
 }
 
 .section-head {
@@ -332,17 +362,22 @@ button {
   font-size: 32px;
 }
 
-/* GET / UPDATE / OPEN style buttons. */
+/* GET / UPDATE / OPEN style buttons. Tall enough to hit with a thumb, not a cursor. */
 .pill {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 70px;
-  padding: 6px 14px;
+  min-height: 36px;
+  padding: 8px 16px;
   border: 0;
-  border-radius: 16px;
+  border-radius: 18px;
   background: var(--surface-2);
   color: var(--accent);
   font-size: 13px;
   font-weight: 750;
+  line-height: 1.2;
   text-align: center;
   text-transform: uppercase;
   cursor: pointer;
@@ -356,6 +391,10 @@ button {
 .pill:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.pill:not(:disabled):active {
+  opacity: 0.75;
 }
 
 /* A pill whose action is running: the label is gone and the spinner is its only content. Kept
@@ -403,6 +442,19 @@ button {
   cursor: default;
 }
 
+.button:not(:disabled):active {
+  opacity: 0.75;
+}
+
+/* A spinner in a button takes the label's colour, so it reads on blue and on grey alike. */
+.button .spinner,
+.menu .spinner,
+.round-button .spinner {
+  border-color: color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
+  vertical-align: middle;
+}
+
 /* Status dots: running, waiting, failed, ... */
 .dot {
   display: inline-block;
@@ -445,12 +497,16 @@ button {
 }
 
 .info li > span:first-child {
+  flex: none;
   color: var(--muted);
 }
 
 .info li > span:last-child {
   text-align: right;
-  overflow-wrap: anywhere;
+  /* Long values (a unit name, a result line) break at spaces first; only a single long word
+     is split. `anywhere` used to strand a lone ")" on its own line. */
+  overflow-wrap: break-word;
+  min-width: 0;
 }
 
 /* Tappable list rows (More, Logs, Sources). */
@@ -492,6 +548,25 @@ button {
 
 .menu .chevron {
   color: var(--muted);
+}
+
+.menu a:active,
+.menu button:active,
+.app-row:active {
+  opacity: 0.65;
+}
+
+/* A raised block of content (a connected uplink, a summary). Tonal, not a shadow. */
+.card {
+  margin: 10px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.card p {
+  margin: 6px 0;
 }
 
 .notice {
@@ -850,6 +925,12 @@ details.collapsed-choice summary::-webkit-details-marker {
   text-align: center;
 }
 
+/* Nothing typed yet: dim dots show where the PIN will appear. */
+.pin-dots.placeholder {
+  color: var(--muted);
+  opacity: 0.45;
+}
+
 .pin-pad {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -865,4 +946,8 @@ details.collapsed-choice summary::-webkit-details-marker {
   background: var(--surface-2);
   font-size: 22px;
   cursor: pointer;
+}
+
+.pin-pad button:active {
+  opacity: 0.7;
 }

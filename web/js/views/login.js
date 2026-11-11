@@ -17,7 +17,10 @@ export async function render() {
   const message = h('p', { class: 'muted', style: 'text-align:center;min-height:1.4em' });
 
   function draw() {
-    dots.textContent = pin ? '•'.repeat(pin.length) : '–';
+    // Empty is shown as dim placeholder dots, so the entry area reads as a PIN field rather
+    // than as a stray dash. The real length never shows before it is typed.
+    dots.textContent = pin ? '•'.repeat(pin.length) : '••••';
+    dots.classList.toggle('placeholder', !pin);
   }
 
   async function submit() {

@@ -54,6 +54,13 @@ class FakeElement extends FakeNode {
   classes() {
     return (this.attrs.class || '').split(' ').filter(Boolean);
   }
+  // Form fields: what a user typed lives in the property, not the attribute in a browser.
+  get value() {
+    return 'value' in this.attrs ? this.attrs.value : '';
+  }
+  set value(v) {
+    this.attrs.value = String(v);
+  }
   get className() {
     return this.attrs.class || '';
   }
@@ -135,7 +142,8 @@ export function installFakeDom(routes = {}) {
     createTextNode: (t) => new FakeText(t),
     getElementById: (id) => documentElement(`#${id}`),
   };
-  globalThis.window = { dispatchEvent() {} };
+  globalThis.window = { dispatchEvent() {}, scrollTo() {} };
+  globalThis.sessionStorage = { getItem: () => null, setItem: () => {} };
   globalThis.HashChangeEvent = class HashChangeEvent {
     constructor(type) {
       this.type = type;
@@ -162,6 +170,25 @@ export function installFakeDom(routes = {}) {
     return byId.get(id);
   }
 
+  // Document-level listeners (the PIN pad's keyboard support) are recorded, not fired.
+  globalThis.document.addEventListener = () => {};
+  globalThis.document.removeEventListener = () => {};
+
+  // The tab bar from index.html, for the router (which highlights a tab and hides the bar on
+  // the PIN pad). Tests that care can reset it with fakeTabs().
+  const tabAnchors = ['discover', 'updates', 'installed', 'more'].map((name) => {
+    const a = new FakeElement('a');
+    a.setAttribute('href', `#/${name}`);
+    a.setAttribute('data-tab', name);
+    a.dataset = { tab: name };
+    return a;
+  });
+  const tabsNav = new FakeElement('nav');
+  tabsNav.setAttribute('class', 'tabs');
+  tabsNav.append(...tabAnchors);
+  globalThis.document.querySelector = (selector) => (selector === '.tabs' ? tabsNav : null);
+  globalThis.document.querySelectorAll = (selector) => (selector === '.tabs a' ? tabAnchors : []);
+
   globalThis.fetch = async (path, options = {}) => {
     const method = options.method || 'GET';
     const route = routes[`${method} ${path}`];
@@ -175,4 +202,9 @@ export function installFakeDom(routes = {}) {
 /** Let every already-resolved promise (a click handler's action) finish. */
 export function settle() {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** The fake tab bar, so a test can check the router's active tab and hidden state. */
+export function fakeTabs() {
+  return { nav: globalThis.document.querySelector('.tabs'), links: globalThis.document.querySelectorAll('.tabs a') };
 }

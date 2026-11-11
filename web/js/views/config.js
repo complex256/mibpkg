@@ -17,11 +17,29 @@ export async function render(name, index) {
 
   const jobArea = h('div', {});
   const save = h('button', { class: 'button', type: 'button' }, 'Save and restart');
+  // While its job runs the page waits for the result: a second save would be refused anyway.
+  function setBusy() {
+    save.disabled = true;
+    replace(save, h('span', { class: 'spinner' }), ' Saving…');
+  }
+  function setIdle() {
+    save.disabled = false;
+    replace(save, 'Save and restart');
+  }
   save.addEventListener('click', async () => {
+    setBusy();
     try {
       const reply = await api('PUT', `/api/packages/${name}/config/${index}`, textarea.value);
-      replace(jobArea, jobView(reply.job));
+      replace(jobArea, jobView(reply.job, {
+        onDone: (job) => {
+          if (job.ok) {
+            toast(job.result.replace(/^OK:\s*/, ''));
+          }
+          setIdle();
+        },
+      }));
     } catch (e) {
+      setIdle();
       toast(e.message, { error: true });
     }
   });
@@ -47,47 +65,72 @@ export async function render(name, index) {
 function conflict(name, index, cfg) {
   // Right under the buttons: the editor's job area is a screen further down.
   const jobArea = h('div', {});
-  // Settled: say what happened, then redraw without the conflict. A failure stays on screen.
+  const KEEP = "Keep the car's copy";
+  const USE_CARD = "Use the card's copy";
+  const keepBtn = h('button', { class: 'pill', type: 'button' }, KEEP);
+  const useCardBtn = h('button', { class: 'pill', type: 'button' }, USE_CARD);
+  const both = () => [keepBtn, useCardBtn];
+
+  // Settled: say what happened, then redraw without the conflict. A failure leaves both choices
+  // open again, next to the log that says what went wrong.
   const onDone = (job) => {
     if (job.ok) {
       toast(job.result.replace(/^OK:\s*/, ''));
       redrawSoon(1200);
+      return;
     }
+    for (const b of both()) {
+      b.disabled = false;
+    }
+    replace(keepBtn, KEEP);
+    replace(useCardBtn, USE_CARD);
   };
-  async function choose(choice) {
+
+  // One choice at a time: both buttons wait while the car settles it.
+  async function choose(choice, btn) {
+    for (const b of both()) {
+      b.disabled = true;
+    }
+    btn.setAttribute('aria-label', 'Working…');
+    replace(btn, h('span', { class: 'spinner' }));
     try {
       const id = await startAction({ action: 'config-resolve', package: name, config: Number(index), choice });
       if (id) {
         replace(jobArea, jobView(id, { onDone }));
+        return;
       }
     } catch (e) {
       toast(e.message, { error: true });
     }
+    // Nothing started: both ways out are open again.
+    for (const b of both()) {
+      b.disabled = false;
+    }
+    replace(keepBtn, KEEP);
+    replace(useCardBtn, USE_CARD);
   }
+  keepBtn.addEventListener('click', () => choose('keep', keepBtn));
+  useCardBtn.addEventListener('click', () => choose('card', useCardBtn));
+
   // No phantom empty last line for text ending in a newline.
   const lines = (t) => t.replace(/\n$/, '').split('\n');
-  const car = lines(cfg.content);
-  const card = lines(cfg.card);
-  const side = (title, lines, other) => {
+  const carLines = lines(cfg.content);
+  const cardLines = lines(cfg.card);
+  const side = (title, own, other) => {
     const others = new Set(other);
     return h(
       'div',
       {},
       h('div', { class: 'compare-head' }, title),
-      h('pre', { class: 'console compare-text' }, lines.map((l) => h('span', { class: others.has(l) ? '' : 'changed' }, `${l}\n`))),
+      h('pre', { class: 'console compare-text' }, own.map((l) => h('span', { class: others.has(l) ? '' : 'changed' }, `${l}\n`))),
     );
   };
   return h(
     'div',
     {},
     h('div', { class: 'notice' }, `${cfg.path} changed both on the SD card and here on the car. The car's copy is still the one in use; choose which to keep.`),
-    h('div', { class: 'compare' }, side('On the car (in use)', car, card), side('On the SD card', card, car)),
-    h(
-      'div',
-      { class: 'actions' },
-      h('button', { class: 'pill', type: 'button', onclick: () => choose('keep') }, "Keep the car's copy"),
-      h('button', { class: 'pill', type: 'button', onclick: () => choose('card') }, "Use the card's copy"),
-    ),
+    h('div', { class: 'compare' }, side('On the car (in use)', carLines, cardLines), side('On the SD card', cardLines, carLines)),
+    h('div', { class: 'actions' }, keepBtn, useCardBtn),
     jobArea,
   );
 }

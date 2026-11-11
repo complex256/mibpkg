@@ -5,6 +5,9 @@
   mibpkg/sources.toml — nothing is fetched from one until you enable it.
   A source is github:<owner>/<repo> (that repo's latest release) or an
   https://…/index.json address.
+
+  A change runs a job on the car. Its output sits right under the title, so it is
+  visible where the button was tapped, and the button spins until the job is over.
 */
 import { api } from '../api.js';
 import { backLink, h, pageHead, replace, toast } from '../dom.js';
@@ -16,23 +19,38 @@ export async function render() {
   const { sources, available, list, card_skipped: cardSkipped } = await api('GET', '/api/sources');
   const jobArea = h('div', {});
 
-  async function change(method, source) {
+  async function change(method, source, btn) {
+    const label = btn ? btn.textContent : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.setAttribute('aria-label', 'Working…');
+      replace(btn, h('span', { class: 'spinner' }));
+    }
     try {
       const reply = await api(method, '/api/sources', { source });
       replace(jobArea, jobView(reply.job, { onDone: () => redrawSoon(1500) }));
     } catch (e) {
+      if (btn) {
+        btn.disabled = false;
+        btn.removeAttribute('aria-label');
+        replace(btn, label);
+      }
       toast(e.message, { error: true });
     }
   }
 
-  const button = (label, onclick) => h('button', { class: 'pill', type: 'button', onclick }, label);
+  const button = (label, onclick) => {
+    const b = h('button', { class: 'pill', type: 'button' }, label);
+    b.addEventListener('click', () => onclick(b));
+    return b;
+  };
   const head = (title, btn) => h('div', { style: 'display:flex;justify-content:space-between;gap:8px;align-items:center' }, h('strong', { style: 'overflow-wrap:anywhere' }, title), btn);
 
   const enabled = sources.map((s) =>
     h(
       'li',
       { style: 'padding:12px 14px' },
-      head(s.source, s.enabled ? button('Remove', () => change('DELETE', s.source)) : button('Turn on', () => change('POST', s.source))),
+      head(s.source, s.enabled ? button('Remove', (b) => change('DELETE', s.source, b)) : button('Turn on', (b) => change('POST', s.source, b))),
       h('div', { class: 'muted' }, [ORIGIN[s.origin] || s.origin, s.enabled ? null : 'off', s.collection ? `${s.collection_name || s.collection} · ${s.packages} packages` : 'not fetched yet'].filter(Boolean).join(' · ')),
       s.error ? h('div', { class: 'error' }, s.error) : null,
     ),
@@ -42,7 +60,7 @@ export async function render() {
     h(
       'li',
       { style: 'padding:12px 14px' },
-      head(a.name, button('Enable', () => change('POST', a.source))),
+      head(a.name, button('Enable', (b) => change('POST', a.source, b))),
       a.description ? h('div', {}, a.description) : null,
       h('div', { class: 'muted', style: 'overflow-wrap:anywhere' }, `${a.source} · ${ORIGIN[a.origin] || a.origin}`),
     ),
@@ -57,13 +75,14 @@ export async function render() {
         : 'The community list is fetched with the next online check.';
 
   const input = h('input', { type: 'text', placeholder: 'github:owner/repo', autocapitalize: 'off', autocomplete: 'off', spellcheck: 'false' });
-  const add = h('button', { class: 'button', type: 'button', onclick: () => input.value.trim() && change('POST', input.value.trim()) }, 'Add source');
+  const add = h('button', { class: 'button', type: 'button', onclick: () => input.value.trim() && change('POST', input.value.trim(), add) }, 'Add source');
 
   return h(
     'div',
     {},
     backLink('#/more', 'More'),
     pageHead('Sources'),
+    jobArea,
     h('h2', {}, 'Enabled'),
     h('ul', { class: 'menu' }, enabled),
     h('h2', {}, 'Available'),
@@ -73,7 +92,6 @@ export async function render() {
     cardSkipped.length ? h('details', {}, h('summary', { class: 'error' }, `${cardSkipped.length} SD card entries skipped`), h('ul', {}, cardSkipped.map((s) => h('li', {}, s)))) : null,
     h('label', { class: 'field', style: 'margin-top:20px' }, h('span', {}, 'Add a source (github:owner/repo or an https://…/index.json address)'), input),
     add,
-    jobArea,
     h('p', { class: 'muted' }, 'Enabling or adding a source checks it online right away; the car needs internet for that.'),
   );
 }

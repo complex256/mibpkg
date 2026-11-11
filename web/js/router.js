@@ -13,6 +13,7 @@
 */
 import { replace, h } from './dom.js';
 import { ApiError } from './api.js';
+import { rememberTab } from './tabs.js';
 
 import * as discover from './views/discover.js';
 import * as updates from './views/updates.js';
@@ -60,11 +61,20 @@ export async function route() {
   const [match, view, tab] = found;
   const params = match.slice(1).map(decodeURIComponent);
 
-  // Highlight the tab this page belongs to (keep the last one for package pages).
+  // Highlight the tab this page belongs to (keep the last one for package pages) and remember
+  // it, so the pages opened from it go back there.
   if (tab) {
+    rememberTab(tab);
     for (const a of document.querySelectorAll('.tabs a')) {
       a.classList.toggle('active', a.dataset.tab === tab);
     }
+  }
+
+  // The PIN pad is not a place to navigate from: the tab bar stays out of the way until the
+  // page is unlocked.
+  const nav = document.querySelector('.tabs');
+  if (nav) {
+    nav.hidden = view === login;
   }
 
   const mine = ++generation;

@@ -7,6 +7,7 @@ import { all, fire, installFakeDom, reply, settle } from './fake-dom.mjs';
 const routes = {};
 installFakeDom(routes);
 const { render } = await import('../js/views/package.js');
+const { rememberTab } = await import('../js/tabs.js');
 
 /** An installed package; `extra` overrides fields, `offered` replaces the first offer. */
 function installedPackage(extra = {}, offered = null) {
@@ -175,4 +176,23 @@ test('while a job runs the permissions editor cannot be saved', async () => {
   assert.ok(boxes.length >= 1);
   assert.ok(boxes.every((b) => b.disabled === true), 'permissions cannot change mid-update');
   assert.equal(byText(page, 'Save').disabled, true);
+});
+
+test('the way back follows the tab the package was opened from', async () => {
+  serve();
+
+  rememberTab('updates');
+  let back = all(await render('carmqtt'), (e) => e.classList.contains('back'))[0];
+  assert.equal(back.getAttribute('href'), '#/updates');
+  assert.equal(back.textContent, '‹ Updates');
+
+  rememberTab('installed');
+  back = all(await render('carmqtt'), (e) => e.classList.contains('back'))[0];
+  assert.equal(back.getAttribute('href'), '#/installed');
+  assert.equal(back.textContent, '‹ Installed');
+
+  // A car that opens straight onto a package page still has somewhere sensible to go.
+  rememberTab('discover');
+  back = all(await render('carmqtt'), (e) => e.classList.contains('back'))[0];
+  assert.equal(back.getAttribute('href'), '#/discover');
 });
