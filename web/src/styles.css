@@ -1,0 +1,159 @@
+@import "tailwindcss";
+
+/*
+  mibpkg web styles.
+
+  Tailwind v4 with the shadcn/ui token names. Dark is the default (these screens are mostly
+  used in a car); prefers-color-scheme: light swaps the same variables.
+*/
+
+:root {
+  --background: #0d0f13;
+  --foreground: #eef0f6;
+  --card: #161a22;
+  --card-foreground: #eef0f6;
+  --popover: #161a22;
+  --popover-foreground: #eef0f6;
+  --primary: #66aaff;
+  --primary-foreground: #0d0f13;
+  --secondary: #1d2230;
+  --secondary-foreground: #eef0f6;
+  --muted: #1d2230;
+  --muted-foreground: #8a90a2;
+  --accent: #1d2230;
+  --accent-foreground: #eef0f6;
+  --destructive: #2e1616;
+  --destructive-foreground: #ff7a7a;
+  --success: #16261a;
+  --success-foreground: #5fcf7a;
+  --warning: #2b2112;
+  --warning-foreground: #ffc580;
+  --border: #222836;
+  --input: #222836;
+  --ring: #66aaff;
+  --console: #000000;
+  --console-foreground: #9fdc9f;
+  --radius: 0.75rem;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --background: #f4f5f8;
+    --foreground: #12141a;
+    --card: #ffffff;
+    --card-foreground: #12141a;
+    --popover: #ffffff;
+    --popover-foreground: #12141a;
+    --primary: #1f6fe0;
+    --primary-foreground: #ffffff;
+    --secondary: #eceef3;
+    --secondary-foreground: #12141a;
+    --muted: #eceef3;
+    --muted-foreground: #646a7a;
+    --accent: #eceef3;
+    --accent-foreground: #12141a;
+    --destructive: #fde8e8;
+    --destructive-foreground: #c62828;
+    --success: #e3f5e8;
+    --success-foreground: #1d8a3a;
+    --warning: #fff2dc;
+    --warning-foreground: #8a5a00;
+    --border: #dde0e8;
+    --input: #dde0e8;
+    --ring: #1f6fe0;
+    --console: #10131a;
+    --console-foreground: #a8e0a8;
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-console: var(--console);
+  --color-console-foreground: var(--console-foreground);
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.4;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* A thumb is not a cursor: every tappable thing shows it was pressed. */
+  button:not(:disabled):active,
+  a:active {
+    opacity: 0.75;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--primary) 35%, transparent);
+  }
+}
+
+/* The one column, and room for the fixed tab bar above the home indicator. */
+.app-main {
+  margin-inline: auto;
+  max-width: 40rem;
+  padding: 1rem 1rem calc(4.5rem + env(safe-area-inset-bottom));
+  padding-top: max(1rem, env(safe-area-inset-top));
+}
+
+/* Job output keeps its own scroller. */
+.console {
+  max-height: 20rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.console-tall {
+  max-height: 65dvh;
+}
+
+/* Native-feeling momentum scrolling inside sheets and logs. */
+.scroll-touch {
+  -webkit-overflow-scrolling: touch;
+}

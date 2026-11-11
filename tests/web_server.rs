@@ -339,7 +339,7 @@ fn every_front_end_file_is_served_with_its_type() {
         assert!(r.head.contains(want), "{path}: {}", r.head);
         n += 1;
     }
-    assert!(n >= 19, "{n} files");
+    assert!(n >= 3, "{n} files");
     // Unchanged files are not sent again.
     let etag = format!("\"{}\"", env!("CARGO_PKG_VERSION"));
     let r = send(srv.addr, format!("GET /style.css HTTP/1.1\r\nHost: localhost\r\nIf-None-Match: {etag}\r\n\r\n").as_bytes());

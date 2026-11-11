@@ -75,9 +75,10 @@ the app store, and the phone in your hand is the client.”
   scripts, permissions) before install.
 - **PIN protection** is optional, 4–12 digits, with recovery through GEM (remove PIN / reset web
   settings).
-- **No build step in the web front end.** The HTML, CSS and ES modules in `web/` are embedded in the
-  mibpkg binary exactly as written and served by the car. There is no bundler, package manager or
-  framework on the unit.
+- **The web front end ships as a built bundle, and the Rust build never needs Node.** The React +
+  TypeScript + Tailwind (shadcn/ui) sources live in `web/src/`; Vite writes `web/dist` and those
+  three files are committed and embedded in the mibpkg binary with `include_bytes!`. Rebuild
+  `web/dist` when the UI changes; a plain `cargo build` uses what is committed.
 - **Publicly documented surface**: the JSON web API is documented for contributors and other
   clients; the CLI and manifest format are documented for publishers.
 - **Terminology is fixed**: package, collection, source, service, config, job, rollback, GEM,

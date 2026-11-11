@@ -1,33 +1,13 @@
-//! The front end, embedded in the binary so what is in the repo's web/ directory is exactly what
-//! the car serves. MIBPKG_WEB_DIR=<dir> serves files from disk instead (development).
-//! Adding a file to web/ means adding a line here.
+//! The front end, embedded in the binary so what is in the repo's web/dist directory is exactly
+//! what the car serves. MIBPKG_WEB_DIR=<dir> serves files from disk instead (development).
+//! web/dist is built by `npm --prefix web run build` (scripts/bundle.sh and CI run it too).
 use std::borrow::Cow;
 
-/// (URL path, file under web/, content type, embedded bytes)
+/// (URL path, file under web/dist, content type, embedded bytes)
 const FILES: &[(&str, &str, &str, &[u8])] = &[
-    ("/", "index.html", "text/html; charset=utf-8", include_bytes!("../../web/index.html")),
-    ("/style.css", "style.css", "text/css; charset=utf-8", include_bytes!("../../web/style.css")),
-    ("/js/api.js", "js/api.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/api.js")),
-    ("/js/app.js", "js/app.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/app.js")),
-    ("/js/dom.js", "js/dom.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/dom.js")),
-    ("/js/icons.js", "js/icons.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/icons.js")),
-    ("/js/jobs.js", "js/jobs.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/jobs.js")),
-    ("/js/permissions.js", "js/permissions.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/permissions.js")),
-    ("/js/router.js", "js/router.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/router.js")),
-    ("/js/rows.js", "js/rows.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/rows.js")),
-    ("/js/tabs.js", "js/tabs.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/tabs.js")),
-    ("/js/views/config.js", "js/views/config.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/views/config.js")),
-    ("/js/views/discover.js", "js/views/discover.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/views/discover.js")),
-    ("/js/views/installed.js", "js/views/installed.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/views/installed.js")),
-    ("/js/views/login.js", "js/views/login.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/views/login.js")),
-    ("/js/views/logs.js", "js/views/logs.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/views/logs.js")),
-    ("/js/views/more.js", "js/views/more.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/views/more.js")),
-    ("/js/views/package.js", "js/views/package.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/views/package.js")),
-    ("/js/views/settings.js", "js/views/settings.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/views/settings.js")),
-    ("/js/views/sources.js", "js/views/sources.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/views/sources.js")),
-    ("/js/views/updates.js", "js/views/updates.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/views/updates.js")),
-    ("/js/views/upload.js", "js/views/upload.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/views/upload.js")),
-    ("/js/views/wifi.js", "js/views/wifi.js", "text/javascript; charset=utf-8", include_bytes!("../../web/js/views/wifi.js")),
+    ("/", "index.html", "text/html; charset=utf-8", include_bytes!("../../web/dist/index.html")),
+    ("/style.css", "style.css", "text/css; charset=utf-8", include_bytes!("../../web/dist/style.css")),
+    ("/app.js", "app.js", "text/javascript; charset=utf-8", include_bytes!("../../web/dist/app.js")),
 ];
 
 /// The content type and bytes for a URL path, or None.
@@ -55,9 +35,7 @@ mod tests {
         for e in std::fs::read_dir(dir).unwrap() {
             let p = e.unwrap().path();
             if p.is_dir() {
-                if p.file_name().and_then(|n| n.to_str()) != Some("tests") {
-                    walk(&p, out);
-                }
+                walk(&p, out);
             } else {
                 out.push(p);
             }
@@ -65,8 +43,8 @@ mod tests {
     }
 
     #[test]
-    fn every_web_file_is_embedded() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("web");
+    fn every_built_front_end_file_is_embedded() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("web/dist");
         let mut files = Vec::new();
         walk(&root, &mut files);
         let mut missing = Vec::new();
@@ -77,6 +55,6 @@ mod tests {
                 missing.push(url);
             }
         }
-        assert!(missing.is_empty(), "web files not embedded: {missing:?}");
+        assert!(missing.is_empty(), "web/dist files not embedded: {missing:?}");
     }
 }

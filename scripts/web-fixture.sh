@@ -132,7 +132,7 @@ Fixture ready in $ROOT
     $ROOT/tmp/mibpkg --root $ROOT supervise
 
   Only the web server, serving web/ from disk so edits show on reload:
-    MIBPKG_WEB_DIR=$REPO/web $BIN --root $ROOT web
+    MIBPKG_WEB_DIR=$REPO/web/dist $BIN --root $ROOT web
 
   Then open http://localhost:8099/
 EOF

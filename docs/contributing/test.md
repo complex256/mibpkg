@@ -24,7 +24,7 @@ Host tests map every unit path under a temporary root. They cover:
 The front end uses Node's built-in test runner:
 
 ```sh
-node --test web/tests/*.test.mjs
+npm --prefix web test
 ```
 
 ## Package examples
@@ -54,7 +54,7 @@ mkdocs build --strict
 
 ```sh
 cargo test
-node --test web/tests/*.test.mjs
+npm --prefix web test
 python3 tools/check_docs.py
 mkdocs build --strict
 ```

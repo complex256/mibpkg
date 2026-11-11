@@ -37,14 +37,22 @@ calls `mibpkg swdl-card`. Pass `--signed-header FILE` to make the engineering-me
 
 ## Web assets
 
-`web/` is plain HTML, CSS and JavaScript with no build step. The files are embedded in the binary as
-written.
+The front end is React + TypeScript + Tailwind with shadcn/ui components under `web/src/`. Vite
+builds it into `web/dist` (`index.html`, `style.css`, `app.js`); those three files are committed and
+embedded in the binary by `src/web/assets.rs`. The Rust build never runs npm, so a checkout builds
+without Node installed.
 
-For local development:
+When you change anything under `web/src` or `web/index.html`, rebuild and commit `web/dist`:
+
+```sh
+cd web && npm install && npm run build
+```
+
+Run the built front end against a local fixture:
 
 ```sh
 scripts/web-fixture.sh /tmp/mibpkg-fixture
-MIBPKG_WEB_DIR=web ./target/debug/mibpkg --root /tmp/mibpkg-fixture web
+MIBPKG_WEB_DIR=web/dist ./target/debug/mibpkg --root /tmp/mibpkg-fixture web
 ```
 
 ## Layout

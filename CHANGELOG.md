@@ -3,6 +3,40 @@
 All notable changes to mibpkg. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow semver.
 
+## 0.13.0 — 2026-11-10
+
+### Changed
+
+- **The web interface is rebuilt on React, Tailwind and shadcn/ui.** The views under `web/src/` are
+  React + TypeScript components with shadcn primitives (`Button`, `Card`, `Switch`, `Sheet`,
+  `Collapsible`, `DropdownMenu`, `Badge`, `Alert`) and Lucide icons, bundled by Vite into
+  `web/dist` and embedded in the binary as before. A checkout still builds with plain `cargo` —
+  the built bundle is committed, and `scripts/bundle.sh` rebuilds it when npm is available. No
+  request leaves the car: fonts, icons, styles and scripts all ship inside the binary.
+- **The package page fits one phone screen.** A header card carries the icon, description, version,
+  size and source with the main action; a merged **Service & configuration** card holds each
+  service (state, logs, restart), each config file (missing/conflict, edit) and one **Permissions**
+  row; permissions, removal and rollout approvals open in bottom sheets; and source, offers,
+  scripts and last result fold into **Technical details**. Roll back and Remove live under a
+  `•••` menu.
+- **Discover stops repeating the installed list.** While browsing it shows only what can be
+  installed; the search box covers installed packages too. With nothing to install it offers
+  **Check for updates** and **Install from file**.
+- **Updates focuses on pending work**: pending updates and **Update all** first, with
+  **Up to date (N)** collapsed.
+- **Web settings hides its raw network detail.** Interfaces and the manual hotspot-interface
+  override sit in **Advanced network interfaces**, open only when no address is recognised or an
+  override is already set.
+- **Remove mibpkg** is a bottom sheet with the acknowledgement switch inside it.
+- Touch targets, press feedback, keyboard focus and the dark/light palette follow the shadcn
+  tokens; the tab bar is hidden on the PIN pad.
+
+### Fixed
+
+- The package page goes back to the tab it was opened from (`‹ Updates`, `‹ Installed`, …).
+- Sources shows its job output above the lists, and every action's button spins (or greys out)
+  while the car takes it.
+
 ## 0.12.3 — 2026-11-10
 
 ### Changed

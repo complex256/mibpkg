@@ -22,6 +22,16 @@ while [ $# -gt 0 ]; do
 done
 
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1)
+
+# The front end is embedded from web/dist. Rebuild it so the binary carries the current UI; the
+# committed copy is there for builds on a machine without Node.
+if command -v npm >/dev/null 2>&1; then
+    npm --prefix "$ROOT/web" ci --no-audit --no-fund
+    npm --prefix "$ROOT/web" run build
+else
+    echo "bundle: npm not found, using the committed web/dist" >&2
+fi
+
 cargo build --release --manifest-path "$ROOT/Cargo.toml"
 HOST=$ROOT/target/release/mibpkg
 
