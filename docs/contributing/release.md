@@ -13,7 +13,7 @@
 
    ```sh
    cargo test
-   node --test web/tests/*.test.mjs
+   npm --prefix web test
    python3 tools/check_docs.py
    mkdocs build --strict
    ```
@@ -24,6 +24,9 @@
    scripts/build.sh
    scripts/bundle.sh --signed-header /path/to/header.txt
    ```
+
+   `scripts/bundle.sh` rebuilds `web/dist` first (when npm is available) and writes the unit binary,
+   the `.mpk` and the SD image under `out/`.
 
 6. Tag and push:
 

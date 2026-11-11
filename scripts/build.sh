@@ -6,5 +6,7 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 IMG=${QNX_IMAGE:-qnx65-armv7-toolchain:8.5-rust}
+# The toolchain image lives in Docker Desktop (the default Colima context does not have it).
+export DOCKER_CONTEXT=${DOCKER_CONTEXT:-desktop-linux}
 docker run --rm -v "$ROOT":/src/mibpkg -w /src "$IMG" build-std /src/mibpkg
 ls -l "$ROOT/target/armv7-unknown-nto-qnx650/release/mibpkg"
