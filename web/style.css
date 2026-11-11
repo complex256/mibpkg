@@ -358,6 +358,21 @@ button {
   cursor: default;
 }
 
+/* A pill whose action is running: the label is gone and the spinner is its only content. Kept
+   at full strength, so it reads as working rather than as greyed out. */
+.pill:disabled:has(.spinner) {
+  opacity: 1;
+}
+
+.pill .spinner {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  border-color: color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
+  vertical-align: middle;
+}
+
 /* Full-width buttons. */
 .button {
   display: block;

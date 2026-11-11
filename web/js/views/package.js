@@ -13,7 +13,7 @@
   Installing or updating a plugin that asks for new permissions opens the approval sheet first.
 */
 import { api } from '../api.js';
-import { backLink, formatSize, h, replace, toast } from '../dom.js';
+import { append, backLink, formatSize, h, replace, toast } from '../dom.js';
 import { packageIcon } from '../icons.js';
 import { approvalSheet, grantsEditor, newlyAsked, permissionList } from '../permissions.js';
 import { isSelfUpdate, jobView, redrawSoon, startAction, waitForRestart } from '../jobs.js';
@@ -35,6 +35,8 @@ export async function render(name) {
   }
 
   const inst = p.installed;
+  // Where the header's main button lives, so a running job can replace it with a spinner.
+  const mainSlot = h('div', {});
   const jobArea = h('div', {});
   const sheetArea = h('div', {});
 
@@ -89,8 +91,11 @@ export async function render(name) {
     withApproval({ action: 'rollback', package: p.name }, target, area, 'Allow and roll back');
   }
 
-  // Show a job's log; when `live`, redraw the page once it finishes.
+  // Show a job's log; when `live`, the page's main action becomes a spinner until it finishes.
   function follow(id, live) {
+    if (live) {
+      markBusy(mainSlot, page);
+    }
     const onDone = live
       ? (job) => {
           if (isSelfUpdate(job)) {
@@ -103,22 +108,11 @@ export async function render(name) {
     replace(jobArea, jobView(id, { onDone }));
   }
 
-  // A running job for this package (started here or from a list) or the last one we showed.
-  if (status.job) {
-    const running = await api('GET', `/api/jobs/${status.job}?since=999999`).catch(() => null);
-    if (running && running.package === name) {
-      lastJob = { name, id: status.job };
-      follow(status.job, true);
-    }
-  } else if (lastJob && lastJob.name === name) {
-    follow(lastJob.id, false);
-  }
-
-  return h(
+  const page = h(
     'div',
     {},
     backLink('#/discover', 'Discover'),
-    header(p, install),
+    header(p, install, mainSlot),
     sheetArea,
     facts(p),
     p.description ? h('p', {}, p.description) : null,
@@ -129,10 +123,46 @@ export async function render(name) {
     permissions(p, act),
     info(p),
   );
+
+  // A running job for this package (started here or from a list), or the last one we showed.
+  if (status.job) {
+    const running = await api('GET', `/api/jobs/${status.job}?since=999999`).catch(() => null);
+    if (running && running.package === name) {
+      lastJob = { name, id: status.job };
+      // Already finished: show its log, but the page's action is free again (no spinner).
+      follow(status.job, !running.done);
+    }
+  } else if (lastJob && lastJob.name === name) {
+    follow(lastJob.id, false);
+  }
+
+  return page;
 }
 
-/** Icon, name, collection, and the main button (install / update / choose). */
-function header(p, install) {
+/**
+ * While a job runs nothing else on this page may start: the main action becomes a disabled
+ * spinner pill (App Store style), so it is obvious the package is working and cannot be
+ * started twice. The redraw after the job brings the real button back.
+ */
+function markBusy(mainSlot, page) {
+  // Keep the look of the button that was there (a primary Update stays primary).
+  const was = mainSlot.querySelector('button');
+  const primary = Boolean(was && was.classList.contains('primary'));
+  replace(
+    mainSlot,
+    h(
+      'button',
+      { class: primary ? 'pill primary' : 'pill', type: 'button', disabled: true, 'aria-label': 'Working…' },
+      h('span', { class: 'spinner' }),
+    ),
+  );
+  for (const el of page.querySelectorAll('button, input')) {
+    el.disabled = true;
+  }
+}
+
+/** Icon, name, collection, and the main button (install / update / choose) in `mainSlot`. */
+function header(p, install, mainSlot) {
   const inst = p.installed;
   const colls = offeringCollections(p);
   let main = null;
@@ -169,10 +199,11 @@ function header(p, install) {
   }
 
   const source = inst ? inst.collection : colls.join(', ') || 'no source';
+  append(mainSlot, [main]);
   return h(
     'div',
     {},
-    h('div', { class: 'pkg-head' }, packageIcon(p.name, { large: true }), h('div', {}, h('h1', {}, p.name), h('span', { class: 'muted' }, source), main)),
+    h('div', { class: 'pkg-head' }, packageIcon(p.name, { large: true }), h('div', {}, h('h1', {}, p.name), h('span', { class: 'muted' }, source), mainSlot)),
     chooser,
   );
 }

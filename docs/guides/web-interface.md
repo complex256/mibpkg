@@ -35,6 +35,9 @@ A row appears when a newer compatible version is in a loaded collection. **Updat
 package that needs no new permission approval. A plugin update that adds a permission must be updated
 individually so the approval sheet can be shown.
 
+**Update** on a row opens the package page and starts straight away: that page's button turns into a
+spinner until the job has finished, and its other actions wait until then.
+
 ### Installed
 
 The package page has:

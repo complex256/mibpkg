@@ -3,6 +3,17 @@
 All notable changes to mibpkg. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow semver.
 
+## 0.12.2 — 2026-11-10
+
+### Changed
+
+- **A package action in progress is visible on the package page.** The page's main button becomes a
+  disabled spinner (App Store style) while a job for that package runs — including one started from a
+  row in Discover, Updates or Installed — and every other action on the page waits for it to finish.
+  **Update** and **Get** on a row show the spinner while the car takes the request. A plugin update
+  that asks for a new permission now opens the package page instead of starting, so its approval sheet
+  is shown.
+
 ## 0.12.1 — 2026-11-10
 
 ### Fixed
