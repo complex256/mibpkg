@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { useReload } from '../lib/use-reload';
 import { api } from '../lib/api';
 import { toast } from '../lib/toast';
 import { PageHeader } from '../components/page-header';
@@ -55,6 +56,7 @@ function ToggleRow({ label, detail, checked, onChange }: { label: string; detail
 export function WifiView() {
   const [w, setW] = useState<WifiSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [tick, reload] = useReload();
   const [password, setPassword] = useState('');
   const [clear, setClear] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -63,7 +65,7 @@ export function WifiView() {
     api<WifiSettings>('GET', '/api/wifi')
       .then(setW)
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, []);
+  }, [tick]);
 
   function update<K extends keyof WifiSettings>(key: K, value: WifiSettings[K]) {
     setW((previous) => (previous ? { ...previous, [key]: value } : previous));
@@ -103,7 +105,7 @@ export function WifiView() {
     return (
       <div>
         <PageHeader title="Internet" back={{ href: '#/more', label: 'More' }} />
-        <ErrorAlert error={error} />
+        <ErrorAlert error={error} onRetry={reload} />
       </div>
     );
   }

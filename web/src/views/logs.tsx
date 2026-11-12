@@ -13,17 +13,18 @@ const TAIL_BYTES = 64 * 1024;
 function LogList() {
   const [logs, setLogs] = useState<LogInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [tick, reload] = useReload();
 
   useEffect(() => {
     api<{ id: string; label: string }[]>('GET', '/api/logs')
       .then(setLogs)
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, []);
+  }, [tick]);
 
   return (
     <div>
       <PageHeader title="Logs" back={{ href: '#/more', label: 'More' }} />
-      <ErrorAlert error={error} />
+      <ErrorAlert error={error} onRetry={reload} />
       {logs ? (
         <Card className="divide-y divide-border overflow-hidden">
           {logs.map((log) => (
@@ -64,7 +65,7 @@ function LogDetail({ id }: { id: string }) {
           </Button>
         }
       />
-      <ErrorAlert error={error} />
+      <ErrorAlert error={error} onRetry={reload} />
       {text === null && !error ? (
         <Loading />
       ) : (

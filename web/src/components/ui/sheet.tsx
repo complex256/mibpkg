@@ -20,10 +20,10 @@ export function SheetContent({
 }: React.ComponentProps<typeof SheetPrimitive.Content> & { title: string; description?: string }) {
   return (
     <SheetPrimitive.Portal>
-      <SheetPrimitive.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px]" />
+      <SheetPrimitive.Overlay className="sheet-overlay fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px]" />
       <SheetPrimitive.Content
         className={cn(
-          'fixed inset-x-0 bottom-0 z-50 flex max-h-[88dvh] flex-col rounded-t-2xl border-t border-border bg-card text-card-foreground outline-none',
+          'sheet-panel fixed inset-x-0 bottom-0 z-50 flex max-h-[88dvh] flex-col rounded-t-2xl border-t border-border bg-card text-card-foreground outline-none',
           'pb-[max(1rem,env(safe-area-inset-bottom))]',
           className,
         )}

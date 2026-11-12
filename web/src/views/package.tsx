@@ -248,23 +248,26 @@ export function PackageView({ name }: { name: string }) {
           <SectionTitle>Service &amp; configuration</SectionTitle>
           <Card className="divide-y divide-border overflow-hidden">
             {inst.services.map((service) => (
-              <div key={service.id} className="flex items-center gap-3 px-4 py-3">
+              // At 320px the name gets its own line and the actions fold below it.
+              <div key={service.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
                 <Badge variant={stateVariant(service.state)}>{service.state}</Badge>
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0 flex-1 basis-40">
                   <div className="truncate text-sm font-medium">{service.id}</div>
                   {service.text ? <div className="truncate text-xs text-muted-foreground">{service.text}</div> : null}
                 </div>
-                <a href={`#/logs/${service.id}`} className="text-sm text-primary">
-                  Logs
-                </a>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={busy}
-                  onClick={() => act({ action: 'restart', package: p.name })}
-                >
-                  Restart
-                </Button>
+                <div className="ml-auto flex items-center gap-3">
+                  <a href={`#/logs/${service.id}`} className="text-sm text-primary">
+                    Logs
+                  </a>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={() => act({ action: 'restart', package: p.name })}
+                  >
+                    Restart
+                  </Button>
+                </div>
               </div>
             ))}
 

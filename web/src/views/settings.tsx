@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useReload } from '../lib/use-reload';
 import { api, ApiError } from '../lib/api';
 import { toast } from '../lib/toast';
 import { PageHeader } from '../components/page-header';
@@ -60,6 +61,7 @@ function ToggleRow({ label, detail, checked, disabled, onChange }: {
 export function SettingsView() {
   const [s, setSettings] = useState<WebSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [tick, reload] = useReload();
   const [listen, setListen] = useState<string[]>([]);
   const [port, setPort] = useState('80');
   const [pin, setPin] = useState('');
@@ -78,7 +80,7 @@ export function SettingsView() {
         setHotspotName((value.interfaces.hotspot ?? [])[0] ?? '');
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, []);
+  }, [tick]);
 
   const any = listen.includes('any');
 
@@ -124,7 +126,7 @@ export function SettingsView() {
     return (
       <div>
         <PageHeader title="Web settings" back={{ href: '#/more', label: 'More' }} />
-        <ErrorAlert error={error} />
+        <ErrorAlert error={error} onRetry={reload} />
       </div>
     );
   }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Delete } from 'lucide-react';
 import { afterLoginHash, api, ApiError } from '../lib/api';
 import { Button } from '../components/ui/button';
@@ -42,19 +42,22 @@ export function LoginView() {
     }
   }
 
-  useEffect(() => {
-    function onKey(event: KeyboardEvent) {
-      if (/^[0-9]$/.test(event.key)) {
-        press(event.key);
-      } else if (event.key === 'Backspace') {
-        press('back');
-      } else if (event.key === 'Enter') {
-        void submit();
-      }
+  // The key handler reads the latest pin through a ref, so it is registered once.
+  const onKey = useRef<(event: KeyboardEvent) => void>(() => {});
+  onKey.current = (event) => {
+    if (/^[0-9]$/.test(event.key)) {
+      press(event.key);
+    } else if (event.key === 'Backspace') {
+      press('back');
+    } else if (event.key === 'Enter') {
+      void submit();
     }
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  });
+  };
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => onKey.current(event);
+    document.addEventListener('keydown', listener);
+    return () => document.removeEventListener('keydown', listener);
+  }, []);
 
   function press(key: string) {
     if (key === 'back') {

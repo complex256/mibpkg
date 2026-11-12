@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { PackageIcon } from '../components/package-icon';
-import { PermissionList } from '../components/permission-sheet';
+import { ApprovalSheet, PermissionList } from '../components/permission-sheet';
 import { PageHeader } from '../components/page-header';
 import { JobConsole } from '../components/job-console';
 import { ErrorAlert } from '../components/async-state';
@@ -295,24 +295,17 @@ function ConfirmStep({
         </Button>
       </div>
 
-      {approval ? (
-        <Alert variant="warning" className="mt-4">
-          <div>
-            <p className="font-semibold">This package asks for access</p>
-            <p className="mt-1 text-sm">It runs only while every permission it asks for is granted.</p>
-            <PermissionList perms={asked} className="mt-2" />
-            {blocked.length ? <PermissionList perms={blocked} className="mt-2" /> : null}
-            <div className="mt-3 flex flex-col gap-2">
-              <Button loading={busy} onClick={() => install(asked.map((p) => p.id))}>
-                Allow and install
-              </Button>
-              <Button variant="secondary" onClick={() => setApproval(false)}>
-                Cancel
-              </Button>
-            </div>
-          </div>
-        </Alert>
-      ) : null}
+      <ApprovalSheet
+        open={approval}
+        onOpenChange={setApproval}
+        perms={asked}
+        blocked={blocked}
+        confirm="Allow and install"
+        onApprove={(ids) => {
+          setApproval(false);
+          void install(ids);
+        }}
+      />
     </div>
   );
 }

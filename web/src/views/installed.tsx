@@ -12,7 +12,7 @@ import type { Pkg } from '../lib/types';
 export function InstalledView() {
   const [packages, setPackages] = useState<Pkg[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tick] = useReload();
+  const [tick, reload] = useReload();
 
   useEffect(() => {
     let cancelled = false;
@@ -34,9 +34,9 @@ export function InstalledView() {
   return (
     <div>
       <PageHeader title="Installed" />
-      <ErrorAlert error={error} />
-      {packages === null && !error ? (
-        <Loading />
+      <ErrorAlert error={error} onRetry={reload} />
+      {packages === null ? (
+        error ? null : <Loading />
       ) : installed.length ? (
         <Card className="divide-y divide-border overflow-hidden px-4">
           {installed.map((p) => {
@@ -49,7 +49,6 @@ export function InstalledView() {
                   <span className="flex items-center gap-2">
                     {state ? <Badge variant={stateVariant(state)}>{state}</Badge> : null}
                     <span>{p.installed?.version}</span>
-                    {p.update ? <span>· update {p.update}</span> : null}
                   </span>
                 }
               />

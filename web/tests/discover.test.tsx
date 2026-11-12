@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DiscoverView } from '../src/views/discover';
 import { installedPackage, mockApi, reply, resetUi, status } from './helpers';
+import type { FakeRoutes } from './helpers';
 import type { Pkg } from '../src/lib/types';
 
 const NEW: Pkg = {
@@ -52,5 +53,25 @@ describe('Discover', () => {
     expect(await screen.findByText('Everything in your sources is already installed.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Check for updates' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Install from file' })).toBeInTheDocument();
+  });
+});
+
+describe('Discover when the car cannot answer', () => {
+  test('says so, offers a retry, and does not claim everything is installed', async () => {
+    const routes: FakeRoutes = {
+      'GET /api/packages': async () => {
+        throw new Error('down');
+      },
+      'GET /api/status': reply(200, status()),
+    };
+    mockApi(routes);
+    render(<DiscoverView />);
+
+    expect(await screen.findByText(/The car is not answering/)).toBeInTheDocument();
+    expect(screen.queryByText('Everything in your sources is already installed.')).not.toBeInTheDocument();
+
+    routes['GET /api/packages'] = reply(200, [installedPackage()]);
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText('Everything in your sources is already installed.')).toBeInTheDocument();
   });
 });

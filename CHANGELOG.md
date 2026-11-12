@@ -3,6 +3,27 @@
 All notable changes to mibpkg. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow semver.
 
+## 0.13.1 — 2026-11-11
+
+### Fixed
+
+- **A page the car cannot answer says so and offers Try again**, instead of showing an empty list or
+  "everything is up to date": Discover, Updates, Installed, Sources, Web settings, Internet, Logs and
+  the config editor.
+- **The config editor's result appears under the Save button** (and scrolls into view), not above the
+  textarea where the action was.
+- **Installing from a file asks for plugin permissions in the same bottom sheet as the package
+  page**; it no longer opens an inline block that pushed the Install button around.
+- The installed list no longer repeats the update version beside a button that already says Update.
+- A service row folds its Logs/Restart actions under the name at 320px instead of truncating both.
+
+### Changed
+
+- Bottom sheets rise from the edge with a short animation (off for reduced motion).
+- Light mode: the primary blue is darker (link and tab-label contrast), and an off switch has a
+  visible track.
+- Links show a keyboard focus ring; small buttons grew to 36px; list rows respond to a tap.
+
 ## 0.13.0 — 2026-11-10
 
 ### Changed

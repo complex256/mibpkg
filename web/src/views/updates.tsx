@@ -83,7 +83,7 @@ export function UpdatesView() {
         }
       />
       <p className="text-sm text-muted-foreground">{status?.online || 'Not checked online since the car started.'}</p>
-      <ErrorAlert error={error} />
+      <ErrorAlert error={error} onRetry={reload} />
 
       {job ? (
         <JobConsole
@@ -102,8 +102,8 @@ export function UpdatesView() {
         />
       ) : null}
 
-      {packages === null && !error ? (
-        <Loading />
+      {packages === null ? (
+        error ? null : <Loading />
       ) : (
         <>
           <SectionTitle className="flex items-center justify-between">

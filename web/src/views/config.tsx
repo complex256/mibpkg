@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { toast } from '../lib/toast';
 import { startAction } from '../lib/jobs';
@@ -39,6 +39,14 @@ export function ConfigView({ name, index }: { name: string; index: string }) {
   const [resolving, setResolving] = useState<'keep' | 'card' | null>(null);
   const [job, setJob] = useState<string | null>(null);
   const [tick, reload] = useReload();
+  const consoleRef = useRef<HTMLDivElement>(null);
+
+  // The result belongs under the button that started it, and a phone should show it without hunting.
+  useEffect(() => {
+    if (job && consoleRef.current) {
+      consoleRef.current.scrollIntoView({ block: 'nearest' });
+    }
+  }, [job]);
 
   useEffect(() => {
     let cancelled = false;
@@ -87,12 +95,12 @@ export function ConfigView({ name, index }: { name: string; index: string }) {
     return (
       <div>
         <PageHeader title={name} back={{ href: `#/package/${name}`, label: name }} />
-        <ErrorAlert error={error} />
+        <ErrorAlert error={error} onRetry={reload} />
       </div>
     );
   }
   if (!cfg) {
-    return <Loading />;
+    return error ? null : <Loading />;
   }
 
   const lines = (value: string) => value.replace(/\n$/, '').split('\n');
@@ -149,16 +157,6 @@ export function ConfigView({ name, index }: { name: string; index: string }) {
         </div>
       ) : null}
 
-      {job ? (
-        <JobConsole
-          id={job}
-          onDone={() => {
-            setResolving(null);
-            if (cfg) reload();
-          }}
-        />
-      ) : null}
-
       <div className="mt-3 space-y-1.5">
         <Label htmlFor="config">
           {name} · {cfg.path}
@@ -175,6 +173,17 @@ export function ConfigView({ name, index }: { name: string; index: string }) {
       <Button className="mt-2 w-full" loading={saving} onClick={save}>
         Save and restart
       </Button>
+      <div ref={consoleRef}>
+        {job ? (
+          <JobConsole
+            id={job}
+            onDone={() => {
+              setResolving(null);
+              if (cfg) reload();
+            }}
+          />
+        ) : null}
+      </div>
     </div>
   );
 }

@@ -89,7 +89,7 @@ export function PackageRow({ pkg, subtitle }: { pkg: Pkg; subtitle?: ReactNode }
   }
 
   return (
-    <a href={`#/package/${pkg.name}`} className="flex items-center gap-3 border-b border-border py-2.5 last:border-b-0">
+    <a href={`#/package/${pkg.name}`} className="flex items-center gap-3 border-b border-border py-2.5 last:border-b-0 active:opacity-70">
       <PackageIcon name={pkg.name} />
       <div className="min-w-0 flex-1">
         <div className="truncate font-semibold">{pkg.name}</div>

@@ -64,7 +64,7 @@ export function DiscoverView() {
         }
       />
 
-      <ErrorAlert error={error} />
+      <ErrorAlert error={error} onRetry={reload} />
 
       {status?.disabled ? (
         <Alert variant="warning" className="mb-3">
@@ -106,8 +106,10 @@ export function DiscoverView() {
         </a>
       ) : null}
 
-      {packages === null && !error ? (
-        <Loading />
+      {action.job ? <JobConsole id={action.job} onDone={() => reload()} /> : null}
+
+      {packages === null ? (
+        error ? null : <Loading />
       ) : (
         <>
           <SectionTitle className="flex items-center justify-between">
@@ -137,8 +139,6 @@ export function DiscoverView() {
               )}
             </Card>
           )}
-
-          {action.job ? <JobConsole id={action.job} onDone={() => reload()} /> : null}
 
           {search ? (
             <>

@@ -18,7 +18,7 @@ import type { Status } from '../lib/types';
 /** A row that links somewhere. */
 function LinkRow({ href, icon: Icon, label, detail }: { href: string; icon: ComponentType<{ className?: string }>; label: string; detail?: string }) {
   return (
-    <a href={href} className="flex min-h-12 items-center gap-3 px-4 py-3">
+    <a href={href} className="flex min-h-12 items-center gap-3 px-4 py-3 active:opacity-70">
       <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       <span className="flex-1">{label}</span>
       {detail ? <span className="max-w-[45%] truncate text-sm text-muted-foreground">{detail}</span> : null}
@@ -80,7 +80,7 @@ export function MoreView() {
   return (
     <div>
       <PageHeader title="More" />
-      <ErrorAlert error={error} />
+      <ErrorAlert error={error} onRetry={reload} />
       {status ? (
         <>
           <Card className="divide-y divide-border overflow-hidden">

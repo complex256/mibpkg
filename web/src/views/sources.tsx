@@ -67,12 +67,12 @@ export function SourcesView() {
     return (
       <div>
         <PageHeader title="Sources" back={{ href: '#/more', label: 'More' }} />
-        <ErrorAlert error={error} />
+        <ErrorAlert error={error} onRetry={reload} />
       </div>
     );
   }
   if (!data) {
-    return <Loading />;
+    return error ? null : <Loading />;
   }
 
   const listNote =
