@@ -7,10 +7,38 @@
     <meta name="theme-color" content="#0d0f13" />
     <title>mibpkg</title>
     <link rel="icon" href="data:," />
+    <!-- First paint, before the bundle is parsed: the app's own background and name, never a white flash. -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: #0d0f13;
+        color: #eef0f6;
+      }
+      @media (prefers-color-scheme: light) {
+        html,
+        body {
+          background: #f4f5f8;
+          color: #12141a;
+        }
+      }
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        font: 600 15px/1 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        color: #8a90a2;
+        letter-spacing: 0.02em;
+      }
+    </style>
     <script type="module" crossorigin src="/app.js"></script>
     <link rel="stylesheet" crossorigin href="/style.css">
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="boot" aria-hidden="true">mibpkg</div>
+    </div>
   </body>
 </html>

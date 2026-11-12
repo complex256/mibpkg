@@ -125,3 +125,44 @@ describe('the package page', () => {
     expect(screen.getByRole('link', { name: 'Edit it' })).toHaveAttribute('href', '#/package/carmqtt/config/0');
   });
 });
+
+describe('the package menu only offers what is true', () => {
+  test('a package that is not installed has no menu at all', async () => {
+    const available: Pkg = {
+      name: 'newpkg',
+      description: 'Not installed yet',
+      installed: null,
+      available: [{ collection: 'complex256', origin: 'online', version: '1.0.0', size: 10, compatible: true, kind: null, permissions: [] }],
+      update: null,
+      update_from: null,
+    };
+    serve([available]);
+    render(<PackageView name="newpkg" />);
+
+    expect(await screen.findByRole('button', { name: 'Get' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'More actions' })).not.toBeInTheDocument();
+
+    // It still says where the package comes from before it is installed.
+    await userEvent.click(screen.getByRole('button', { name: /Technical details/ }));
+    expect(await screen.findByText('Online: complex256')).toBeInTheDocument();
+  });
+
+  test('mibpkg itself has no menu when there is nothing to do', async () => {
+    serve([installedPackage({ name: 'mibpkg', update: null, update_from: null })]);
+    render(<PackageView name="mibpkg" />);
+
+    await screen.findByText('Technical details');
+    expect(screen.queryByRole('button', { name: 'More actions' })).not.toBeInTheDocument();
+  });
+
+  test('an installed package with a previous version offers Roll back and Remove', async () => {
+    const p = installedPackage();
+    p.installed = { ...p.installed!, previous: '0.2.1' };
+    serve([p]);
+    render(<PackageView name="carmqtt" />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'More actions' }));
+    expect(await screen.findByRole('menuitem', { name: /Roll back to 0\.2\.1/ })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Remove' })).toBeInTheDocument();
+  });
+});

@@ -1,10 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { RefreshCw } from 'lucide-react';
-import { api } from '../lib/api';
+import { useApi } from '../lib/use-api';
 import { isSelfUpdate, waitForRestart } from '../lib/jobs';
 import { setBanner } from '../lib/banner';
 import { useAction } from '../lib/use-action';
-import { useReload } from '../lib/use-reload';
 import { PageHeader } from '../components/page-header';
 import { SectionTitle } from '../components/section-title';
 import { PackageRow } from '../components/package-row';
@@ -16,30 +15,20 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../componen
 import type { Pkg, Status } from '../lib/types';
 
 export function UpdatesView() {
-  const [packages, setPackages] = useState<Pkg[] | null>(null);
-  const [status, setStatus] = useState<Status | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [tick, reload] = useReload();
+  const packagesQuery = useApi<Pkg[]>('/api/packages');
+  const statusQuery = useApi<Status>('/api/status');
   const action = useAction();
   const [running, setRunning] = useState<'check' | 'all' | null>(null);
   const [jobRunning, setJobRunning] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    setError(null);
-    Promise.all([api<Pkg[]>('GET', '/api/packages'), api<Status>('GET', '/api/status')])
-      .then(([list, state]) => {
-        if (cancelled) return;
-        setPackages(list);
-        setStatus(state);
-      })
-      .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [tick]);
+  const packages = packagesQuery.data;
+  const status = statusQuery.data;
+  const error = packagesQuery.error ?? statusQuery.error;
+
+  function reload() {
+    packagesQuery.reload();
+    statusQuery.reload();
+  }
 
   const pending = (packages ?? []).filter((p) => p.installed && p.update);
   const current = (packages ?? []).filter((p) => p.installed && !p.update);

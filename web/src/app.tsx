@@ -4,6 +4,7 @@ import { api } from './lib/api';
 import { setBusyBanner, useBanner } from './lib/banner';
 import { useToasts } from './lib/toast';
 import { useRoute, type Route } from './router';
+import { lastTab } from './lib/tabs';
 import { cn } from './lib/utils';
 import type { Status } from './lib/types';
 
@@ -48,6 +49,8 @@ function ViewSlot({ route }: { route: Route }) {
 }
 
 function TabBar({ route, updates }: { route: Route; updates: number }) {
+  // Package, config and log pages belong to the tab they were opened from.
+  const active = route.tab ?? lastTab();
   const tabs = [
     { id: 'discover', label: 'Discover', icon: Compass },
     { id: 'updates', label: 'Updates', icon: Download },
@@ -63,10 +66,10 @@ function TabBar({ route, updates }: { route: Route; updates: number }) {
         <a
           key={id}
           href={`#/${id}`}
-          aria-current={route.tab === id ? 'page' : undefined}
+          aria-current={active === id ? 'page' : undefined}
           className={cn(
             'relative flex flex-1 flex-col items-center justify-center gap-0.5 text-[11px]',
-            route.tab === id ? 'font-semibold text-primary' : 'text-muted-foreground',
+            active === id ? 'font-semibold text-primary' : 'text-muted-foreground',
           )}
         >
           <Icon className="size-5" aria-hidden="true" />
@@ -149,8 +152,10 @@ export function App() {
   return (
     <div className="min-h-dvh">
       {banner ? (
-        <div role="status" className="mx-auto max-w-2xl px-4 pt-2">
-          <div className="rounded-lg bg-warning px-3.5 py-2.5 text-[13px] text-warning-foreground">{banner}</div>
+        <div className="pointer-events-none fixed inset-x-0 top-0 z-50 mx-auto max-w-2xl px-4 pt-[max(0.5rem,env(safe-area-inset-top))]">
+          <div role="status" className="pointer-events-auto rounded-lg bg-warning px-3.5 py-2.5 text-[13px] text-warning-foreground shadow-lg">
+            {banner}
+          </div>
         </div>
       ) : null}
       <main className="app-main">

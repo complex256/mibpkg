@@ -2,6 +2,7 @@ import { vi } from 'vitest';
 import { resetBanners } from '../src/lib/banner';
 import { resetTabs } from '../src/lib/tabs';
 import { resetToasts } from '../src/lib/toast';
+import { clearApiCache } from '../src/lib/use-api';
 import type { Pkg, Status } from '../src/lib/types';
 
 /** One fake answer: a status and a JSON body. */
@@ -27,6 +28,7 @@ export function mockApi(routes: FakeRoutes) {
 
 /** Every test starts from the same module state. */
 export function resetUi() {
+  clearApiCache();
   resetTabs();
   resetBanners();
   resetToasts();

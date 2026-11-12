@@ -1,10 +1,9 @@
-import { useEffect, useState, type ComponentType } from 'react';
+import { useState, type ComponentType } from 'react';
 import { ChevronRight, Database, FileUp, RotateCw, ScrollText, Settings, Trash2, Wifi } from 'lucide-react';
-import { api } from '../lib/api';
+import { useApi } from '../lib/use-api';
 import { isSelfUpdate, waitForRestart } from '../lib/jobs';
 import { setBanner } from '../lib/banner';
 import { useAction } from '../lib/use-action';
-import { useReload } from '../lib/use-reload';
 import { PageHeader } from '../components/page-header';
 import { SectionTitle } from '../components/section-title';
 import { JobConsole } from '../components/job-console';
@@ -39,28 +38,13 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 }
 
 export function MoreView() {
-  const [status, setStatus] = useState<Status | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [tick, reload] = useReload();
+  const statusQuery = useApi<Status>('/api/status');
+  const status = statusQuery.data;
+  const error = statusQuery.error;
   const action = useAction();
   const [removeOpen, setRemoveOpen] = useState(false);
   const [ack, setAck] = useState(false);
   const [purge, setPurge] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    setError(null);
-    api<Status>('GET', '/api/status')
-      .then((value) => {
-        if (!cancelled) setStatus(value);
-      })
-      .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [tick]);
 
   async function rescan() {
     await action.run({ action: 'rescan' });
@@ -80,7 +64,7 @@ export function MoreView() {
   return (
     <div>
       <PageHeader title="More" />
-      <ErrorAlert error={error} onRetry={reload} />
+      <ErrorAlert error={error} onRetry={statusQuery.reload} />
       {status ? (
         <>
           <Card className="divide-y divide-border overflow-hidden">
@@ -98,7 +82,7 @@ export function MoreView() {
               type="button"
               onClick={rescan}
               disabled={action.busy || Boolean(action.job)}
-              className="flex min-h-12 w-full items-center gap-3 px-4 py-3 text-left disabled:opacity-50"
+              className="flex min-h-12 w-full items-center gap-3 px-4 py-3 text-left active:opacity-70 disabled:opacity-50"
             >
               <RotateCw className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
               <span className="flex-1">Rescan SD card</span>
@@ -113,7 +97,7 @@ export function MoreView() {
                 if (isSelfUpdate(job)) {
                   void waitForRestart(status.version, setBanner);
                 } else {
-                  reload();
+                  statusQuery.reload();
                 }
               }}
             />

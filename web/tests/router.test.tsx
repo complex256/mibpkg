@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, test } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { App } from '../src/app';
 import { parseHash } from '../src/router';
-import { backTab } from '../src/lib/tabs';
+import { backTab, rememberTab } from '../src/lib/tabs';
 import { installedPackage, mockApi, reply, resetUi, status } from './helpers';
 
 describe('parseHash', () => {
@@ -52,4 +52,17 @@ describe('the app shell', () => {
     render(<App />);
     expect(await screen.findByText('1', { selector: 'nav span' })).toBeInTheDocument();
   });
+});
+
+test('a package page lights the tab it was opened from', async () => {
+  rememberTab('installed');
+  location.hash = '#/package/carmqtt';
+  mockApi({
+    'GET /api/status': reply(200, status()),
+    'GET /api/packages': reply(200, [installedPackage()]),
+  });
+  render(<App />);
+
+  const nav = await screen.findByRole('navigation', { name: 'Sections' });
+  expect(within(nav).getByRole('link', { name: /Installed/ })).toHaveAttribute('aria-current', 'page');
 });

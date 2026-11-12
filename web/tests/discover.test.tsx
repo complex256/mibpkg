@@ -75,3 +75,14 @@ describe('Discover when the car cannot answer', () => {
     expect(await screen.findByText('Everything in your sources is already installed.')).toBeInTheDocument();
   });
 });
+
+test('a revisited tab paints its last answer instead of a spinner', async () => {
+  serve([installedPackage(), NEW]);
+  const first = render(<DiscoverView />);
+  await first.findByText(/A package you do not have/);
+  first.unmount();
+
+  const second = render(<DiscoverView />);
+  expect(second.queryByLabelText('Loading')).not.toBeInTheDocument();
+  expect(second.getByText('newpkg')).toBeInTheDocument();
+});

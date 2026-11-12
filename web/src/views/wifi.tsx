@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { useReload } from '../lib/use-reload';
+import { useApi } from '../lib/use-api';
 import { api } from '../lib/api';
 import { toast } from '../lib/toast';
 import { PageHeader } from '../components/page-header';
@@ -54,18 +54,19 @@ function ToggleRow({ label, detail, checked, onChange }: { label: string; detail
 }
 
 export function WifiView() {
+  const query = useApi<WifiSettings>('/api/wifi');
   const [w, setW] = useState<WifiSettings | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [tick, reload] = useReload();
+  const error = query.error;
   const [password, setPassword] = useState('');
   const [clear, setClear] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // The form follows the car whenever a (re)load brings new settings.
   useEffect(() => {
-    api<WifiSettings>('GET', '/api/wifi')
-      .then(setW)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, [tick]);
+    if (query.data) {
+      setW(query.data);
+    }
+  }, [query.data]);
 
   function update<K extends keyof WifiSettings>(key: K, value: WifiSettings[K]) {
     setW((previous) => (previous ? { ...previous, [key]: value } : previous));
@@ -105,7 +106,7 @@ export function WifiView() {
     return (
       <div>
         <PageHeader title="Internet" back={{ href: '#/more', label: 'More' }} />
-        <ErrorAlert error={error} onRetry={reload} />
+        <ErrorAlert error={error} onRetry={query.reload} />
       </div>
     );
   }

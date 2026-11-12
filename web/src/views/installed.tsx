@@ -1,40 +1,22 @@
-import { useEffect, useState } from 'react';
-import { api } from '../lib/api';
-import { useReload } from '../lib/use-reload';
+import { useApi } from '../lib/use-api';
 import { PageHeader } from '../components/page-header';
 import { PackageRow } from '../components/package-row';
 import { ErrorAlert, Loading } from '../components/async-state';
 import { Badge } from '../components/ui/badge';
-import { overallState, stateVariant } from '../lib/service-state';
 import { Card } from '../components/ui/card';
+import { overallState, stateVariant } from '../lib/service-state';
 import type { Pkg } from '../lib/types';
 
 export function InstalledView() {
-  const [packages, setPackages] = useState<Pkg[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [tick, reload] = useReload();
-
-  useEffect(() => {
-    let cancelled = false;
-    setError(null);
-    api<Pkg[]>('GET', '/api/packages')
-      .then((list) => {
-        if (!cancelled) setPackages(list);
-      })
-      .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [tick]);
-
+  const query = useApi<Pkg[]>('/api/packages');
+  const packages = query.data;
+  const error = query.error;
   const installed = (packages ?? []).filter((p) => p.installed);
 
   return (
     <div>
       <PageHeader title="Installed" />
-      <ErrorAlert error={error} onRetry={reload} />
+      <ErrorAlert error={error} onRetry={query.reload} />
       {packages === null ? (
         error ? null : <Loading />
       ) : installed.length ? (

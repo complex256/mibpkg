@@ -3,6 +3,24 @@
 All notable changes to mibpkg. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow semver.
 
+## 0.13.2 — 2026-11-12
+
+### Fixed
+
+- **The package menu only offers what is true.** A package that is not installed has no `•••` menu
+  at all (Remove used to appear for it), and mibpkg itself has none when it has nothing to do. The
+  items are built from the package's state, so an action that does not apply cannot reappear.
+- **A package that is not installed still says where it comes from** and whether it runs install
+  scripts: Technical details was only rendered once something was installed.
+- **Tapping a tab no longer flashes a second load.** A page paints its previous answer immediately
+  and refreshes behind it; a first visit still shows one loading state. Over the car's Wi-Fi this
+  was a spinner where content had just been, then content again.
+- **The busy banner no longer moves the page**: it is a fixed strip, not a block above `<main>`.
+- **The first paint is the app**, not a white flash: the shell carries the background and name while
+  the bundle is parsed.
+- **The tab bar keeps its last tab lit** on a package, config or log page (the React port had lost
+  that).
+
 ## 0.13.1 — 2026-11-11
 
 ### Fixed

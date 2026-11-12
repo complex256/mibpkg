@@ -44,6 +44,7 @@ export interface Offer {
   compatible: boolean;
   kind?: string | null;
   permissions?: Permission[];
+  uses_scripts?: boolean;
 }
 
 export interface MovedChoice {

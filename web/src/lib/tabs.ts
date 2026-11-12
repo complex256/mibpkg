@@ -21,6 +21,11 @@ export function rememberTab(tab: string | null | undefined) {
   }
 }
 
+/** The tab the user was last on (a page's own chrome lights it). */
+export function lastTab(): string {
+  return last;
+}
+
 /** The way back to that tab. */
 export function backTab(): { href: string; label: string } {
   return { href: `#/${last}`, label: LABELS[last] };

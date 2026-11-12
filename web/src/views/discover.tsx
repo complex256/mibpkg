@@ -1,8 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Search, Upload } from 'lucide-react';
-import { api } from '../lib/api';
+import { useApi } from '../lib/use-api';
 import { useAction } from '../lib/use-action';
-import { useReload } from '../lib/use-reload';
 import { PageHeader } from '../components/page-header';
 import { SectionTitle } from '../components/section-title';
 import { PackageRow } from '../components/package-row';
@@ -15,29 +14,19 @@ import { Input } from '../components/ui/input';
 import type { Pkg, Status } from '../lib/types';
 
 export function DiscoverView() {
-  const [packages, setPackages] = useState<Pkg[] | null>(null);
-  const [status, setStatus] = useState<Status | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  const [tick, reload] = useReload();
+  const packagesQuery = useApi<Pkg[]>('/api/packages');
+  const statusQuery = useApi<Status>('/api/status');
   const action = useAction();
 
-  useEffect(() => {
-    let cancelled = false;
-    setError(null);
-    Promise.all([api<Pkg[]>('GET', '/api/packages'), api<Status>('GET', '/api/status')])
-      .then(([list, state]) => {
-        if (cancelled) return;
-        setPackages(list);
-        setStatus(state);
-      })
-      .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [tick]);
+  const packages = packagesQuery.data;
+  const status = statusQuery.data;
+  const error = packagesQuery.error ?? statusQuery.error;
+
+  function reload() {
+    packagesQuery.reload();
+    statusQuery.reload();
+  }
 
   const search = query.trim().toLowerCase();
   const matches = (p: Pkg) => !search || p.name.includes(search) || (p.description ?? '').toLowerCase().includes(search);

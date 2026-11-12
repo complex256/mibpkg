@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useReload } from '../lib/use-reload';
+import { useApi } from '../lib/use-api';
 import { api, ApiError } from '../lib/api';
 import { toast } from '../lib/toast';
 import { PageHeader } from '../components/page-header';
@@ -59,9 +59,9 @@ function ToggleRow({ label, detail, checked, disabled, onChange }: {
 }
 
 export function SettingsView() {
-  const [s, setSettings] = useState<WebSettings | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [tick, reload] = useReload();
+  const query = useApi<WebSettings>('/api/settings');
+  const s = query.data;
+  const error = query.error;
   const [listen, setListen] = useState<string[]>([]);
   const [port, setPort] = useState('80');
   const [pin, setPin] = useState('');
@@ -71,16 +71,15 @@ export function SettingsView() {
   const [saved, setSaved] = useState<string | null>(null);
   const [needsConfirm, setNeedsConfirm] = useState(false);
 
+  // The form follows the car's settings whenever a (re)load brings new ones.
   useEffect(() => {
-    api<WebSettings>('GET', '/api/settings')
-      .then((value) => {
-        setSettings(value);
-        setListen(value.listen);
-        setPort(String(value.port));
-        setHotspotName((value.interfaces.hotspot ?? [])[0] ?? '');
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, [tick]);
+    if (!s) {
+      return;
+    }
+    setListen(s.listen);
+    setPort(String(s.port));
+    setHotspotName((s.interfaces.hotspot ?? [])[0] ?? '');
+  }, [s]);
 
   const any = listen.includes('any');
 
@@ -126,7 +125,7 @@ export function SettingsView() {
     return (
       <div>
         <PageHeader title="Web settings" back={{ href: '#/more', label: 'More' }} />
-        <ErrorAlert error={error} onRetry={reload} />
+        <ErrorAlert error={error} onRetry={query.reload} />
       </div>
     );
   }

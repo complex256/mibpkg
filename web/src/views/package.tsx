@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { ChevronRight, FileCog, MoreHorizontal, RotateCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { api } from '../lib/api';
 import { isSelfUpdate, waitForRestart } from '../lib/jobs';
@@ -6,7 +6,7 @@ import { newlyAsked, grantedCount } from '../lib/permissions';
 import { backTab } from '../lib/tabs';
 import { setBanner } from '../lib/banner';
 import { useAction } from '../lib/use-action';
-import { useReload } from '../lib/use-reload';
+import { useApi } from '../lib/use-api';
 import { compareVersions, formatSize } from '../lib/utils';
 import { overallState, stateVariant } from '../lib/service-state';
 import { PackageIcon } from '../components/package-icon';
@@ -39,11 +39,17 @@ function offerPermissions(p: Pkg, collection: string): Permission[] {
 }
 
 export function PackageView({ name }: { name: string }) {
-  const [packages, setPackages] = useState<Pkg[] | null>(null);
-  const [status, setStatus] = useState<Status | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [tick, reload] = useReload();
+  const packagesQuery = useApi<Pkg[]>('/api/packages');
+  const statusQuery = useApi<Status>('/api/status');
+  const packages = packagesQuery.data;
+  const status = statusQuery.data;
+  const error = packagesQuery.error ?? statusQuery.error;
   const action = useAction();
+
+  function reload() {
+    packagesQuery.reload();
+    statusQuery.reload();
+  }
 
   const [jobId, setJobId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
@@ -52,23 +58,6 @@ export function PackageView({ name }: { name: string }) {
   const [ack, setAck] = useState(false);
   const [purge, setPurge] = useState(false);
   const [chosenSource, setChosenSource] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setError(null);
-    Promise.all([api<Pkg[]>('GET', '/api/packages'), api<Status>('GET', '/api/status')])
-      .then(([list, state]) => {
-        if (cancelled) return;
-        setPackages(list);
-        setStatus(state);
-      })
-      .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [tick]);
 
   const p = packages?.find((item) => item.name === name) ?? null;
 
@@ -133,7 +122,7 @@ export function PackageView({ name }: { name: string }) {
     return (
       <div>
         <PageHeader title={name} back={backTab()} />
-        <ErrorAlert error={error} />
+        <ErrorAlert error={error} onRetry={reload} />
         {!error && packages ? <Alert variant="muted">No package named {name} on the car, the card, or online.</Alert> : null}
         {!packages && !error ? <Loading /> : null}
       </div>
@@ -149,6 +138,16 @@ export function PackageView({ name }: { name: string }) {
 
   const busy = running || action.busy;
 
+  // Everything the ••• menu can do, computed from what is actually true: an item that does not
+  // make sense in this state is never rendered, and the trigger disappears with the last item.
+  const menuItems: { key: string; label: string; icon: typeof RotateCw; destructive?: boolean; run: () => void }[] = [];
+  if (inst?.previous) {
+    menuItems.push({ key: 'rollback', label: `Roll back to ${inst.previous}`, icon: RotateCw, run: rollback });
+  }
+  if (inst && p.name !== 'mibpkg') {
+    menuItems.push({ key: 'remove', label: 'Remove', icon: Trash2, destructive: true, run: () => setSheet('remove') });
+  }
+
   return (
     <div>
       <PageHeader back={back} />
@@ -159,28 +158,26 @@ export function PackageView({ name }: { name: string }) {
           <div className="min-w-0 flex-1">
             <div className="flex items-start justify-between gap-2">
               <h1 className="truncate text-xl font-bold">{p.name}</h1>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button size="icon" variant="secondary" aria-label="More actions">
-                    <MoreHorizontal aria-hidden="true" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {inst?.previous ? (
-                    <DropdownMenuItem onSelect={rollback}>
-                      <RotateCw aria-hidden="true" />
-                      Roll back to {inst.previous}
-                    </DropdownMenuItem>
-                  ) : null}
-                  {inst?.previous && p.name !== 'mibpkg' ? <DropdownMenuSeparator /> : null}
-                  {p.name !== 'mibpkg' ? (
-                    <DropdownMenuItem destructive onSelect={() => setSheet('remove')}>
-                      <Trash2 aria-hidden="true" />
-                      Remove
-                    </DropdownMenuItem>
-                  ) : null}
-                </DropdownMenuContent>
-              </DropdownMenu>
+              {menuItems.length ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="icon" variant="secondary" aria-label="More actions">
+                      <MoreHorizontal aria-hidden="true" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {menuItems.map((item, index) => (
+                      <Fragment key={item.key}>
+                        {index > 0 ? <DropdownMenuSeparator /> : null}
+                        <DropdownMenuItem destructive={item.destructive} disabled={busy} onSelect={item.run}>
+                          <item.icon aria-hidden="true" />
+                          {item.label}
+                        </DropdownMenuItem>
+                      </Fragment>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
             </div>
             {p.description ? <p className="mt-0.5 text-sm text-muted-foreground">{p.description}</p> : null}
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
@@ -307,25 +304,32 @@ export function PackageView({ name }: { name: string }) {
             </Alert>
           ) : null}
 
-          <Collapsible className="mt-5">
-            <CollapsibleTrigger>Technical details</CollapsibleTrigger>
-            <CollapsibleContent>
-              <Card className="divide-y divide-border text-sm">
-                <DetailRow label="Updates from" value={inst.collection === 'uploaded' ? 'nowhere (installed from a file)' : inst.collection} />
-                {p.available.map((offer) => (
-                  <DetailRow
-                    key={`${offer.origin}-${offer.collection}`}
-                    label={`${offer.origin === 'card' ? 'SD card' : 'Online'}: ${offer.collection}`}
-                    value={`${offer.version}${offer.compatible ? '' : ' (not for this car)'}`}
-                  />
-                ))}
-                <DetailRow label="Install scripts" value={inst.uses_scripts ? 'yes: runs its own scripts as root' : 'none'} />
-                {inst.last_result ? <DetailRow label="Last result" value={inst.last_result} /> : null}
-              </Card>
-            </CollapsibleContent>
-          </Collapsible>
         </>
       ) : null}
+
+      {/* What it is and where it comes from is useful before installing, too. */}
+      <Collapsible className="mt-5">
+        <CollapsibleTrigger>Technical details</CollapsibleTrigger>
+        <CollapsibleContent>
+          <Card className="divide-y divide-border text-sm">
+            {inst ? (
+              <DetailRow label="Updates from" value={inst.collection === 'uploaded' ? 'nowhere (installed from a file)' : inst.collection} />
+            ) : null}
+            {p.available.map((offer) => (
+              <DetailRow
+                key={`${offer.origin}-${offer.collection}`}
+                label={`${offer.origin === 'card' ? 'SD card' : 'Online'}: ${offer.collection}`}
+                value={`${offer.version}${offer.compatible ? '' : ' (not for this car)'}`}
+              />
+            ))}
+            <DetailRow
+              label="Install scripts"
+              value={inst ? (inst.uses_scripts ? 'yes: runs its own scripts as root' : 'none') : p.available.some((offer) => offer.uses_scripts) ? 'yes: they run as root' : 'none'}
+            />
+            {inst?.last_result ? <DetailRow label="Last result" value={inst.last_result} /> : null}
+          </Card>
+        </CollapsibleContent>
+      </Collapsible>
 
       <ApprovalSheet
         open={approval !== null}

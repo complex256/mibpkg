@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { toast } from '../lib/toast';
 import { startAction } from '../lib/jobs';
-import { useReload } from '../lib/use-reload';
+import { useApi } from '../lib/use-api';
 import { PageHeader } from '../components/page-header';
 import { JobConsole } from '../components/job-console';
 import { ErrorAlert, Loading } from '../components/async-state';
@@ -32,14 +32,21 @@ function CompareSide({ title, own, other }: { title: string; own: string[]; othe
 }
 
 export function ConfigView({ name, index }: { name: string; index: string }) {
-  const [cfg, setCfg] = useState<ConfigDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const query = useApi<ConfigDetail>(`/api/packages/${name}/config/${index}`);
+  const cfg = query.data;
+  const error = query.error;
   const [text, setText] = useState('');
   const [saving, setSaving] = useState(false);
   const [resolving, setResolving] = useState<'keep' | 'card' | null>(null);
   const [job, setJob] = useState<string | null>(null);
-  const [tick, reload] = useReload();
   const consoleRef = useRef<HTMLDivElement>(null);
+
+  // The editor holds the file as the car last sent it (also after a save).
+  useEffect(() => {
+    if (cfg) {
+      setText(cfg.content);
+    }
+  }, [cfg]);
 
   // The result belongs under the button that started it, and a phone should show it without hunting.
   useEffect(() => {
@@ -47,23 +54,6 @@ export function ConfigView({ name, index }: { name: string; index: string }) {
       consoleRef.current.scrollIntoView({ block: 'nearest' });
     }
   }, [job]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setError(null);
-    api<ConfigDetail>('GET', `/api/packages/${name}/config/${index}`)
-      .then((value) => {
-        if (cancelled) return;
-        setCfg(value);
-        setText(value.content);
-      })
-      .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [name, index, tick]);
 
   async function save() {
     setSaving(true);
@@ -95,7 +85,7 @@ export function ConfigView({ name, index }: { name: string; index: string }) {
     return (
       <div>
         <PageHeader title={name} back={{ href: `#/package/${name}`, label: name }} />
-        <ErrorAlert error={error} onRetry={reload} />
+        <ErrorAlert error={error} onRetry={query.reload} />
       </div>
     );
   }
@@ -179,7 +169,7 @@ export function ConfigView({ name, index }: { name: string; index: string }) {
             id={job}
             onDone={() => {
               setResolving(null);
-              if (cfg) reload();
+              query.reload();
             }}
           />
         ) : null}

@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { api } from '../lib/api';
 import { toast } from '../lib/toast';
-import { useReload } from '../lib/use-reload';
+import { useApi } from '../lib/use-api';
 import { PageHeader } from '../components/page-header';
 import { SectionTitle } from '../components/section-title';
 import { JobConsole } from '../components/job-console';
@@ -22,27 +22,12 @@ const ORIGIN: Record<string, string> = {
 };
 
 export function SourcesView() {
-  const [data, setData] = useState<SourcesReply | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const query = useApi<SourcesReply>('/api/sources');
+  const data = query.data;
+  const error = query.error;
   const [job, setJob] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [input, setInput] = useState('');
-  const [tick, reload] = useReload();
-
-  useEffect(() => {
-    let cancelled = false;
-    setError(null);
-    api<SourcesReply>('GET', '/api/sources')
-      .then((reply) => {
-        if (!cancelled) setData(reply);
-      })
-      .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [tick]);
 
   async function change(method: 'POST' | 'DELETE', source: string, marker = source) {
     setBusy(marker);
@@ -67,7 +52,7 @@ export function SourcesView() {
     return (
       <div>
         <PageHeader title="Sources" back={{ href: '#/more', label: 'More' }} />
-        <ErrorAlert error={error} onRetry={reload} />
+        <ErrorAlert error={error} onRetry={query.reload} />
       </div>
     );
   }
@@ -104,7 +89,7 @@ export function SourcesView() {
           id={job}
           onDone={() => {
             setBusy(null);
-            reload();
+            query.reload();
           }}
         />
       ) : null}
