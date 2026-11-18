@@ -40,6 +40,11 @@ jobs:
           echo "VERSION=$v" >> "$GITHUB_ENV"
       - name: Cross-build the QNX binary
         run: scripts/build.sh
+      # The cross build runs as root in Docker and leaves root-owned files under target/, which
+      # the host cargo build in bundle.sh (running as the runner user) cannot write to.
+      - name: Give the workspace back to the runner user
+        run: |
+          docker run --rm -v "$PWD":/w --entrypoint chown "${QNX_IMAGE:-qnx65-armv7-toolchain:8.5-rust}" -R "$(id -u):$(id -g)" /w
       - name: Build the signed card
         env:
           SIGNED_HEADER_GZ_B64: ${{ secrets.SIGNED_HEADER_GZ_B64 }}
