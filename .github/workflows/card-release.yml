@@ -1,0 +1,64 @@
+# Builds the signed SD card (QNX binary + collection + genuine signed metainfo2 header) when a
+# release is published, and attaches it to that release.
+#
+# Runs on a self-hosted runner because the QNX cross toolchain image (qnx65-armv7-toolchain)
+# carries the proprietary QNX SDP and is never pushed to a registry. See
+# docs/contributing/ci-runner.md. The trigger is release events only, never pull_request, so
+# fork code cannot reach the runner or the secret.
+name: signed card
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to (re)build the card for
+        required: true
+permissions:
+  contents: write
+concurrency:
+  group: card-release
+  cancel-in-progress: false
+jobs:
+  card:
+    if: github.repository == 'complex256/mibpkg'
+    runs-on: [self-hosted, linux, x64, mibpkg-qnx]
+    timeout-minutes: 60
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      DOCKER_CONTEXT: default
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          persist-credentials: false
+      - name: Tag matches Cargo.toml
+        run: |
+          v=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          [ "$TAG" = "v$v" ] || { echo "tag $TAG != Cargo.toml version v$v" >&2; exit 1; }
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+      - name: Cross-build the QNX binary
+        run: scripts/build.sh
+      - name: Build the signed card
+        env:
+          SIGNED_HEADER_GZ_B64: ${{ secrets.SIGNED_HEADER_GZ_B64 }}
+        run: |
+          [ -n "$SIGNED_HEADER_GZ_B64" ] || { echo "secret SIGNED_HEADER_GZ_B64 is not set" >&2; exit 1; }
+          hdr="$RUNNER_TEMP/signed-header.txt"
+          trap 'rm -f "$hdr"' EXIT
+          printf '%s' "$SIGNED_HEADER_GZ_B64" | base64 -d | gunzip > "$hdr"
+          scripts/bundle.sh --signed-header "$hdr"
+      - name: Verify the card is signed
+        run: |
+          zip="out/mibpkg-sd-$VERSION.zip"
+          unzip -p "$zip" metainfo2.txt > "$RUNNER_TEMP/meta.txt"
+          grep -q '^\[Signature\]' "$RUNNER_TEMP/meta.txt" || { echo "no [Signature] block in card" >&2; exit 1; }
+          grep -q "mibpkg installer v$VERSION" "$RUNNER_TEMP/meta.txt" || { echo "card is not v$VERSION" >&2; exit 1; }
+          (cd out && sha256sum "mibpkg-sd-$VERSION.zip" > "mibpkg-sd-$VERSION.zip.sha256")
+      - name: Attach to the release
+        run: gh release upload "$TAG" "out/mibpkg-sd-$VERSION.zip" "out/mibpkg-sd-$VERSION.zip.sha256" --clobber
+      - name: Give the workspace back to the runner user
+        if: always()
+        run: |
+          docker run --rm -v "$PWD":/w --entrypoint chown "${QNX_IMAGE:-qnx65-armv7-toolchain:8.5-rust}" -R "$(id -u):$(id -g)" /w || true

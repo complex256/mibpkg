@@ -18,25 +18,20 @@
    mkdocs build --strict
    ```
 
-5. Build the unit binary and the card:
-
-   ```sh
-   scripts/build.sh
-   scripts/bundle.sh --signed-header /path/to/header.txt
-   ```
-
-   `scripts/bundle.sh` rebuilds `web/dist` first (when npm is available) and writes the unit binary,
-   the `.mpk` and the SD image under `out/`.
-
-6. Tag and push:
+5. Tag and push:
 
    ```sh
    git tag v0.10.0
    git push origin main --tags
    ```
 
-7. Create a GitHub release for the tag. `.github/workflows/host-release.yml` attaches the Linux host
-   binary `mibpkg-host-linux-x86_64`.
+6. Create a GitHub release for the tag. Publishing it starts two workflows:
+   `.github/workflows/host-release.yml` attaches the Linux host binary `mibpkg-host-linux-x86_64`,
+   and `.github/workflows/card-release.yml` builds the signed SD card on the self-hosted runner and
+   attaches `mibpkg-sd-<version>.zip`. See [CI runner](ci-runner.md).
+
+To build a card on your own machine instead, run `scripts/build.sh` and then
+`scripts/bundle.sh --signed-header /path/to/header.txt`.
 
 ## Docs
 

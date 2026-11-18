@@ -124,4 +124,5 @@ nav:
       - Build: contributing/build.md
       - Test: contributing/test.md
       - Release: contributing/release.md
+      - CI runner: contributing/ci-runner.md
       - Docs style guide: contributing/docs-style-guide.md
