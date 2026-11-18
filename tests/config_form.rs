@@ -387,6 +387,29 @@ fn list_item_kind_comes_from_schema_or_existing_items() {
 }
 
 #[test]
+fn schema_rejects_key_with_empty_segment() {
+    for key in ["server..port", ".a", "a.", "a.."] {
+        let text = format!("[[field]]\nkey = \"{key}\"\ntype = \"string\"\n");
+        let e = format!("{:#}", Schema::parse(&text).unwrap_err());
+        assert!(e.contains(key), "{key}: {e}");
+    }
+}
+
+#[test]
+fn schema_accepts_dotted_and_plain_keys() {
+    for key in ["server.port", "a", "a.b.c"] {
+        Schema::parse(&format!("[[field]]\nkey = \"{key}\"\ntype = \"string\"\n")).unwrap();
+    }
+}
+
+#[test]
+fn pack_rejects_schema_key_with_empty_segment() {
+    let e = format!("{:#}", pack_with_schema(Some("[[field]]\nkey = \"a..b\"\ntype = \"string\"\n")).unwrap_err());
+    assert!(e.contains("app.schema.toml"), "{e}");
+    assert!(e.contains("a..b"), "{e}");
+}
+
+#[test]
 fn pack_accepts_valid_schema_file() {
     pack_with_schema(Some("[[field]]\nkey = \"a\"\nlabel = \"A\"\ntype = \"string\"\n")).unwrap();
 }

@@ -55,6 +55,9 @@ impl Schema {
             if f.key.is_empty() {
                 bail!("config schema: field with empty key");
             }
+            if f.key.split('.').any(|p| p.is_empty()) {
+                bail!("config schema: invalid key {:?} (a key is a dotted path with no empty parts)", f.key);
+            }
             if !seen.insert(f.key.as_str()) {
                 bail!("config schema: duplicate key {:?}", f.key);
             }

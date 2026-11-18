@@ -94,7 +94,7 @@ section = "Publishing"
 
 | Key | Meaning |
 |---|---|
-| `key` | Required. The setting's name in the config file. Use dots for a table: `publish.interval` is `interval` inside `[publish]`. Unique within the schema |
+| `key` | Required. The setting's name in the config file. Use dots for a table: `publish.interval` is `interval` inside `[publish]`. A key is a dotted path with no empty parts (`a..b`, `.a` and `a.` are rejected). Unique within the schema |
 | `type` | Required. `string`, `int`, `float`, `bool`, `enum` or `list` |
 | `label` | The name shown in the form. Defaults to the key |
 | `help` | A line of explanation under the control |
