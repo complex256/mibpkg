@@ -114,3 +114,19 @@ fn reserved_package_names_are_refused() {
         assert!(format!("{e:#}").contains("reserved"), "{n}: {e:#}");
     }
 }
+
+#[test]
+fn page_keys_parse_and_conflict() {
+    let m = Manifest::parse(CARMQTT).unwrap();
+    assert!(m.package.long_description.is_none() && m.package.readme.is_none());
+    let t = CARMQTT.replace("description = ", "readme = \"docs/PAGE.md\"\ndescription = ");
+    assert_eq!(Manifest::parse(&t).unwrap().package.readme.as_deref(), Some("docs/PAGE.md"));
+    let t = CARMQTT.replace("description = ", "long_description = \"# Hi\"\ndescription = ");
+    assert!(Manifest::parse(&t).is_ok());
+    let both = CARMQTT.replace("description = ", "long_description = \"x\"\nreadme = \"R.md\"\ndescription = ");
+    assert!(format!("{:#}", Manifest::parse(&both).unwrap_err()).contains("both"));
+    let bad = CARMQTT.replace("description = ", "readme = \"../x.md\"\ndescription = ");
+    assert!(Manifest::parse(&bad).is_err());
+    let big = CARMQTT.replace("description = ", &format!("long_description = \"{}\"\ndescription = ", "a".repeat(65 * 1024)));
+    assert!(Manifest::parse(&big).is_err());
+}

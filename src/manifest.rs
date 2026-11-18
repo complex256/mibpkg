@@ -118,7 +118,19 @@ pub struct PackageMeta {
     pub version: String,
     #[serde(default)]
     pub description: String,
+    /// Inline markdown for the store page. Wins over `readme`; setting both is an error.
+    #[serde(default)]
+    pub long_description: Option<String>,
+    /// Package-relative path of a markdown file for the store page; defaults to `README.md`.
+    #[serde(default)]
+    pub readme: Option<String>,
 }
+
+/// Largest store page `mibpkg pack` accepts.
+pub const MAX_PAGE: usize = 64 << 10;
+
+/// Where the packed store page lives in an archive (always the first entry).
+pub const PAGE_FILE: &str = "STORE-PAGE.md";
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -252,6 +264,7 @@ impl Manifest {
             bail!("package name {:?} is reserved (mibpkg uses it for its own /tmp files)", self.package.name);
         }
         self.version()?;
+        self.validate_page()?;
         self.validate_kind()?;
         for f in &self.files {
             safe_rel(&f.src)?;
@@ -299,6 +312,51 @@ impl Manifest {
             crate::conditions::parse_timeout(t).with_context(|| "[scripts] timeout")?;
         }
         Ok(())
+    }
+
+    fn validate_page(&self) -> Result<()> {
+        if self.package.long_description.is_some() && self.package.readme.is_some() {
+            bail!("[package] sets both long_description and readme; use one");
+        }
+        if let Some(r) = &self.package.readme {
+            let p = safe_rel(r).with_context(|| format!("[package] readme {r:?}"))?;
+            if p == Path::new(PAGE_FILE) {
+                bail!("[package] readme must not be {PAGE_FILE}, which mibpkg writes itself");
+            }
+        }
+        if let Some(t) = &self.package.long_description {
+            if t.len() > MAX_PAGE {
+                bail!("[package] long_description is {} bytes; the limit is {} KiB", t.len(), MAX_PAGE >> 10);
+            }
+        }
+        Ok(())
+    }
+
+    /// The store page's markdown, resolved from a package source directory: inline
+    /// `long_description`, else the `readme` path (must exist), else `README.md` when present.
+    /// Blank pages resolve to None.
+    pub fn resolve_page(&self, src_dir: &Path) -> Result<Option<String>> {
+        let text = if let Some(t) = &self.package.long_description {
+            t.clone()
+        } else {
+            let (rel, required) = match &self.package.readme {
+                Some(r) => (safe_rel(r)?, true),
+                None => (PathBuf::from("README.md"), false),
+            };
+            let full = src_dir.join(&rel);
+            if !full.is_file() {
+                if required {
+                    bail!("[package] readme {} is missing from {}", rel.display(), src_dir.display());
+                }
+                return Ok(None);
+            }
+            let bytes = std::fs::read(&full).with_context(|| format!("reading {}", full.display()))?;
+            if bytes.len() > MAX_PAGE {
+                bail!("{} is {} bytes; the store page limit is {} KiB", rel.display(), bytes.len(), MAX_PAGE >> 10);
+            }
+            String::from_utf8(bytes).with_context(|| format!("{} is not UTF-8", rel.display()))?
+        };
+        Ok(if text.trim().is_empty() { None } else { Some(text) })
     }
 
     fn validate_kind(&self) -> Result<()> {
