@@ -8,6 +8,8 @@
 #     with 0.1.3 waiting on the card (an update);
 #   - gps-logger 1.0.0 installed with a config conflict: logger.toml was edited on the car
 #     and changed on the card too (logger.toml.card waits for Keep / Use card);
+#   - broker-ui 1.0.0 installed with a config schema (all six field types, a secret, two sections)
+#     and a commented broker.toml, for the form editor's schema mode;
 #   - a "community" card collection with tpms-overlay and its own dashcam-sync;
 #   - an online collection (cached index) with carplay-rgi and another dashcam-sync,
 #     so dashcam-sync is offered by two sources;
@@ -94,6 +96,102 @@ printf '[log]\ninterval = 1\npath = "/fs/sda0/gps"\n\n[sources.ubx]\nenabled = t
     >"$ROOT/mnt/app/root/mibpkg/state/config/gps-logger/logger.toml"
 printf '[log]\ninterval = 10\npath = "/fs/sda0/gps"\nformat = "gpx"\n' >"$LOG_CARD/logger.toml"
 "$BIN" --root "$ROOT" --no-supervisor rescan
+
+# broker-ui: a config with a schema (all six field types, a secret, two sections) and a config file
+# with comments, so the form editor's schema mode and comment preservation can be tried.
+UI_CONF='[[config]]
+path = "broker.toml"
+example = "broker.toml.example"
+schema = "broker.schema.toml"
+
+[[file]]
+src = "broker.toml.example"
+
+[[file]]
+src = "broker.schema.toml"'
+UI=$(pkg broker-ui 1.0.0 "MQTT broker settings with a form" "$UI_CONF")
+cat >"$UI/broker.schema.toml" <<'EOF2'
+[[field]]
+key = "host"
+label = "Broker address"
+help = "Host name or IP address of the MQTT broker."
+type = "string"
+default = "homeassistant.local"
+section = "Connection"
+
+[[field]]
+key = "port"
+label = "Port"
+type = "int"
+min = 1
+max = 65535
+default = 1883
+section = "Connection"
+
+[[field]]
+key = "password"
+label = "Password"
+help = "Leave empty if the broker has no login."
+type = "string"
+secret = true
+section = "Connection"
+
+[[field]]
+key = "tls"
+label = "Use TLS"
+type = "bool"
+default = false
+section = "Connection"
+
+[[field]]
+key = "publish.interval"
+label = "Publish every (seconds)"
+type = "float"
+min = 0.5
+max = 60
+default = 2.5
+section = "Publishing"
+
+[[field]]
+key = "publish.qos"
+label = "Quality of service"
+type = "enum"
+choices = ["at-most-once", "at-least-once", "exactly-once"]
+default = "at-least-once"
+section = "Publishing"
+
+[[field]]
+key = "publish.pids"
+label = "Data points (PIDs)"
+help = "Whole numbers, one per row."
+type = "list"
+of = "int"
+min = 0
+default = [12, 13]
+section = "Publishing"
+EOF2
+cat >"$UI/broker.toml.example" <<'EOF2'
+# Where the car data goes.
+host = "homeassistant.local"
+port = 1883   # the usual MQTT port
+password = "hunter2"
+tls = false
+
+# Unlisted keys and these comments stay when you save from the form.
+extra_note = "not in the schema"
+
+[publish]
+# How often a reading is sent.
+interval = 2.5
+qos = "at-least-once"
+pids = [12, 13]
+
+# end of file
+EOF2
+mkdir -p "$ROOT/fs/sda0/mibpkg/config/broker-ui"
+cp "$UI/broker.toml.example" "$ROOT/fs/sda0/mibpkg/config/broker-ui/broker.toml"
+collection "$CARD/complex256-broker-ui" complex256-broker-ui "broker-ui" "$UI"
+"$BIN" --root "$ROOT" --no-supervisor install broker-ui complex256-broker-ui >/dev/null
 
 collection "$CARD/community" community "Community packages" \
     "$(pkg tpms-overlay 0.2.0 "Tyre pressures on the map")" \
