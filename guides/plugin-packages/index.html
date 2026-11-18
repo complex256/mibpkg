@@ -776,6 +776,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#dormant-plugins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dormant plugins
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#update-and-remove" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1900,6 +1911,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#dormant-plugins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dormant plugins
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#update-and-remove" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2024,6 +2046,24 @@ convention produces the stamped jar and the <code>.mpk</code>.</p>
 <li>every icon exists and passes the PNG rules;</li>
 <li>the jar's stamp is valid.</li>
 </ul>
+<h2 id="dormant-plugins">Dormant plugins<a class="headerlink" href="#dormant-plugins" title="Permanent link">&para;</a></h2>
+<p>An SDK can drop old plugin API levels (<code>min_api</code> goes up). When you update <code>mibsdk</code> to such a version,
+mibpkg does not refuse because of the plugins you already have. It updates the SDK, and every installed
+plugin whose <code>api</code> is outside the new range goes <strong>dormant</strong>:</p>
+<ul>
+<li>the runtime does not load it (<code>BLOCKED_INVALID</code> in the SDK's Installed page);</li>
+<li>the package stays installed with its files, grants and data, and a combined product package keeps
+  running its daemon;</li>
+<li><code>mibpkg list</code> marks it (<code>[plugin dormant: needs plugin api 6; the installed SDK supports 9..9]</code>), the
+  web interface shows "Plugin dormant" in the row and a notice on the package page, and the SDK install
+  result lists it.</li>
+</ul>
+<p><code>update-all</code> puts the SDK first and then installs each plugin's update, so a plugin with a build for the new
+SDK is dormant only for the length of that one run. Whatever is still dormant afterwards is reported with
+"no build for this SDK is available in any collection". Dormancy is worked out each time from the installed
+packages, not stored: installing a build that fits turns the plugin back on, and rolling the SDK back does
+too. A plugin that <em>requires</em> a newer <code>mibsdk</code> than the one being installed (<code>requires.toml</code>) still refuses
+the install, since no update of the plugin can fix that.</p>
 <p>A plugin that asks for a permission the user has not approved is installed but stays
 <code>BLOCKED_PERMISSIONS</code> until it is granted. The approval sheet normally prevents that: the install stops
 with exit <strong>3</strong> until the permissions are approved.</p>
