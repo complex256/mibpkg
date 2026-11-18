@@ -16,7 +16,7 @@
         <link rel="prev" href="../online-sources/">
       
       
-        <link rel="next" href="../web-settings-pin/">
+        <link rel="next" href="../config-schema/">
       
       
         
@@ -573,6 +573,8 @@
       
         
       
+        
+      
     
     
     
@@ -894,6 +896,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config-schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Config forms and schemas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -1941,6 +1971,9 @@
 <li><strong>required</strong> — the service will not start until it exists;</li>
 <li><strong>optional</strong> — the example is copied only when the user asks, or when the package needs it.</li>
 </ul>
+<p>For <code>.toml</code> configs the web interface offers a <strong>Form</strong> tab as well as the raw text editor. A package
+can ship a schema to give the form proper labels and limits; see
+<a href="../config-schema/">Config forms and schemas</a>.</p>
 <h2 id="config-conflicts">Config conflicts<a class="headerlink" href="#config-conflicts" title="Permanent link">&para;</a></h2>
 <p>If both the card and the unit changed the same config, mibpkg refuses to guess. Open the package page
 and choose:</p>

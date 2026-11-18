@@ -571,6 +571,8 @@
       
         
       
+        
+      
     
     
     
@@ -771,6 +773,34 @@
     
   
     Config, logs and restart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/config-schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Config forms and schemas
   
 
     
@@ -2191,6 +2221,10 @@ not know the keys. A package that relies on <code>README.md</code> alone install
 <tr>
 <td><code>required</code></td>
 <td>The service will not start until the file exists</td>
+</tr>
+<tr>
+<td><code>schema</code></td>
+<td>Optional schema file shipped in the package; gives the web interface a form for this config. The <code>path</code> must end in <code>.toml</code>. The file only has to be in the package folder; it need not be listed under <code>[[file]]</code>. Needs the mibpkg release that adds this field: older versions reject unknown <code>[[config]]</code> fields, so a package that sets it will not install there. See <a href="../../guides/config-schema/">Config forms and schemas</a></td>
 </tr>
 </tbody>
 </table>

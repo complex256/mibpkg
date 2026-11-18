@@ -571,6 +571,8 @@
       
         
       
+        
+      
     
     
     
@@ -771,6 +773,34 @@
     
   
     Config, logs and restart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/config-schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Config forms and schemas
   
 
     
@@ -1320,6 +1350,17 @@
     <span class="md-ellipsis">
       
         Jobs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#config-forms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Config forms
       
     </span>
   </a>
@@ -1892,6 +1933,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#config-forms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Config forms
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#uploads" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2020,7 +2072,7 @@ contributors and for anyone building another client.</p>
 <tr>
 <td><code>GET</code></td>
 <td><code>/api/packages/&lt;name&gt;/config/&lt;n&gt;</code></td>
-<td>Read config <code>n</code></td>
+<td>Read config <code>n</code>; for a <code>.toml</code> config also its <code>form</code></td>
 </tr>
 <tr>
 <td><code>PUT</code></td>
@@ -2031,6 +2083,11 @@ contributors and for anyone building another client.</p>
 <td><code>GET</code></td>
 <td><code>/api/packages/&lt;name&gt;/page</code></td>
 <td>The store page as <code>text/markdown</code>: the installed copy, or with <code>?collection=&lt;id&gt;&amp;version=&lt;v&gt;</code> that version from its collection, checked against the index</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/api/packages/&lt;name&gt;/config/&lt;n&gt;/form</code></td>
+<td>Change keys of a <code>.toml</code> config from the form</td>
 </tr>
 <tr>
 <td><code>GET</code></td>
@@ -2092,6 +2149,75 @@ contributors and for anyone building another client.</p>
 <h2 id="jobs">Jobs<a class="headerlink" href="#jobs" title="Permanent link">&para;</a></h2>
 <p>Actions run as jobs. <code>POST /api/actions</code> returns <strong>202</strong> with <code>{job}</code> or <strong>409</strong> with
 <code>{busy, job, error}</code> when another action is running. Poll the job until <code>ok</code> or <code>error</code>.</p>
+<h2 id="config-forms">Config forms<a class="headerlink" href="#config-forms" title="Permanent link">&para;</a></h2>
+<p><code>GET /api/packages/&lt;name&gt;/config/&lt;n&gt;</code> returns <code>path</code>, <code>required</code>, <code>exists</code>, <code>content</code>, <code>example</code> and
+<code>card</code> (the card's copy while it is in conflict, else <code>null</code>). For a path ending <code>.toml</code> it also returns
+<code>form</code>; for any other path <code>form</code> is <code>null</code>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="p">{</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">"mode"</span><span class="p">:</span><span class="w"> </span><span class="s2">"schema"</span><span class="p">,</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">"reason"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="nt">"fields"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">    </span><span class="p">{</span><span class="nt">"key"</span><span class="p">:</span><span class="w"> </span><span class="s2">"port"</span><span class="p">,</span><span class="w"> </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Port"</span><span class="p">,</span><span class="w"> </span><span class="nt">"help"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"int"</span><span class="p">,</span><span class="w"> </span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"schema"</span><span class="p">,</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">     </span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="mi">1883</span><span class="p">,</span><span class="w"> </span><span class="nt">"default"</span><span class="p">:</span><span class="w"> </span><span class="mi">1883</span><span class="p">,</span><span class="w"> </span><span class="nt">"choices"</span><span class="p">:</span><span class="w"> </span><span class="p">[],</span><span class="w"> </span><span class="nt">"min"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">"max"</span><span class="p">:</span><span class="w"> </span><span class="mi">65535</span><span class="p">,</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">     </span><span class="nt">"secret"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span><span class="w"> </span><span class="nt">"section"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Connection"</span><span class="p">,</span><span class="w"> </span><span class="nt">"raw"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="nt">"item_kind"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">}</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span><span class="p">]</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="p">}</span>
+</code></pre></div>
+<ul>
+<li><code>mode</code> is <code>schema</code> (the package ships a schema), <code>inferred</code> (no schema; fields are read from the
+  file) or <code>raw</code> (the form cannot be used; <code>reason</code> says why and <code>fields</code> is empty).</li>
+<li><code>kind</code> is <code>string</code>, <code>int</code>, <code>float</code>, <code>bool</code>, <code>enum</code>, <code>list</code> or <code>raw</code>. A <code>raw</code> field is a value the form
+  cannot edit (a table array, an inline table, a date); <code>raw</code> holds its TOML text.</li>
+<li><code>value</code> is <code>null</code> when the key is not set in the file. <code>item_kind</code> is the list item type for lists.</li>
+<li>The file text is the config, or its example while the config does not exist yet.</li>
+</ul>
+<p><code>POST /api/packages/&lt;name&gt;/config/&lt;n&gt;/form</code> takes <code>{"edits": [{"key": "port", "value": 1884}]}</code>.
+A <code>null</code> value removes the key. An empty <code>edits</code> list is valid: if the config file does not exist yet, it saves the example as it is. Keys use dots for tables (<code>publish.interval</code>). The server applies the
+edits to the file, keeping comments, order and keys it does not know, checks them against the schema
+(or, without one, against the type already in the file), and then saves the result as the usual
+"Save and restart" job.</p>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th>Body</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>202</td>
+<td><code>{job}</code></td>
+<td>Saved; poll the job</td>
+</tr>
+<tr>
+<td>400</td>
+<td><code>{error, fields: [{key, message}]}</code></td>
+<td>An edit is invalid, or the file is not valid TOML; <code>fields</code> names each bad key. Nothing is written</td>
+</tr>
+<tr>
+<td>404</td>
+<td><code>{error}</code></td>
+<td>Unknown package or config</td>
+</tr>
+<tr>
+<td>400</td>
+<td><code>{error}</code></td>
+<td>The body is not valid JSON or has unknown fields</td>
+</tr>
+<tr>
+<td>409</td>
+<td><code>{error}</code></td>
+<td>The card has a conflicting copy (resolve it first), the file is over 64 KiB, is not UTF-8 or cannot be read, or the result would be over 64 KiB ("this change would make the file larger than the editor can safely open")</td>
+</tr>
+<tr>
+<td>409</td>
+<td><code>{busy, job, error}</code></td>
+<td>Another job is running</td>
+</tr>
+</tbody>
+</table>
+<p>A config whose path does not end <code>.toml</code> is refused with 400.</p>
 <h2 id="uploads">Uploads<a class="headerlink" href="#uploads" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -2127,28 +2253,28 @@ contributors and for anyone building another client.</p>
 <p>An upload is inspected before install: name, version, kind, compatibility, services, permissions and
 <code>needs_approval</code>. Uploads expire after 10 minutes.</p>
 <h2 id="settings-body">Settings body<a class="headerlink" href="#settings-body" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="p">{</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">"listen"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"hotspot"</span><span class="p">,</span><span class="w"> </span><span class="s2">"tailnet"</span><span class="p">],</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">"port"</span><span class="p">:</span><span class="w"> </span><span class="mi">80</span><span class="p">,</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="nt">"pin"</span><span class="p">:</span><span class="w"> </span><span class="s2">"1234"</span><span class="p">,</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="nt">"clear_pin"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span><span class="nt">"confirm"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span><span class="nt">"hotspot_interface"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">"listen"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"hotspot"</span><span class="p">,</span><span class="w"> </span><span class="s2">"tailnet"</span><span class="p">],</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">"port"</span><span class="p">:</span><span class="w"> </span><span class="mi">80</span><span class="p">,</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="nt">"pin"</span><span class="p">:</span><span class="w"> </span><span class="s2">"1234"</span><span class="p">,</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="nt">"clear_pin"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span><span class="nt">"confirm"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">  </span><span class="nt">"hotspot_interface"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="p">}</span>
 </code></pre></div>
 <p>If the new settings would make the current connection unable to reach the page, the API returns <strong>409</strong>
 with <code>needs_confirm</code>. Send <code>confirm: true</code> to save anyway.</p>
 <h2 id="wi-fi-body">Wi-Fi body<a class="headerlink" href="#wi-fi-body" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">"enabled"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">"ssid"</span><span class="p">:</span><span class="w"> </span><span class="s2">"my-phone"</span><span class="p">,</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="nt">"password"</span><span class="p">:</span><span class="w"> </span><span class="s2">"secret"</span><span class="p">,</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="nt">"dhcp"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span><span class="nt">"ip"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">,</span>
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">  </span><span class="nt">"netmask"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">,</span>
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">  </span><span class="nt">"gateway"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">,</span>
-<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">  </span><span class="nt">"dns"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span>
-<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">"enabled"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">"ssid"</span><span class="p">:</span><span class="w"> </span><span class="s2">"my-phone"</span><span class="p">,</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="nt">"password"</span><span class="p">:</span><span class="w"> </span><span class="s2">"secret"</span><span class="p">,</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="nt">"dhcp"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span><span class="nt">"ip"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">,</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">  </span><span class="nt">"netmask"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">,</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">  </span><span class="nt">"gateway"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">,</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">  </span><span class="nt">"dns"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="p">}</span>
 </code></pre></div>
 <p>Omit <code>password</code> (or send <code>null</code>) to keep the saved one; send <code>""</code> to clear it. Omitted address fields
 keep their saved values. With <code>"dhcp": false</code>, <code>ip</code> and <code>netmask</code> are required and may not be empty.
