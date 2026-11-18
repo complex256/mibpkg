@@ -96,11 +96,13 @@ impl Field {
             (FieldType::Float, V::Float(_) | V::Integer(_)) => true,
             (FieldType::Bool, V::Boolean(_)) => true,
             (FieldType::Enum, V::String(s)) => self.choices.contains(s),
-            (FieldType::List, V::Array(items)) => items.iter().all(|i| match (self.of, i) {
-                (Some(FieldType::String), V::String(_)) => true,
-                (Some(FieldType::Int), V::Integer(_)) => true,
-                (Some(FieldType::Float), V::Float(_) | V::Integer(_)) => true,
-                _ => false,
+            (FieldType::List, V::Array(items)) => items.iter().all(|i| {
+                matches!(
+                    (self.of, i),
+                    (Some(FieldType::String), V::String(_))
+                        | (Some(FieldType::Int), V::Integer(_))
+                        | (Some(FieldType::Float), V::Float(_) | V::Integer(_))
+                )
             }),
             _ => false,
         }
@@ -395,7 +397,7 @@ fn as_int(v: &serde_json::Value) -> Option<i64> {
         return Some(i);
     }
     let f = v.as_f64()?;
-    (f.fract() == 0.0 && f >= -9.2e18 && f <= 9.2e18).then_some(f as i64)
+    (f.fract() == 0.0 && (-9.2e18..=9.2e18).contains(&f)).then_some(f as i64)
 }
 
 fn scalar_value(
