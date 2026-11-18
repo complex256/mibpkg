@@ -1,6 +1,6 @@
 //! .mpk = gzip'd ustar holding manifest.toml + payload. Hand-rolled (regular
 //! files and directories only) so no platform crates are needed on QNX 6.5.
-use crate::manifest::{parse_mode, safe_rel, Manifest};
+use crate::manifest::{parse_mode, safe_rel, Manifest, PAGE_FILE};
 use anyhow::{bail, Context, Result};
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use sha2::{Digest, Sha256};
@@ -46,10 +46,20 @@ pub fn pack(src_dir: &Path, out: &Path) -> Result<Manifest> {
     let mut rels = Vec::new();
     collect(src_dir, Path::new(""), &mut rels)?;
     rels.sort();
+    if rels.iter().any(|r| r == Path::new(PAGE_FILE)) {
+        bail!("{PAGE_FILE} is written by mibpkg; remove it from {}", src_dir.display());
+    }
+    let page = m.resolve_page(src_dir)?;
     let mut gz = GzEncoder::new(
         fs::File::create(out).with_context(|| format!("creating {}", out.display()))?,
         Compression::best(),
     );
+    // First entry, so a client can read the page from the head of the gzip stream and stop.
+    if let Some(p) = &page {
+        write_header(&mut gz, PAGE_FILE, 0o644, p.len() as u64, b'0')?;
+        gz.write_all(p.as_bytes())?;
+        pad(&mut gz, p.len())?;
+    }
     for rel in &rels {
         let full = src_dir.join(rel);
         let meta = fs::metadata(&full)?;
@@ -204,6 +214,11 @@ impl Package {
         self.entries.iter().find(|e| !e.dir && e.path == Path::new(rel)).map(|e| e.data.as_slice())
     }
 
+    /// The store page markdown packed as the first entry, if the package has one.
+    pub fn page(&self) -> Option<&str> {
+        self.file(PAGE_FILE).and_then(|b| std::str::from_utf8(b).ok())
+    }
+
     /// The package's optional `requires.toml` (no requirements when absent).
     pub fn requires(&self) -> Result<crate::requires::Requires> {
         crate::requires::read(crate::mibsdk::icons::Source::Package(self))
@@ -288,6 +303,51 @@ mod tests {
         assert_eq!(fs::metadata(dest.join("bin/demo")).unwrap().permissions().mode() & 0o777, 0o755);
         assert!(!dest.join(".DS_Store").exists(), "dotfiles are not packed");
         assert!(p.extract_to(&dest).is_err(), "refuses an existing destination");
+    }
+
+    #[test]
+    fn pack_writes_store_page_first_with_precedence() {
+        let t = tempfile::tempdir().unwrap();
+        let s = src_dir(t.path());
+        let out = t.path().join("p.mpk");
+        pack(&s, &out).unwrap();
+        assert_eq!(Package::read(&out).unwrap().page(), None);
+        fs::write(s.join("README.md"), "# Readme\n").unwrap();
+        pack(&s, &out).unwrap();
+        assert_eq!(Package::read(&out).unwrap().page(), Some("# Readme\n"));
+        // the page is the first tar entry
+        let mut r = GzDecoder::new(fs::File::open(&out).unwrap());
+        let mut h = [0u8; BLOCK];
+        r.read_exact(&mut h).unwrap();
+        assert_eq!(cstr(&h[0..100]).unwrap(), PAGE_FILE);
+        // readme path beats README.md
+        fs::write(s.join("PAGE.md"), "page\n").unwrap();
+        fs::write(s.join("manifest.toml"), M.replace("version = \"1.0.0\"", "version = \"1.0.0\"\nreadme = \"PAGE.md\"")).unwrap();
+        pack(&s, &out).unwrap();
+        assert_eq!(Package::read(&out).unwrap().page(), Some("page\n"));
+        // inline beats both
+        fs::write(s.join("manifest.toml"), M.replace("version = \"1.0.0\"", "version = \"1.0.0\"\nlong_description = \"inline\"")).unwrap();
+        pack(&s, &out).unwrap();
+        assert_eq!(Package::read(&out).unwrap().page(), Some("inline"));
+        // a source file may not collide with the generated entry
+        fs::write(s.join(PAGE_FILE), "x").unwrap();
+        assert!(pack(&s, &out).is_err());
+    }
+
+    #[test]
+    fn pack_rejects_bad_readme() {
+        let t = tempfile::tempdir().unwrap();
+        let s = src_dir(t.path());
+        let out = t.path().join("p.mpk");
+        let with = |extra: &str| M.replace("version = \"1.0.0\"", &format!("version = \"1.0.0\"\n{extra}"));
+        fs::write(s.join("manifest.toml"), with("readme = \"nope.md\"")).unwrap();
+        assert!(pack(&s, &out).is_err(), "missing readme path");
+        fs::write(s.join("bad.md"), [0xffu8, 0xfe]).unwrap();
+        fs::write(s.join("manifest.toml"), with("readme = \"bad.md\"")).unwrap();
+        assert!(pack(&s, &out).is_err(), "non-UTF-8");
+        fs::write(s.join("big.md"), vec![b'a'; crate::manifest::MAX_PAGE + 1]).unwrap();
+        fs::write(s.join("manifest.toml"), with("readme = \"big.md\"")).unwrap();
+        assert!(pack(&s, &out).is_err(), "over the cap");
     }
 
     #[test]
