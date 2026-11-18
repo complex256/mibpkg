@@ -1,4 +1,5 @@
-use mibpkg::config_form::{describe, Field, FieldType, Schema};
+use mibpkg::config_form::{apply, describe, Edit, Field, FieldType, Schema};
+use serde_json::json;
 
 fn err(text: &str) -> String {
     format!("{:#}", Schema::parse(text).unwrap_err())
@@ -195,4 +196,126 @@ fn empty_text_with_schema_lists_fields() {
     let s = Schema::parse(SCHEMA).unwrap();
     assert_eq!(describe("", Some(&s)).fields.len(), 2);
     assert_eq!(describe("", None).mode, "inferred");
+}
+
+// ---- apply ----
+
+fn e(key: &str, value: serde_json::Value) -> Edit {
+    Edit { key: key.to_string(), value }
+}
+
+fn sch(text: &str) -> Schema {
+    Schema::parse(text).unwrap()
+}
+
+#[test]
+fn edit_preserves_comments_order_and_unknown_keys() {
+    let text = "# top comment\nz = 1 # trailing\nname = \"old\" # keep me\n\n# section\n[net]\nunknown = [1, 2]\nport = 80\n";
+    let out = apply(text, &[e("name", json!("new")), e("net.port", json!(81))], None).unwrap();
+    assert_eq!(
+        out,
+        "# top comment\nz = 1 # trailing\nname = \"new\" # keep me\n\n# section\n[net]\nunknown = [1, 2]\nport = 81\n"
+    );
+}
+
+#[test]
+fn edit_creates_missing_table() {
+    let out = apply("a = 1\n", &[e("server.port", json!(8080))], None).unwrap();
+    assert!(out.starts_with("a = 1\n"));
+    assert!(out.contains("[server]\nport = 8080"), "{out}");
+    let doc: toml::Value = toml::from_str(&out).unwrap();
+    assert_eq!(doc["server"]["port"].as_integer(), Some(8080));
+}
+
+#[test]
+fn null_removes_key() {
+    let out = apply("a = 1\nb = 2\n", &[e("a", json!(null)), e("missing", json!(null))], None).unwrap();
+    assert_eq!(out, "b = 2\n");
+}
+
+#[test]
+fn crlf_file_stays_crlf() {
+    let text = "# c\r\na = 1\r\n[t]\r\nb = 2\r\n";
+    let out = apply(text, &[e("a", json!(5)), e("new.x", json!("y")), e("t.b", json!(null))], None).unwrap();
+    assert!(out.contains("\r\n"));
+    assert!(!out.replace("\r\n", "").contains('\n'), "{out:?}");
+}
+
+#[test]
+fn int_field_rejects_fraction() {
+    let s = sch("[[field]]\nkey = \"n\"\ntype = \"int\"\n");
+    let errs = apply("n = 1\n", &[e("n", json!(2.5))], Some(&s)).unwrap_err();
+    assert_eq!(errs.len(), 1);
+    assert_eq!(errs[0].key, "n");
+}
+
+#[test]
+fn int_out_of_range_for_min_max() {
+    let s = sch("[[field]]\nkey = \"n\"\ntype = \"int\"\nmin = 1\nmax = 10\n");
+    assert!(apply("n = 1\n", &[e("n", json!(0))], Some(&s)).is_err());
+    assert!(apply("n = 1\n", &[e("n", json!(11))], Some(&s)).is_err());
+    assert_eq!(apply("n = 1\n", &[e("n", json!(10))], Some(&s)).unwrap(), "n = 10\n");
+}
+
+#[test]
+fn enum_rejects_value_outside_choices() {
+    let s = sch("[[field]]\nkey = \"m\"\ntype = \"enum\"\nchoices = [\"a\", \"b\"]\n");
+    assert!(apply("m = \"a\"\n", &[e("m", json!("c"))], Some(&s)).is_err());
+    assert_eq!(apply("m = \"a\"\n", &[e("m", json!("b"))], Some(&s)).unwrap(), "m = \"b\"\n");
+}
+
+#[test]
+fn float_written_with_decimal_point() {
+    let s = sch("[[field]]\nkey = \"r\"\ntype = \"float\"\n");
+    assert_eq!(apply("r = 0.5\n", &[e("r", json!(3))], Some(&s)).unwrap(), "r = 3.0\n");
+    // inferred from the existing float
+    assert_eq!(apply("r = 0.5\n", &[e("r", json!(4))], None).unwrap(), "r = 4.0\n");
+    // new key: JSON integer stays integer, float keeps decimal
+    let out = apply("", &[e("i", json!(3)), e("f", json!(1.5))], None).unwrap();
+    assert!(out.contains("i = 3\n") && out.contains("f = 1.5"), "{out}");
+}
+
+#[test]
+fn list_edit_replaces_array_with_typed_items() {
+    let s = sch("[[field]]\nkey = \"t\"\ntype = \"list\"\nof = \"int\"\n");
+    assert_eq!(apply("t = [1]\n", &[e("t", json!([1, 2, 3]))], Some(&s)).unwrap(), "t = [1, 2, 3]\n");
+    assert!(apply("t = [1]\n", &[e("t", json!([1, "x"]))], Some(&s)).is_err());
+    let sf = sch("[[field]]\nkey = \"t\"\ntype = \"list\"\nof = \"float\"\n");
+    assert_eq!(apply("t = [1.5]\n", &[e("t", json!([1, 2]))], Some(&sf)).unwrap(), "t = [1.0, 2.0]\n");
+}
+
+#[test]
+fn edit_conflicting_with_existing_non_table_parent_errors() {
+    let errs = apply("a = 1\n", &[e("a.b", json!(2))], None).unwrap_err();
+    assert_eq!(errs[0].key, "a.b");
+}
+
+#[test]
+fn quoted_dotted_key_is_refused_not_split() {
+    let errs = apply("\"a.b\" = 1\n", &[e("a.b", json!(2))], None).unwrap_err();
+    assert_eq!(errs[0].key, "a.b");
+    let errs = apply("[t]\n\"a.b\" = 1\n", &[e("t.a.b", json!(2))], None).unwrap_err();
+    assert_eq!(errs[0].key, "t.a.b");
+}
+
+#[test]
+fn all_field_errors_returned_together() {
+    let s = sch("[[field]]\nkey = \"n\"\ntype = \"int\"\n[[field]]\nkey = \"b\"\ntype = \"bool\"\n");
+    let errs = apply("", &[e("n", json!("x")), e("b", json!(1)), e("ok", json!(1))], Some(&s)).unwrap_err();
+    let keys: Vec<_> = errs.iter().map(|x| x.key.as_str()).collect();
+    assert_eq!(keys, ["n", "b"]);
+}
+
+#[test]
+fn unparseable_input_returns_error_for_empty_key() {
+    let errs = apply("a = = 1", &[e("a", json!(1))], None).unwrap_err();
+    assert_eq!(errs.len(), 1);
+    assert_eq!(errs[0].key, "");
+}
+
+#[test]
+fn existing_out_of_range_value_not_touched_is_not_an_error() {
+    let s = sch("[[field]]\nkey = \"n\"\ntype = \"int\"\nmax = 10\n[[field]]\nkey = \"m\"\ntype = \"int\"\n");
+    let out = apply("n = 99\nm = 1\n", &[e("m", json!(2))], Some(&s)).unwrap();
+    assert_eq!(out, "n = 99\nm = 2\n");
 }
