@@ -229,18 +229,25 @@ pub fn config_get(app: &App, name: &str, n: usize) -> Response {
 /// The config file's whole text (or its example when no file exists yet). Err says why not: a
 /// file over `MAX_CONFIG` or one that is not UTF-8 can't be edited as a form without losing data.
 fn read_config_checked(app: &App, c: &ConfigEntry, name: &str) -> Result<String, &'static str> {
+    const UNREADABLE: &str = "could not read this file; use the text editor";
     let path = app.layout.config_dir(name).join(&c.path);
-    let path = if path.is_file() {
-        path
-    } else {
-        match (&c.example, current_dir(&app.layout, name)) {
-            (Some(e), Some(dir)) => dir.join(e),
+    // Only "not found" means absent; any other open error must not become an empty document.
+    let f = match fs::File::open(&path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => match (&c.example, current_dir(&app.layout, name)) {
+            (Some(e), Some(dir)) => match fs::File::open(dir.join(e)) {
+                Ok(f) => f,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+                Err(_) => return Err(UNREADABLE),
+            },
             _ => return Ok(String::new()),
-        }
+        },
+        Err(_) => return Err(UNREADABLE),
     };
-    let Ok(f) = fs::File::open(&path) else { return Ok(String::new()) };
     let mut buf = Vec::new();
-    let _ = f.take(MAX_CONFIG + 1).read_to_end(&mut buf);
+    if f.take(MAX_CONFIG + 1).read_to_end(&mut buf).is_err() {
+        return Err(UNREADABLE);
+    }
     if buf.len() as u64 > MAX_CONFIG {
         return Err("this file is too large for the form editor; use the text editor");
     }

@@ -153,3 +153,24 @@ fn post_form_rejections() {
     assert_eq!(post(&app, "demo", 1, EDIT).0, 400);
     assert_eq!(post(&app, "demo", 0, r#"{"edits":[],"x":1}"#).0, 400);
 }
+
+#[test]
+fn unreadable_existing_file_is_raw_only_and_refused() {
+    use std::os::unix::fs::PermissionsExt;
+    let (f, app) = setup();
+    put_file(&f, "demo.toml", b"# important\nport = 1\nhost = \"a\"\n");
+    let p = f.layout.config_dir("demo").join("demo.toml");
+    fs::set_permissions(&p, fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::File::open(&p).is_ok() {
+        return; // running as root: the file stays readable, nothing to test
+    }
+    let (_, v) = body(api::config_get(&app, "demo", 0));
+    assert_eq!(v["form"]["mode"], "raw");
+    assert!(v["form"]["reason"].as_str().unwrap().contains("could not read"));
+    let (s, v) = post(&app, "demo", 0, EDIT);
+    assert!(s >= 400, "{s}");
+    assert!(v["error"].as_str().unwrap().contains("could not read"));
+    let dir = f.layout.run("x");
+    let staged = fs::read_dir(dir.parent().unwrap()).unwrap().flatten().any(|e| e.file_name().to_string_lossy().starts_with("mibpkg.text."));
+    assert!(!staged, "a job was staged");
+}
