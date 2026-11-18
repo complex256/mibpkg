@@ -874,6 +874,69 @@ fn update_all_installs_sdk_before_a_plugin_that_needs_it() {
     assert_eq!(install::current_version(&f.layout, "hello").as_deref(), Some("1.1.0"));
 }
 
+/// The SDK package for `version` supporting plugin api `min..=max`.
+fn sdk_src_range(dir: &Path, version: &str, min: u32, max: u32) -> PathBuf {
+    let s = sdk_src(dir, version);
+    let m = read(&s.join("manifest.toml")).replace("api = 2\nmin_api = 1", &format!("api = {max}\nmin_api = {min}"));
+    fs::write(s.join("manifest.toml"), m).unwrap();
+    s
+}
+
+#[test]
+fn update_all_breaks_the_api_loop_the_sdk_first_then_the_plugin() {
+    // The 0.8 -> 0.9 shape: the new SDK drops api 2, the new plugin build needs the new SDK.
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path()); // 0.1.0 supports api 1..2
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let p1 = plugin_src(dir.path(), "hello", "1.0.0", 2, &[]);
+    let coll = common::collection(&f.sd(), "test", &[p1]);
+    let colls = mibpkg::media::loaded(&mibpkg::media::scan(&f.layout));
+    install::install(&ctx, &[f.sd()], &colls[0], "hello").unwrap();
+    fs::remove_dir_all(coll).unwrap();
+
+    let sdk2 = sdk_src_range(dir.path(), "0.2.0", 3, 3);
+    let p2 = plugin_src_requiring(dir.path(), "hello", "1.1.0", 3, "0.2.0");
+    common::collection(&f.sd(), "test", &[sdk2, p2]);
+    let colls = mibpkg::media::loaded(&mibpkg::media::scan(&f.layout));
+    let out = install::update_all(&ctx, &[f.sd()], &colls).unwrap();
+    assert!(out.iter().any(|l| l.starts_with("updated mibsdk 0.1.0 -> 0.2.0")), "{out:?}");
+    assert!(out.iter().any(|l| l.contains("dormant until updated")), "the SDK step says who waits: {out:?}");
+    assert!(out.iter().any(|l| l.starts_with("updated hello 1.0.0 -> 1.1.0")), "{out:?}");
+    assert!(!out.iter().any(|l| l.contains("FAILED")), "{out:?}");
+    assert!(!out.iter().any(|l| l.contains("no build for this SDK")), "nothing is left dormant: {out:?}");
+    assert!(mibsdk::dormant::current(&f.layout).is_empty());
+}
+
+#[test]
+fn update_all_reports_a_plugin_nothing_offers_a_build_for() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path());
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    let p1 = plugin_src(dir.path(), "hello", "1.0.0", 2, &[]);
+    let coll = common::collection(&f.sd(), "test", std::slice::from_ref(&p1));
+    let colls = mibpkg::media::loaded(&mibpkg::media::scan(&f.layout));
+    install::install(&ctx, &[f.sd()], &colls[0], "hello").unwrap();
+    fs::remove_dir_all(coll).unwrap();
+
+    // The collection now has the new SDK and the old plugin build only.
+    common::collection(&f.sd(), "test", &[sdk_src_range(dir.path(), "0.2.0", 3, 3), p1]);
+    let colls = mibpkg::media::loaded(&mibpkg::media::scan(&f.layout));
+    let out = install::update_all(&ctx, &[f.sd()], &colls).unwrap();
+    assert!(out.iter().any(|l| l.starts_with("updated mibsdk 0.1.0 -> 0.2.0")), "{out:?}");
+    assert!(
+        out.contains(&"hello: dormant, needs plugin api 2; the installed SDK supports 3..3; no build for this SDK is available in any collection".to_string()),
+        "{out:?}"
+    );
+    // A second pass with nothing to do still says who waits.
+    let again = install::update_all(&ctx, &[f.sd()], &colls).unwrap();
+    assert_eq!(again[0], "everything is up to date");
+    assert!(again.iter().any(|l| l.starts_with("hello: dormant")), "{again:?}");
+    // The plugin stays installed.
+    assert_eq!(install::current_version(&f.layout, "hello").as_deref(), Some("1.0.0"));
+}
+
 #[test]
 fn seed_skips_sdk_and_plugin_packages_and_installs_plain_ones() {
     let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());

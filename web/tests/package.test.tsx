@@ -30,6 +30,18 @@ function serve(packages: Pkg[], extra: Record<string, (init?: RequestInit) => Pr
 }
 
 describe('the package page', () => {
+  test('says a dormant plugin is off, and what turns it back on', async () => {
+    const p = plugin();
+    p.installed!.dormant = { package: 'netplug', plugin: 'netplug', api: 6, sdk_min_api: 9, sdk_api: 9 };
+    p.update = null;
+    p.update_from = null;
+    serve([p]);
+    render(<PackageView name="netplug" />);
+
+    expect(await screen.findByText(/netplug plugin is dormant: it needs plugin api 6, and the installed SDK runs api 9/)).toBeInTheDocument();
+    expect(screen.getByText(/turns back on when a build for this SDK is installed/)).toBeInTheDocument();
+  });
+
   test('goes back to the tab it was opened from', async () => {
     serve([installedPackage()]);
     rememberTab('installed');

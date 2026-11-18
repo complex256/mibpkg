@@ -65,6 +65,26 @@ mibpkg checks:
 - every icon exists and passes the PNG rules;
 - the jar's stamp is valid.
 
+## Dormant plugins
+
+An SDK can drop old plugin API levels (`min_api` goes up). When you update `mibsdk` to such a version,
+mibpkg does not refuse because of the plugins you already have. It updates the SDK, and every installed
+plugin whose `api` is outside the new range goes **dormant**:
+
+- the runtime does not load it (`BLOCKED_INVALID` in the SDK's Installed page);
+- the package stays installed with its files, grants and data, and a combined product package keeps
+  running its daemon;
+- `mibpkg list` marks it (`[plugin dormant: needs plugin api 6; the installed SDK supports 9..9]`), the
+  web interface shows "Plugin dormant" in the row and a notice on the package page, and the SDK install
+  result lists it.
+
+`update-all` puts the SDK first and then installs each plugin's update, so a plugin with a build for the new
+SDK is dormant only for the length of that one run. Whatever is still dormant afterwards is reported with
+"no build for this SDK is available in any collection". Dormancy is worked out each time from the installed
+packages, not stored: installing a build that fits turns the plugin back on, and rolling the SDK back does
+too. A plugin that *requires* a newer `mibsdk` than the one being installed (`requires.toml`) still refuses
+the install, since no update of the plugin can fix that.
+
 A plugin that asks for a permission the user has not approved is installed but stays
 `BLOCKED_PERMISSIONS` until it is granted. The approval sheet normally prevents that: the install stops
 with exit **3** until the permissions are approved.

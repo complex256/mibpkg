@@ -95,6 +95,7 @@ export function PackageRow({ pkg, subtitle }: { pkg: Pkg; subtitle?: ReactNode }
         <div className="truncate font-semibold">{pkg.name}</div>
         <div className="truncate text-[13px] text-muted-foreground">
           {subtitle ?? [pkg.description, version].filter(Boolean).join(' · ')}
+          {pkg.installed?.dormant ? <span className="ml-1 font-semibold text-amber-600"> · Plugin dormant</span> : null}
         </div>
       </div>
       <Button

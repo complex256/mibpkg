@@ -113,6 +113,10 @@ pub struct Inst {
     pub previous_permissions: Vec<Perm>,
     /// `grants.properties` could not be read: `granted` is unknown (None) and `blocked` empty.
     pub grants_error: Option<String>,
+    /// The plugin's api is outside the installed SDK's range, so the runtime does not run it until an
+    /// update built for that SDK installs. Absent when the plugin is fine or the package has none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dormant: Option<crate::mibsdk::dormant::Dormant>,
     /// The installed copy's store page start and size (read from disk).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub page_preview: Option<String>,
@@ -209,6 +213,7 @@ pub fn build(layout: &Layout, unit: &UnitInfo) -> Vec<PkgView> {
     let cat = crate::mibsdk::catalog::installed(layout).ok().flatten();
     let cat = cat.as_deref();
     let grants = crate::mibsdk::grants::read(layout).map_err(|e| format!("{e:#}"));
+    let dormant = crate::mibsdk::dormant::current(layout);
 
     // name -> what each collection offers (its newest version that fits, else its newest).
     let mut offered: BTreeMap<String, Vec<Avail>> = BTreeMap::new();
@@ -304,6 +309,7 @@ pub fn build(layout: &Layout, unit: &UnitInfo) -> Vec<PkgView> {
                     permissions: permissions(cat, &declared, grant.as_ref()),
                     blocked: grant.as_ref().map(|g| crate::mibsdk::grants::missing(&declared, g)).unwrap_or_default(),
                     previous_permissions: permissions(cat, &previous_declared, None),
+                    dormant: dormant.iter().find(|d| d.package == name).cloned(),
                     grants_error: match &grants {
                         Err(e) if !declared.is_empty() => Some(e.clone()),
                         _ => None,

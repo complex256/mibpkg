@@ -279,10 +279,10 @@ pub fn check(ctx: &Ctx, m: &Manifest, pkg_dir: Option<&Path>, src: icons::Source
     }
 
     if pkg_dir.is_some() {
-        for (id, api, min_sdk) in plugin_packages(l)? {
-            if api < sdk.min_api || api > sdk.api {
-                bail!("{id} needs plugin api {api}; this SDK supports {}..{}; nothing changed", sdk.min_api, sdk.api);
-            }
+        for (id, _api, min_sdk) in plugin_packages(l)? {
+            // A plugin whose api is outside this SDK's range does not block the update: it goes dormant
+            // (see `dormant`) until a build for this SDK installs. Only a plugin that needs a newer
+            // mibsdk than this package refuses, since no later update of the plugin can fix that.
             if let Some(need) = min_sdk {
                 if cmp_versions(&m.package.version, &need) == Ordering::Less {
                     bail!(

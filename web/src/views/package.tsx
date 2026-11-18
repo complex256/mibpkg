@@ -212,6 +212,17 @@ export function PackageView({ name }: { name: string }) {
       {page ? <StorePage preview={page.preview} total={page.bytes} url={page.url} /> : null}
 
       <div className="mt-3 space-y-2">
+        {inst?.dormant ? (
+          <Alert variant="warning">
+            <p>
+              The {inst.dormant.plugin} plugin is dormant: it needs plugin api {inst.dormant.api}, and the installed SDK runs{' '}
+              {inst.dormant.sdk_min_api === inst.dormant.sdk_api ? `api ${inst.dormant.sdk_api}` : `api ${inst.dormant.sdk_min_api} to ${inst.dormant.sdk_api}`}.{' '}
+              {p.update
+                ? 'Update it to turn it back on.'
+                : 'It turns back on when a build for this SDK is installed. Its settings and data are kept.'}
+            </p>
+          </Alert>
+        ) : null}
         {inst?.configs
           .filter((config) => config.conflict)
           .map((config) => (

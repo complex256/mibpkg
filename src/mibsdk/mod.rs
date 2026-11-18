@@ -4,6 +4,7 @@
 pub mod ack;
 pub mod bundles;
 pub mod catalog;
+pub mod dormant;
 pub mod grants;
 pub mod icons;
 pub mod ledger;

@@ -169,7 +169,9 @@ min = "0.6.3"
 
 This is a dependency on the SDK package, not just an API range. mibpkg refuses to install the
 plugin on an older `mibsdk`, and refuses to install or roll back an SDK that is older than an
-installed plugin's requirement. `update-all` updates `mibsdk` before the plugins. The file is
+installed plugin's requirement. `update-all` updates `mibsdk` before the plugins. (A plugin whose `api`
+is outside the new SDK's range does not block the SDK update; see
+[Dormant plugins](../guides/plugin-packages.md#dormant-plugins).) The file is
 separate from `manifest.toml` so older mibpkg releases, which reject unknown manifest fields,
 still install the package. Missing `requires.toml` means no version constraint.
 

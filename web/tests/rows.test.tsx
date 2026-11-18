@@ -13,6 +13,13 @@ describe('a package row', () => {
     expect(screen.getByRole('button', { name: 'Update carmqtt' })).toBeInTheDocument();
   });
 
+  test('a dormant plugin is marked in its row', () => {
+    const p = installedPackage();
+    p.installed!.dormant = { package: 'carmqtt', plugin: 'carmqtt-status', api: 6, sdk_min_api: 9, sdk_api: 9 };
+    render(<PackageRow pkg={p} />);
+    expect(screen.getByText(/Plugin dormant/)).toBeInTheDocument();
+  });
+
   test('an installed, current package offers Open', () => {
     render(<PackageRow pkg={installedPackage({ update: null, update_from: null })} />);
     expect(screen.getByRole('button', { name: 'Open carmqtt' })).toBeInTheDocument();

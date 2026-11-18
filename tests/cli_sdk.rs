@@ -403,6 +403,48 @@ fn sdk_status_warns_about_ledger_before_firmware_update() {
     assert!(r.out.contains("\nWARNING: the SDK is off on this firmware and cannot restore these overrides\n"), "{}", r.out);
 }
 
+// ---- dormant plugins ----
+
+/// A combined package (a daemon and its plugin) whose plugin api the new SDK drops: the SDK updates, the
+/// package stays installed (its daemon keeps running), `list` and the web catalog say the plugin is dormant, and
+/// a build for the new SDK ends it.
+#[test]
+fn an_sdk_that_drops_a_plugin_api_leaves_the_package_installed_and_the_plugin_dormant() {
+    let (f, dir) = (common::fixture(), tempfile::tempdir().unwrap());
+    with_sdk(&f, dir.path()); // 0.1.0 supports api 1..2
+    let sys = RecordingSys::default();
+    let mut ctx = Ctx::new(f.layout.clone(), &sys);
+    ctx.approved = Some(vec!["network".to_string()]);
+    install_src(&ctx, &combined_src(dir.path(), "tailscale", "tailscale-status", "1.0.0", &["network"])).unwrap();
+    assert!(!ok(&f, &["list"]).out.contains("dormant"));
+
+    // SDK 0.2.0 runs api 3 only.
+    let s = dir.path().join("src-mibsdk-0.2.0");
+    fs::create_dir_all(&s).unwrap();
+    let m = read(Path::new(SDK_MANIFEST)).replace("version = \"0.1.0\"", "version = \"0.2.0\"").replace("api = 2\nmin_api = 1", "api = 3\nmin_api = 3");
+    fs::write(s.join("manifest.toml"), m).unwrap();
+    for j in SDK_JARS {
+        fs::write(s.join(j), format!("{j} 0.2.0\n")).unwrap();
+    }
+    write_stamp(&s, "mibsdk-unit.stamp", "unit", None, &SDK_JARS);
+    fs::copy(Path::new(FIX).join("permissions.json"), s.join("permissions.json")).unwrap();
+    let msg = install_src(&ctx, &s).unwrap();
+    assert!(msg.contains("tailscale-status (needs plugin api 2; the installed SDK supports 3..3)"), "{msg}");
+    assert_eq!(install::current_version(&f.layout, "tailscale").as_deref(), Some("1.0.0"), "the package, and so its daemon, stays");
+
+    let list = ok(&f, &["list"]).out;
+    assert!(list.contains("installed tailscale 1.0.0 [test] [plugin dormant: needs plugin api 2; the installed SDK supports 3..3]"), "{list}");
+    assert!(!list.contains("installed mibsdk 0.2.0 [test] [plugin dormant"), "{list}");
+
+    let views = mibpkg::catalog::build(&f.layout, &mibpkg::unit::detect(&f.layout));
+    let d = views.iter().find(|v| v.name == "tailscale").unwrap().installed.as_ref().unwrap().dormant.as_ref().expect("dormant in the catalog");
+    assert_eq!((d.plugin.as_str(), d.api, d.sdk_min_api, d.sdk_api), ("tailscale-status", 2, 3, 3));
+    let json = serde_json::to_value(&views).unwrap();
+    let wire = json.as_array().unwrap().iter().find(|v| v["name"] == "tailscale").unwrap();
+    assert_eq!(wire["installed"]["dormant"]["api"], 2);
+    assert!(views.iter().find(|v| v.name == "mibsdk").unwrap().installed.as_ref().unwrap().dormant.is_none());
+}
+
 // ---- sdk grant ----
 
 #[test]

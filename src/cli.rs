@@ -1129,12 +1129,14 @@ fn print_status(ctx: &Ctx) {
 fn print_list(ctx: &Ctx) -> Result<()> {
     crate::say!("unit: {}", ctx.unit.describe());
     let st = State::load(&ctx.layout)?;
+    let dormant = crate::mibsdk::dormant::current(&ctx.layout);
     for (n, i) in &st.packages {
         crate::say!(
-            "installed {n} {} [{}]{}",
+            "installed {n} {} [{}]{}{}",
             i.version,
             i.collection,
-            i.previous.as_ref().map(|p| format!(" (previous {p})")).unwrap_or_default()
+            i.previous.as_ref().map(|p| format!(" (previous {p})")).unwrap_or_default(),
+            dormant.iter().find(|d| &d.package == n).map(|d| format!(" [plugin dormant: {}]", d.reason())).unwrap_or_default()
         );
     }
     for (dir, c) in media::scan(&ctx.layout) {

@@ -5,8 +5,22 @@ All notable changes to mibpkg. The format follows
 
 ## Unreleased
 
+### Changed
+
+- **An SDK update no longer refuses because an installed plugin's api is out of the new range.** Such a
+  plugin goes *dormant*: the SDK runtime does not load it, its package, grants and data stay, and a
+  combined package keeps running its daemon. Before, the SDK refused ("needs plugin api N; this SDK
+  supports a..b") while the plugin's update refused to install without the new SDK, so a unit could not
+  take a release that raised `min_api` without removing its plugins by hand. SDK install and rollback both
+  behave this way. A plugin that needs a newer `mibsdk` than the one being installed still refuses it.
+
 ### Added
 
+- **Dormant plugins are visible.** `mibpkg list` marks them, `update-all` reports every plugin that still
+  waits for a build for the installed SDK, an SDK install or rollback lists them in its result, and
+  `GET /api/packages` carries `installed.dormant` (`package`, `plugin`, `api`, `sdk_min_api`, `sdk_api`).
+  The web interface shows "Plugin dormant" in the package row and a notice on the package page. The state
+  is derived from the installed packages on every read, never stored.
 - **A form editor for `.toml` config files.** The config page has Form and Raw tabs. Form shows a
   control for each setting and checks values before saving; Raw is the old text editor. Saving uses the
   same "Save and restart" job. Comments, order and keys the form does not know are kept. Without a

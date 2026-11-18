@@ -20,6 +20,15 @@ export interface Permission {
   granted?: boolean;
 }
 
+/** An installed plugin the SDK does not run: its api is outside the installed SDK's range. */
+export interface Dormant {
+  package: string;
+  plugin: string;
+  api: number;
+  sdk_min_api: number;
+  sdk_api: number;
+}
+
 export interface Installed {
   version: string;
   collection: string;
@@ -34,6 +43,7 @@ export interface Installed {
   blocked: string[];
   previous_permissions: Permission[];
   grants_error: string | null;
+  dormant?: Dormant;
   page_preview?: string;
   page_bytes?: number;
 }

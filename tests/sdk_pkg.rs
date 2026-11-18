@@ -1041,16 +1041,49 @@ fn sdk_update_failure_redeploys_previous_version() {
 // ---- update / rollback api range ----
 
 #[test]
-fn sdk_update_refused_while_plugin_needs_other_api() {
+fn sdk_update_leaves_a_plugin_outside_the_new_api_range_dormant() {
     let (f, dir) = unit();
     let sys = RecordingSys::default();
     let ctx = Ctx::new(f.layout.clone(), &sys);
     // Installed while an SDK supporting api 3 was.
     install_src(&ctx, &sdk_src_with(dir.path(), "0.1.0", &SDK_JARS, 1, 3)).unwrap();
     install_plugin(&ctx, dir.path(), "bike-rack", 3);
-    let e = err(install_sdk(&ctx, dir.path(), "0.2.0"));
-    assert_eq!(e, "bike-rack needs plugin api 3; this SDK supports 1..2; nothing changed");
-    assert_eq!(install::current_version(&f.layout, "mibsdk").as_deref(), Some("0.1.0"));
+    assert!(mibsdk::dormant::current(&f.layout).is_empty());
+    // 0.2.0 only supports api 1..2: the update goes through and the plugin waits, it is not refused.
+    let msg = install_sdk(&ctx, dir.path(), "0.2.0").unwrap();
+    assert_eq!(install::current_version(&f.layout, "mibsdk").as_deref(), Some("0.2.0"));
+    assert!(msg.contains("dormant until updated"), "{msg}");
+    assert!(msg.contains("bike-rack (needs plugin api 3; the installed SDK supports 1..2)"), "{msg}");
+    assert!(msg.contains("mibpkg update-all"), "{msg}");
+    let d = mibsdk::dormant::current(&f.layout);
+    assert_eq!(d.len(), 1);
+    assert_eq!((d[0].package.as_str(), d[0].plugin.as_str(), d[0].api), ("bike-rack", "bike-rack", 3));
+    // Its package, its files and its state stay.
+    assert_eq!(install::current_version(&f.layout, "bike-rack").as_deref(), Some("1.0.0"));
+}
+
+#[test]
+fn a_plugin_inside_the_range_is_not_dormant_and_the_update_says_nothing() {
+    let (f, dir) = unit();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    install_sdk(&ctx, dir.path(), "0.1.0").unwrap();
+    install_plugin(&ctx, dir.path(), "bike-rack", 1);
+    let msg = install_sdk(&ctx, dir.path(), "0.2.0").unwrap();
+    assert!(!msg.contains("dormant"), "{msg}");
+    assert!(mibsdk::dormant::current(&f.layout).is_empty());
+}
+
+#[test]
+fn a_plugin_that_needs_a_newer_mibsdk_still_refuses_the_update() {
+    let (f, dir) = unit();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    install_sdk(&ctx, dir.path(), "0.2.0").unwrap();
+    install_plugin_requiring(&ctx, dir.path(), "bike-rack", 2, "0.2.0");
+    // No later build of the plugin can fix an SDK that is too old for it.
+    let e = err(install_sdk(&ctx, dir.path(), "0.1.5"));
+    assert_eq!(e, "bike-rack needs mibsdk 0.2.0 or newer; this package is 0.1.5; nothing changed");
 }
 
 #[test]
@@ -1096,16 +1129,18 @@ fn sdk_rollback_redeploys_the_previous_jars() {
 }
 
 #[test]
-fn sdk_rollback_refused_while_plugin_needs_other_api() {
+fn sdk_rollback_leaves_a_plugin_outside_the_old_api_range_dormant() {
     let (f, dir) = unit();
     let sys = RecordingSys::default();
     let ctx = Ctx::new(f.layout.clone(), &sys);
     install_src(&ctx, &sdk_src_with(dir.path(), "0.1.0", &SDK_JARS, 1, 1)).unwrap();
     install_sdk(&ctx, dir.path(), "0.2.0").unwrap();
     install_plugin(&ctx, dir.path(), "bike-rack", 2);
-    let e = format!("{:#}", install::rollback(&ctx, "mibsdk").unwrap_err());
-    assert_eq!(e, "bike-rack needs plugin api 2; this SDK supports 1..1; nothing changed");
-    assert_eq!(install::current_version(&f.layout, "mibsdk").as_deref(), Some("0.2.0"));
+    assert!(mibsdk::dormant::current(&f.layout).is_empty());
+    let msg = install::rollback(&ctx, "mibsdk").unwrap();
+    assert_eq!(install::current_version(&f.layout, "mibsdk").as_deref(), Some("0.1.0"));
+    assert!(msg.contains("bike-rack (needs plugin api 2; the installed SDK supports 1..1)"), "{msg}");
+    assert_eq!(mibsdk::dormant::current(&f.layout).len(), 1);
 }
 
 // ---- HMICar= on update ----

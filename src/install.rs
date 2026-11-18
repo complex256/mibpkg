@@ -423,7 +423,7 @@ pub fn install_package(ctx: &Ctx, media: &[PathBuf], pkg: &Package, coll_id: &st
     }
     if kind == Kind::Sdk {
         msg.push_str(SDK_START);
-        for n in &sdk_notes {
+        for n in sdk_notes.iter().chain(crate::mibsdk::dormant::notes(layout).iter()) {
             msg.push('\n');
             msg.push_str(n);
         }
@@ -524,7 +524,9 @@ pub fn update_all(ctx: &Ctx, media: &[PathBuf], colls: &[Collection]) -> Result<
     let state = State::load(&ctx.layout)?;
     let mut todo = updates_available(&state, colls, &ctx.unit);
     if todo.is_empty() {
-        return Ok(vec!["everything is up to date".into()]);
+        let mut out = vec!["everything is up to date".to_string()];
+        out.extend(still_dormant(&ctx.layout));
+        return Ok(out);
     }
     // SDK first: a plugin build may require the newer SDK, and the plugin check reads the
     // package that is installed rather than the runtime that is still running until the reboot.
@@ -541,7 +543,18 @@ pub fn update_all(ctx: &Ctx, media: &[PathBuf], colls: &[Collection]) -> Result<
             },
         });
     }
+    // What the pass could not fix: a plugin whose api the installed SDK does not run and whose
+    // collections offer no build for it.
+    out.extend(still_dormant(&ctx.layout));
     Ok(out)
+}
+
+/// One line per dormant plugin: why it is off, and that nothing newer is on offer for it.
+fn still_dormant(layout: &Layout) -> Vec<String> {
+    crate::mibsdk::dormant::current(layout)
+        .into_iter()
+        .map(|d| format!("{}: dormant, {}; no build for this SDK is available in any collection", d.package, d.reason()))
+        .collect()
 }
 
 pub fn remove(ctx: &Ctx, name: &str, purge: bool) -> Result<String> {
@@ -678,7 +691,8 @@ pub fn rollback(ctx: &Ctx, name: &str) -> Result<String> {
     state.save(layout)?;
     control::request_reload(layout)?;
     let suffix = if kind == Kind::Sdk { SDK_START } else { "" };
-    let notes: String = sdk_notes.iter().map(|n| format!("\n{n}")).collect();
+    let dormant = if kind == Kind::Sdk { crate::mibsdk::dormant::notes(layout) } else { Vec::new() };
+    let notes: String = sdk_notes.iter().chain(dormant.iter()).map(|n| format!("\n{n}")).collect();
     let mut msg = format!("rolled back {name} {} -> {prev}{suffix}{notes}", inst.version);
     if kind == Kind::Plugin {
         drop(rw);
