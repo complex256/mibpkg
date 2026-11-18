@@ -19,6 +19,7 @@ fn setup() -> (common::Fixture, App) {
     let mut m = fs::read_to_string(v1.join("manifest.toml")).unwrap();
     m.push_str("\n[[file]]\nsrc = \"demo.conf.example\"\n");
     fs::write(v1.join("manifest.toml"), m).unwrap();
+    fs::write(v1.join("README.md"), "# Demo\n\nThe installed page.\n").unwrap();
     let c1 = Collection::load(&common::collection(&f.sd(), "complex256", &[v1.clone()])).unwrap();
     let sys = RecordingSys::default();
     let ctx = Ctx::new(f.layout.clone(), &sys);
@@ -57,6 +58,8 @@ fn packages_merge_installed_card_and_online() {
     assert_eq!(demo["installed"]["configs"][0]["path"], "demo.conf");
     assert_eq!(demo["available"][0]["origin"], "card");
     assert_eq!(demo["description"], "demo test package");
+    assert_eq!(demo["installed"]["page_preview"], "# Demo\n\nThe installed page.\n");
+    assert_eq!(demo["installed"]["page_bytes"], 28);
     let extra = list.iter().find(|p| p["name"] == "extra").unwrap();
     assert!(extra["installed"].is_null());
     assert_eq!(extra["available"][0]["origin"], "online");

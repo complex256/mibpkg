@@ -33,6 +33,12 @@ pub struct Avail {
     pub min_sdk: Option<String>,
     /// A plugin's declared permissions, in plain words.
     pub permissions: Vec<Perm>,
+    /// The start of the package's store page (markdown); the rest comes from /api/packages/<name>/page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_preview: Option<String>,
+    /// Size of the full store page in bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_bytes: Option<u64>,
 }
 
 /// One declared permission as the web shows it. One entry per id, so an "optional" flag can be
@@ -107,6 +113,11 @@ pub struct Inst {
     pub previous_permissions: Vec<Perm>,
     /// `grants.properties` could not be read: `granted` is unknown (None) and `blocked` empty.
     pub grants_error: Option<String>,
+    /// The installed copy's store page start and size (read from disk).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_preview: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -220,6 +231,8 @@ pub fn build(layout: &Layout, unit: &UnitInfo) -> Vec<PkgView> {
                 kind: e.kind.clone(),
                 min_sdk: e.min_sdk.clone(),
                 permissions: permissions(cat, &e.permissions, None),
+                page_preview: e.page_preview.clone(),
+                page_bytes: e.page_bytes,
             });
         }
     }
@@ -275,7 +288,10 @@ pub fn build(layout: &Layout, unit: &UnitInfo) -> Vec<PkgView> {
                 let rollback_supported = crate::requires::read_dir(&layout.pkg_dir(&name).join(&i.version))
                     .map(|r| r.rollback_supported())
                     .unwrap_or(true);
+                let page = crate::install::installed_page(layout, &name, &i.version);
                 Inst {
+                    page_preview: page.as_deref().map(crate::index::page_preview),
+                    page_bytes: page.as_ref().map(|p| p.len() as u64),
                     version: i.version.clone(),
                     collection: i.collection.clone(),
                     previous: if rollback_supported { i.previous.clone() } else { None },

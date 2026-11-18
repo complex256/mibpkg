@@ -34,6 +34,8 @@ export interface Installed {
   blocked: string[];
   previous_permissions: Permission[];
   grants_error: string | null;
+  page_preview?: string;
+  page_bytes?: number;
 }
 
 export interface Offer {
@@ -45,6 +47,8 @@ export interface Offer {
   kind?: string | null;
   permissions?: Permission[];
   uses_scripts?: boolean;
+  page_preview?: string;
+  page_bytes?: number;
 }
 
 export interface MovedChoice {

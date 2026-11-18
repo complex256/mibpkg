@@ -44,6 +44,21 @@ pub fn current_dir(layout: &Layout, pkg: &str) -> Option<PathBuf> {
     current_version(layout, pkg).map(|v| layout.pkg_dir(pkg).join(v)).filter(|d| d.is_dir())
 }
 
+/// The store page of installed `pkg` `version` (`STORE-PAGE.md`, written by pack), if it has one.
+pub fn installed_page(layout: &Layout, pkg: &str, version: &str) -> Option<String> {
+    use std::io::Read;
+    let mut buf = Vec::new();
+    fs::File::open(layout.pkg_dir(pkg).join(version).join(crate::manifest::PAGE_FILE))
+        .ok()?
+        .take(crate::manifest::MAX_PAGE as u64 + 1)
+        .read_to_end(&mut buf)
+        .ok()?;
+    if buf.len() > crate::manifest::MAX_PAGE {
+        return None;
+    }
+    String::from_utf8(buf).ok().filter(|t| !t.trim().is_empty())
+}
+
 pub fn current_manifest(layout: &Layout, pkg: &str) -> Result<Manifest> {
     let d = current_dir(layout, pkg).with_context(|| format!("{pkg} is not installed"))?;
     Manifest::parse(&fs::read_to_string(d.join("manifest.toml"))?)
