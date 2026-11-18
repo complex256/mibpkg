@@ -104,6 +104,29 @@ export interface ConfigDetail {
   content: string;
   example: string | null;
   card: string | null;
+  form: FormDoc | null;
+}
+
+export interface FormField {
+  key: string;
+  label: string;
+  help: string;
+  kind: 'string' | 'int' | 'float' | 'bool' | 'enum' | 'list' | 'raw';
+  source: 'schema' | 'inferred';
+  value: unknown;
+  default: unknown;
+  choices: string[];
+  min: number | null;
+  max: number | null;
+  secret: boolean;
+  section: string | null;
+  raw: string | null;
+}
+
+export interface FormDoc {
+  mode: 'schema' | 'inferred' | 'raw';
+  fields: FormField[];
+  reason: string | null;
 }
 
 export interface SourceRow {
