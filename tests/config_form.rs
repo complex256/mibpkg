@@ -390,3 +390,18 @@ fn list_item_kind_comes_from_schema_or_existing_items() {
 fn pack_accepts_valid_schema_file() {
     pack_with_schema(Some("[[field]]\nkey = \"a\"\nlabel = \"A\"\ntype = \"string\"\n")).unwrap();
 }
+
+#[test]
+fn list_items_are_checked_against_min_and_max() {
+    let s = sch("[[field]]\nkey = \"t\"\ntype = \"list\"\nof = \"int\"\nmin = 0\nmax = 10\n");
+    let errs = apply("t = [1]\n", &[e("t", json!([5, -5]))], Some(&s)).unwrap_err();
+    assert_eq!(errs[0].key, "t");
+    assert_eq!(errs[0].message, "item 2: must be at least 0");
+    let errs = apply("t = [1]\n", &[e("t", json!([99]))], Some(&s)).unwrap_err();
+    assert_eq!(errs[0].message, "item 1: must be at most 10");
+    assert_eq!(apply("t = [1]\n", &[e("t", json!([0, 10, 4]))], Some(&s)).unwrap(), "t = [0, 10, 4]\n");
+    let sf = sch("[[field]]\nkey = \"t\"\ntype = \"list\"\nof = \"float\"\nmin = 0.5\n");
+    let errs = apply("t = [1.0]\n", &[e("t", json!([0.1]))], Some(&sf)).unwrap_err();
+    assert!(errs[0].message.starts_with("item 1: must be at least"), "{}", errs[0].message);
+    assert!(apply("t = [1.0]\n", &[e("t", json!([0.5, 2]))], Some(&sf)).is_ok());
+}

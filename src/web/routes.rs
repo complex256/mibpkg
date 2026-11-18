@@ -267,6 +267,9 @@ fn config_form(app: &App, req: &Request, name: &str, n: &str) -> Response {
         crate::config_form::Schema::parse(&std::fs::read_to_string(dir.join(s)).ok()?).ok()
     });
     match crate::config_form::apply(&text, &b.edits, schema.as_ref()) {
+        Ok(new_text) if new_text.len() as u64 > api::MAX_CONFIG => {
+            Response::error(409, "this change would make the file larger than the editor can safely open")
+        }
         Ok(new_text) => save_config(app, name, n, &c.path, new_text.as_bytes()),
         Err(fields) => Response::json(400, &json!({ "error": "some values are not valid", "fields": fields })),
     }

@@ -24,6 +24,34 @@ fn setup() -> (common::Fixture, App) {
     (f, app)
 }
 
+/// A package whose first config is `broker.toml`, optionally with an example and a schema shipped in it.
+fn setup_shipped(example: Option<&str>, schema: Option<&str>) -> (common::Fixture, App) {
+    let f = common::fixture();
+    let mut conf = String::from("[[config]]\npath = \"broker.toml\"\n");
+    if example.is_some() {
+        conf.push_str("example = \"broker.toml.example\"\n");
+    }
+    if schema.is_some() {
+        conf.push_str("schema = \"broker.schema.toml\"\n");
+    }
+    let v1 = common::pkg_src(f.root(), "demo", "1.0.0", "sleep 30", &conf);
+    if let Some(t) = example {
+        fs::write(v1.join("broker.toml.example"), t).unwrap();
+    }
+    if let Some(t) = schema {
+        fs::write(v1.join("broker.schema.toml"), t).unwrap();
+    }
+    let c1 = Collection::load(&common::collection(&f.sd(), "complex256", &[v1])).unwrap();
+    let sys = RecordingSys::default();
+    let ctx = Ctx::new(f.layout.clone(), &sys);
+    install::install(&ctx, &[f.sd()], &c1, "demo").unwrap();
+    fs::create_dir_all(f.layout.config_dir("demo")).unwrap();
+    let app = App::new(f.layout.clone(), Box::new(|| None)).with_runner(Box::new(RecordingRunner::default()));
+    (f, app)
+}
+
+const SCHEMA: &str = "[[field]]\nkey = \"port\"\nlabel = \"Port number\"\ntype = \"int\"\nmax = 100\nsection = \"Net\"\n";
+
 fn put_file(f: &common::Fixture, name: &str, bytes: &[u8]) {
     fs::write(f.layout.config_dir("demo").join(name), bytes).unwrap();
 }
@@ -173,4 +201,47 @@ fn unreadable_existing_file_is_raw_only_and_refused() {
     let dir = f.layout.run("x");
     let staged = fs::read_dir(dir.parent().unwrap()).unwrap().flatten().any(|e| e.file_name().to_string_lossy().starts_with("mibpkg.text."));
     assert!(!staged, "a job was staged");
+}
+
+#[test]
+fn get_with_a_shipped_schema_is_schema_mode_with_its_labels() {
+    let (f, app) = setup_shipped(None, Some(SCHEMA));
+    put_file(&f, "broker.toml", b"port = 1\n");
+    let (s, v) = body(api::config_get(&app, "demo", 0));
+    assert_eq!(s, 200);
+    assert_eq!(v["form"]["mode"], "schema", "{v}");
+    assert_eq!(v["form"]["fields"][0]["label"], "Port number");
+    assert_eq!(v["form"]["fields"][0]["section"], "Net");
+}
+
+#[test]
+fn post_violating_the_shipped_schema_is_400_and_starts_no_job() {
+    let (f, app) = setup_shipped(None, Some(SCHEMA));
+    put_file(&f, "broker.toml", b"port = 1\n");
+    let (s, v) = post(&app, "demo", 0, r#"{"edits":[{"key":"port","value":500}]}"#);
+    assert_eq!(s, 400, "{v}");
+    assert_eq!(v["fields"][0]["key"], "port");
+    assert!(v["job"].is_null());
+    let dir = f.layout.run("x");
+    let staged = fs::read_dir(dir.parent().unwrap()).unwrap().flatten().any(|e| e.file_name().to_string_lossy().starts_with("mibpkg.text."));
+    assert!(!staged, "a rejected edit must not stage a file");
+}
+
+#[test]
+fn empty_edits_on_a_missing_file_save_the_example() {
+    let example = "# the example\nport = 1883\n";
+    let (f, app) = setup_shipped(Some(example), None);
+    let (s, v) = post(&app, "demo", 0, r#"{"edits":[]}"#);
+    assert_eq!(s, 202, "{v}");
+    assert_eq!(saved_text(&f), example);
+}
+
+#[test]
+fn output_larger_than_the_cap_is_refused_with_409() {
+    let (f, app) = setup();
+    let pad = "x".repeat(api::MAX_CONFIG as usize - 40);
+    put_file(&f, "demo.toml", format!("# {pad}\nport = 1\n").as_bytes());
+    let (s, v) = post(&app, "demo", 0, r#"{"edits":[{"key":"name","value":"this makes the file longer than the cap allows it to be"}]}"#);
+    assert_eq!(s, 409, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("larger than the editor can safely open"));
 }

@@ -277,6 +277,27 @@ describe('the config view', () => {
     expect(bodies).toEqual([{ edits: [{ key: 'host', value: 'ab' }] }]);
   });
 
+  test('a missing config can be created from its example with no edits', async () => {
+    const bodies: unknown[] = [];
+    serve(detail({ exists: false, example: 'host = "a"\n' }), {
+      'POST /api/packages/carmqtt/config/0/form': async (init) => {
+        bodies.push(JSON.parse(String(init?.body)));
+        return new Response(JSON.stringify({ job: 'j1' }), { status: 202 });
+      },
+    });
+    render(<ConfigView name="carmqtt" index="0" />);
+    const save = await screen.findByRole('button', { name: /Save and restart/ });
+    expect(save).toBeEnabled();
+    await userEvent.click(save);
+    expect(bodies).toEqual([{ edits: [] }]);
+  });
+
+  test('an existing config still needs a change before Save is enabled', async () => {
+    serve(detail());
+    render(<ConfigView name="carmqtt" index="0" />);
+    expect(await screen.findByRole('button', { name: /Save and restart/ })).toBeDisabled();
+  });
+
   test('no_form_tab_when_form_is_null_or_raw_mode', async () => {
     serve(detail({ form: { mode: 'raw', fields: [], reason: 'Could not parse line 3' } }));
     render(<ConfigView name="carmqtt" index="0" />);

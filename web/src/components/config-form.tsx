@@ -234,7 +234,10 @@ export function ConfigForm({
   onSubmit,
   saving,
   errors,
+  allowEmpty = false,
 }: {
+  /** Saving with no edits is allowed: the file does not exist yet and the example is to be saved as it is. */
+  allowEmpty?: boolean;
   doc: FormDoc;
   onSubmit: (edits: Edit[]) => void;
   saving: boolean;
@@ -283,7 +286,7 @@ export function ConfigForm({
       }
     }
     setLocal(problems);
-    if (Object.keys(problems).length === 0 && edits.length > 0) {
+    if (Object.keys(problems).length === 0 && (edits.length > 0 || allowEmpty)) {
       onSubmit(edits);
     }
   }
@@ -333,7 +336,7 @@ export function ConfigForm({
           </ul>
         </Alert>
       ) : null}
-      <Button className="mt-4 w-full" loading={saving} disabled={changed.length === 0} onClick={submit}>
+      <Button className="mt-4 w-full" loading={saving} disabled={changed.length === 0 && !allowEmpty} onClick={submit}>
         Save and restart
       </Button>
     </div>

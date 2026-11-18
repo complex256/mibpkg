@@ -203,7 +203,7 @@ export function ConfigView({ name, index }: { name: string; index: string }) {
       {showForm && form ? (
         // Kept mounted while the Raw tab is up, so unsaved form edits are not lost by switching.
         <div className="mt-3" hidden={!onForm}>
-          <ConfigForm doc={form} onSubmit={saveForm} saving={formSaving} errors={formErrors} />
+          <ConfigForm allowEmpty={!cfg.exists} doc={form} onSubmit={saveForm} saving={formSaving} errors={formErrors} />
         </div>
       ) : null}
       {onForm ? null : (

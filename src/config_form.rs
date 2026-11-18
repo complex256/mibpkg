@@ -447,7 +447,7 @@ fn build_value(
     let of = of.unwrap_or(FieldType::String);
     let mut arr = toml_edit::Array::new();
     for (i, item) in items.iter().enumerate() {
-        let val = scalar_value(of, item, None, None, &[]).map_err(|m| format!("item {}: {m}", i + 1))?;
+        let val = scalar_value(of, item, min, max, &[]).map_err(|m| format!("item {}: {m}", i + 1))?;
         arr.push(val);
     }
     Ok(toml_edit::Value::Array(arr))
