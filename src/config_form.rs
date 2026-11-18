@@ -439,6 +439,9 @@ fn plan_edit(
         return Err("empty key".into());
     }
     let existing = resolve(doc, &edit.key)?;
+    if matches!(existing, Some(item) if !item.is_value()) {
+        return Err("existing value is a table and cannot be edited as a field".into());
+    }
     if edit.value.is_null() {
         return Ok(Change::Remove);
     }
@@ -488,10 +491,12 @@ fn apply_change(doc: &mut toml_edit::DocumentMut, key: &str, change: Change) -> 
             t.remove(leaf);
         }
         Change::Set(mut v) => {
-            if let Some(Item::Value(old)) = t.get(leaf) {
+            if let Some(Item::Value(old)) = t.get_mut(leaf) {
                 *v.decor_mut() = old.decor().clone();
+                *old = v;
+            } else {
+                t.insert(leaf, Item::Value(v));
             }
-            t.insert(leaf, Item::Value(v));
         }
     }
     Ok(())

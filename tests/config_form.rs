@@ -319,3 +319,29 @@ fn existing_out_of_range_value_not_touched_is_not_an_error() {
     let out = apply("n = 99\nm = 1\n", &[e("m", json!(2))], Some(&s)).unwrap();
     assert_eq!(out, "n = 99\nm = 2\n");
 }
+
+#[test]
+fn edit_keeps_comment_above_key_and_trailing_comment() {
+    let out = apply("[net]\n# the port\nport = 80 # tail\n", &[e("net.port", json!(81))], None).unwrap();
+    assert_eq!(out, "[net]\n# the port\nport = 81 # tail\n");
+    let out = apply("# lead\nname = \"a\" # t\n", &[e("name", json!("b"))], None).unwrap();
+    assert_eq!(out, "# lead\nname = \"b\" # t\n");
+}
+
+#[test]
+fn null_on_table_or_array_of_tables_is_refused() {
+    let text = "a = 1\n[server]\nport = 80\nhost = \"h\"\n";
+    let errs = apply(text, &[e("server", json!(null))], None).unwrap_err();
+    assert_eq!(errs[0].key, "server");
+    let errs = apply("[[s]]\nx = 1\n", &[e("s", json!(null))], None).unwrap_err();
+    assert_eq!(errs[0].key, "s");
+}
+
+#[test]
+fn schema_field_cannot_overwrite_a_table() {
+    let s = sch("[[field]]\nkey = \"server\"\ntype = \"string\"\n");
+    let errs = apply("[server]\nport = 80\n", &[e("server", json!("x"))], Some(&s)).unwrap_err();
+    assert_eq!(errs[0].key, "server");
+    let errs = apply("[[server]]\nport = 80\n", &[e("server", json!("x"))], Some(&s)).unwrap_err();
+    assert_eq!(errs[0].key, "server");
+}
