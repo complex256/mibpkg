@@ -3,6 +3,24 @@
 All notable changes to mibpkg. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow semver.
 
+## Unreleased
+
+### Added
+
+- **A form editor for `.toml` config files.** The config page has Form and Raw tabs. Form shows a
+  control for each setting and checks values before saving; Raw is the old text editor. Saving uses the
+  same "Save and restart" job. Comments, order and keys the form does not know are kept. Without a
+  schema the form is built from the file itself. A config that does not exist yet can be saved
+  from the form as the package's example, with no edits. List `min`/`max` limits apply to each
+  item, and a form change that would push the file over 64 KiB is refused.
+- **`schema = "<file>"` on `[[config]]`.** A package can ship a schema file that gives the form labels,
+  help text, limits, choices, sections and secret fields. `mibpkg build` and `verify` reject a missing
+  or invalid schema. See "Config forms and schemas" in the guides.
+- **`POST /api/packages/<name>/config/<n>/form`**, and a `form` field on
+  `GET /api/packages/<name>/config/<n>`. Bad values come back as a 400 with a message per field.
+- The web fixture script has a `broker-ui` package that ships a schema.
+- The QNX binary grows by 112,661 bytes (3,238,978 to 3,351,639, about 3.5%), mostly the `toml_edit` dependency.
+
 ## 0.14.0 — 2026-11-17
 
 ### Added

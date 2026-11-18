@@ -59,3 +59,4 @@ pub mod scaffold;
 pub mod firewall;
 pub mod web;
 pub mod mibsdk;
+pub mod config_form;

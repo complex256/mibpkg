@@ -98,6 +98,7 @@ nav:
       - Real packages: guides/real-packages.md
       - Online sources: guides/online-sources.md
       - Config, logs and restart: guides/config-logs-restart.md
+      - Config forms and schemas: guides/config-schema.md
       - Web settings and PIN: guides/web-settings-pin.md
       - Recovery and DISABLE: guides/recovery-disable.md
       - Troubleshooting: guides/troubleshooting.md

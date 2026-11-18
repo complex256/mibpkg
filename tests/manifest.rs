@@ -130,3 +130,23 @@ fn page_keys_parse_and_conflict() {
     let big = CARMQTT.replace("description = ", &format!("long_description = \"{}\"\ndescription = ", "a".repeat(65 * 1024)));
     assert!(Manifest::parse(&big).is_err());
 }
+
+#[test]
+fn config_schema_parses() {
+    let m = Manifest::parse(&CARMQTT.replace("required = true", "required = true\nschema = \"carmqtt.schema.toml\"")).unwrap();
+    assert_eq!(m.configs[0].schema.as_deref(), Some("carmqtt.schema.toml"));
+}
+
+#[test]
+fn config_schema_must_be_safe_relative_path() {
+    assert!(Manifest::parse(&CARMQTT.replace("required = true", "required = true\nschema = \"../s.toml\"")).is_err());
+    assert!(Manifest::parse(&CARMQTT.replace("required = true", "required = true\nschema = \"/s.toml\"")).is_err());
+}
+
+#[test]
+fn config_schema_requires_toml_config_path() {
+    let t = CARMQTT
+        .replace("carmqtt.toml\"\nexample", "carmqtt.json\"\nexample")
+        .replace("required = true", "required = true\nschema = \"s.toml\"");
+    assert!(Manifest::parse(&t).is_err());
+}

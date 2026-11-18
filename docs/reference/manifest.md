@@ -85,6 +85,7 @@ Files are installed under the package directory:
 | `path` | Path below the package's config directory |
 | `example` | Optional example file shipped in the package |
 | `required` | The service will not start until the file exists |
+| `schema` | Optional schema file shipped in the package; gives the web interface a form for this config. The `path` must end in `.toml`. The file only has to be in the package folder; it need not be listed under `[[file]]`. Needs the mibpkg release that adds this field: older versions reject unknown `[[config]]` fields, so a package that sets it will not install there. See [Config forms and schemas](../guides/config-schema.md) |
 
 The live file lives at:
 

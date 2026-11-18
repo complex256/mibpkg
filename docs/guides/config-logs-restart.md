@@ -28,6 +28,10 @@ mibpkg/config/<package>/<path>
 - **required** — the service will not start until it exists;
 - **optional** — the example is copied only when the user asks, or when the package needs it.
 
+For `.toml` configs the web interface offers a **Form** tab as well as the raw text editor. A package
+can ship a schema to give the form proper labels and limits; see
+[Config forms and schemas](config-schema.md).
+
 ## Config conflicts
 
 If both the card and the unit changed the same config, mibpkg refuses to guess. Open the package page

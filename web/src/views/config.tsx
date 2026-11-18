@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { api } from '../lib/api';
+import { ApiError, api } from '../lib/api';
 import { toast } from '../lib/toast';
 import { startAction } from '../lib/jobs';
 import { useApi } from '../lib/use-api';
 import { PageHeader } from '../components/page-header';
+import { ConfigForm } from '../components/config-form';
 import { JobConsole } from '../components/job-console';
 import { ErrorAlert, Loading } from '../components/async-state';
 import { Alert } from '../components/ui/alert';
@@ -11,6 +12,7 @@ import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
+import { cn } from '../lib/utils';
 import type { ConfigDetail } from '../lib/types';
 
 /** One side of the conflict: every line, with the ones only this copy has marked. */
@@ -39,12 +41,16 @@ export function ConfigView({ name, index }: { name: string; index: string }) {
   const [saving, setSaving] = useState(false);
   const [resolving, setResolving] = useState<'keep' | 'card' | null>(null);
   const [job, setJob] = useState<string | null>(null);
+  const [tab, setTab] = useState<'form' | 'raw'>('form');
+  const [formSaving, setFormSaving] = useState(false);
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const consoleRef = useRef<HTMLDivElement>(null);
 
   // The editor holds the file as the car last sent it (also after a save).
   useEffect(() => {
     if (cfg) {
       setText(cfg.content);
+      setFormErrors({});
     }
   }, [cfg]);
 
@@ -64,6 +70,25 @@ export function ConfigView({ name, index }: { name: string; index: string }) {
       toast(e instanceof Error ? e.message : String(e), { error: true });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function saveForm(edits: { key: string; value: unknown }[]) {
+    setFormSaving(true);
+    setFormErrors({});
+    try {
+      const reply = await api<{ job: string }>('POST', `/api/packages/${name}/config/${index}/form`, { edits });
+      setJob(reply.job);
+    } catch (e) {
+      const data = e instanceof ApiError ? (e.data as { error?: string; fields?: { key: string; message: string }[] } | null) : null;
+      if (e instanceof ApiError && e.status === 400 && data?.fields) {
+        setFormErrors(Object.fromEntries(data.fields.map((f) => [f.key, f.message])));
+        toast(data.error ?? e.message, { error: true });
+      } else {
+        toast(e instanceof Error ? e.message : String(e), { error: true });
+      }
+    } finally {
+      setFormSaving(false);
     }
   }
 
@@ -97,6 +122,9 @@ export function ConfigView({ name, index }: { name: string; index: string }) {
   const carLines = lines(cfg.content);
   const cardLines = cfg.card === null ? [] : lines(cfg.card);
   const conflict = cfg.card !== null;
+  const form = cfg.form;
+  const showForm = form !== null && form.mode !== 'raw' && !conflict;
+  const onForm = showForm && tab === 'form';
 
   return (
     <div>
@@ -147,22 +175,57 @@ export function ConfigView({ name, index }: { name: string; index: string }) {
         </div>
       ) : null}
 
-      <div className="mt-3 space-y-1.5">
-        <Label htmlFor="config">
-          {name} · {cfg.path}
-        </Label>
-        <Textarea
-          id="config"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          spellCheck={false}
-          autoCapitalize="off"
-          autoComplete="off"
-        />
-      </div>
-      <Button className="mt-2 w-full" loading={saving} onClick={save}>
-        Save and restart
-      </Button>
+      {form !== null && form.mode === 'raw' && form.reason ? (
+        <Alert variant="warning" className="mb-3">
+          <p>{form.reason}</p>
+        </Alert>
+      ) : null}
+
+      {showForm ? (
+        <div role="group" aria-label="Editor" className="mt-3 grid grid-cols-2 gap-1 rounded-full bg-muted p-1">
+          {(['form', 'raw'] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              aria-pressed={tab === t}
+              onClick={() => setTab(t)}
+              className={cn(
+                'min-h-11 rounded-full text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                tab === t ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground',
+              )}
+            >
+              {t === 'form' ? 'Form' : 'Raw'}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {showForm && form ? (
+        // Kept mounted while the Raw tab is up, so unsaved form edits are not lost by switching.
+        <div className="mt-3" hidden={!onForm}>
+          <ConfigForm allowEmpty={!cfg.exists} doc={form} onSubmit={saveForm} saving={formSaving} errors={formErrors} />
+        </div>
+      ) : null}
+      {onForm ? null : (
+        <>
+        <div className="mt-3 space-y-1.5">
+          <Label htmlFor="config">
+            {name} · {cfg.path}
+          </Label>
+          <Textarea
+            id="config"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            spellCheck={false}
+            autoCapitalize="off"
+            autoComplete="off"
+          />
+        </div>
+        <Button className="mt-2 w-full" loading={saving} onClick={save}>
+          Save and restart
+        </Button>
+        </>
+      )}
       <div ref={consoleRef}>
         {job ? (
           <JobConsole

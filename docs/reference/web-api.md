@@ -19,9 +19,10 @@ A wrong PIN returns 401. Too many wrong PINs returns 429 with `retry_after`.
 |---|---|---|
 | `GET` | `/api/status` | Versions, health, current job |
 | `GET` | `/api/packages` | Installed and available packages |
-| `GET` | `/api/packages/<name>/config/<n>` | Read config `n` |
+| `GET` | `/api/packages/<name>/config/<n>` | Read config `n`; for a `.toml` config also its `form` |
 | `PUT` | `/api/packages/<name>/config/<n>` | Write config `n` (UTF-8 text body) |
 | `GET` | `/api/packages/<name>/page` | The store page as `text/markdown`: the installed copy, or with `?collection=<id>&version=<v>` that version from its collection, checked against the index |
+| `POST` | `/api/packages/<name>/config/<n>/form` | Change keys of a `.toml` config from the form |
 | `GET` | `/api/sources` | Enabled and available sources |
 | `POST` | `/api/sources` | Add `{source}` |
 | `DELETE` | `/api/sources` | Remove `{source}` |
@@ -38,6 +39,48 @@ A wrong PIN returns 401. Too many wrong PINs returns 429 with `retry_after`.
 
 Actions run as jobs. `POST /api/actions` returns **202** with `{job}` or **409** with
 `{busy, job, error}` when another action is running. Poll the job until `ok` or `error`.
+
+## Config forms
+
+`GET /api/packages/<name>/config/<n>` returns `path`, `required`, `exists`, `content`, `example` and
+`card` (the card's copy while it is in conflict, else `null`). For a path ending `.toml` it also returns
+`form`; for any other path `form` is `null`.
+
+```json
+{
+  "mode": "schema",
+  "reason": null,
+  "fields": [
+    {"key": "port", "label": "Port", "help": null, "kind": "int", "source": "schema",
+     "value": 1883, "default": 1883, "choices": [], "min": 1, "max": 65535,
+     "secret": false, "section": "Connection", "raw": null, "item_kind": null}
+  ]
+}
+```
+
+- `mode` is `schema` (the package ships a schema), `inferred` (no schema; fields are read from the
+  file) or `raw` (the form cannot be used; `reason` says why and `fields` is empty).
+- `kind` is `string`, `int`, `float`, `bool`, `enum`, `list` or `raw`. A `raw` field is a value the form
+  cannot edit (a table array, an inline table, a date); `raw` holds its TOML text.
+- `value` is `null` when the key is not set in the file. `item_kind` is the list item type for lists.
+- The file text is the config, or its example while the config does not exist yet.
+
+`POST /api/packages/<name>/config/<n>/form` takes `{"edits": [{"key": "port", "value": 1884}]}`.
+A `null` value removes the key. An empty `edits` list is valid: if the config file does not exist yet, it saves the example as it is. Keys use dots for tables (`publish.interval`). The server applies the
+edits to the file, keeping comments, order and keys it does not know, checks them against the schema
+(or, without one, against the type already in the file), and then saves the result as the usual
+"Save and restart" job.
+
+| Status | Body | Meaning |
+|---|---|---|
+| 202 | `{job}` | Saved; poll the job |
+| 400 | `{error, fields: [{key, message}]}` | An edit is invalid, or the file is not valid TOML; `fields` names each bad key. Nothing is written |
+| 404 | `{error}` | Unknown package or config |
+| 400 | `{error}` | The body is not valid JSON or has unknown fields |
+| 409 | `{error}` | The card has a conflicting copy (resolve it first), the file is over 64 KiB, is not UTF-8 or cannot be read, or the result would be over 64 KiB ("this change would make the file larger than the editor can safely open") |
+| 409 | `{busy, job, error}` | Another job is running |
+
+A config whose path does not end `.toml` is refused with 400.
 
 ## Uploads
 
