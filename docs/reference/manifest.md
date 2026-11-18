@@ -29,8 +29,30 @@ restart = "always"
 | `name` | Yes | 1–40 characters, `[a-z0-9-]`, starting with a letter or digit. Reserved: `restart`, `reload`, `stop`, `selfupdate`, `pid`, `lock`, `status`, `log`, `rw`, `rwlock`, `uploaded` |
 | `version` | Yes | Semver (`1.2.3`, `1.2.3-beta.1`). A version is never reused |
 | `description` | No | One line |
+| `long_description` | No | Markdown for the package's [store page](#store-page). At most 64 KiB |
+| `readme` | No | Package-relative path of a markdown file for the store page. Must exist and be UTF-8, at most 64 KiB |
 
 `mibsdk` is reserved for the SDK package. Only a manifest with `[sdk]` may use it.
+
+## Store page
+
+A package can carry a longer, markdown description that the web interface shows on its page. The text
+is resolved when the package is built; the first match wins:
+
+1. `long_description`, inline in the manifest.
+2. The file named by `readme`.
+3. `README.md` in the package directory, when there is one (no setting needed).
+
+Setting both `long_description` and `readme` is an error, as is a `readme` that is missing, not UTF-8,
+or outside the package directory, and any page over 64 KiB. `mibpkg pack` writes the result as
+`STORE-PAGE.md`, the first entry of the archive; a source file of that name is refused. The original
+`README.md` is still packed as an ordinary file.
+
+The page is shown as text: headings, emphasis, lists, tables, code and links. Raw HTML is dropped,
+images are not loaded (their alt text is shown), and only `http:` and `https:` links are clickable.
+
+A mibpkg older than 0.14 rejects a manifest that sets `long_description` or `readme`, because it does
+not know the keys. A package that relies on `README.md` alone installs everywhere.
 
 ## `[compat]`
 

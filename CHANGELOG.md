@@ -3,6 +3,28 @@
 All notable changes to mibpkg. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow semver.
 
+## 0.14.0 — 2026-11-17
+
+### Added
+
+- **Store pages.** A package can carry a markdown page that its web page shows. It comes from
+  `long_description`, the `readme` path, or `README.md`, in that order, and is capped at 64 KiB.
+  `mibpkg pack` stores it as the first archive entry (`STORE-PAGE.md`). The index carries a ~1 KiB
+  `page_preview` with `page_bytes` and `page_sha256` (format stays `1`); the page opens with the preview
+  and **Load more** fetches the rest from the installed copy, the card, or the package's source,
+  verified against the hash. Install from file shows the page too.
+- `GET /api/packages/<name>/page` and `GET /api/uploads/<id>/page`.
+
+### Security
+
+- Pages are rendered as text: no raw HTML, no images, only `http:` and `https:` links
+  (`rel="noopener noreferrer"`).
+
+### Notes
+
+- A mibpkg older than 0.14 rejects a manifest that sets `long_description` or `readme`.
+- The web bundle grows by about 170 KB (markdown renderer).
+
 ## 0.13.2 — 2026-11-12
 
 ### Fixed

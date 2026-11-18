@@ -21,6 +21,7 @@ A wrong PIN returns 401. Too many wrong PINs returns 429 with `retry_after`.
 | `GET` | `/api/packages` | Installed and available packages |
 | `GET` | `/api/packages/<name>/config/<n>` | Read config `n` |
 | `PUT` | `/api/packages/<name>/config/<n>` | Write config `n` (UTF-8 text body) |
+| `GET` | `/api/packages/<name>/page` | The store page as `text/markdown`: the installed copy, or with `?collection=<id>&version=<v>` that version from its collection, checked against the index |
 | `GET` | `/api/sources` | Enabled and available sources |
 | `POST` | `/api/sources` | Add `{source}` |
 | `DELETE` | `/api/sources` | Remove `{source}` |
@@ -44,6 +45,7 @@ Actions run as jobs. `POST /api/actions` returns **202** with `{job}` or **409**
 |---|---|---|
 | `POST` | `/api/uploads` | Stream a `.mpk`; returns an upload id |
 | `POST` | `/api/uploads/<id>/install` | `{collection, approve[]}` |
+| `GET` | `/api/uploads/<id>/page` | The uploaded package's store page |
 | `DELETE` | `/api/uploads/<id>` | Discard |
 
 An upload is inspected before install: name, version, kind, compatibility, services, permissions and

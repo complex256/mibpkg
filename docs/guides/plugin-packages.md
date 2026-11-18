@@ -33,6 +33,9 @@ icons = ["mqtt-on", "mqtt-off"]
 | `permissions` | The permissions the user approves |
 | `icons` | PNGs at `icons/<name>.png`, at most 8 |
 
+To give the package a page in the store, put a `README.md` next to `manifest.toml`, or set
+`long_description` or `readme` under `[package]`. See [Store page](../reference/manifest.md).
+
 A product package can add `id` when the plugin id differs from the package name. See
 [Real packages](real-packages.md).
 

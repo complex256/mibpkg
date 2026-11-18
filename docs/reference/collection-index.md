@@ -55,7 +55,14 @@ A flat collection puts the `.mpk` files next to `index.json` and uses `--flat` w
 | `packages[].kind` | `plugin` or `sdk`, absent for a plain package |
 | `packages[].permissions` | A plugin's declared permissions |
 | `packages[].min_sdk` | A plugin's oldest supported `mibsdk` version, when declared |
+| `packages[].page_preview` | The first ~1 KiB of the package's store page (cut at a paragraph), when it has one |
+| `packages[].page_bytes` | Size of the full store page in bytes |
+| `packages[].page_sha256` | SHA-256 of the full store page; the unit checks the page it fetches against it |
 | `signatures` | Reserved; ignored in v1 |
+
+The three `page_*` fields are optional and `format` stays `1`: an index without them is valid, and an
+older mibpkg ignores them. The web interface shows `page_preview` at once and fetches the full page from
+the package (its first archive entry) when the user taps **Load more**.
 
 ## Build it
 

@@ -12,6 +12,13 @@ fn manifest(name: &str) -> String {
 name = "{name}"
 version = "0.1.0"            # bump for every release (semver); a version is never reused
 description = "What {name} does, in one line"
+# A longer markdown page for the store: put a README.md next to this file (used automatically),
+# or name another file, or write it inline. Use only one of the two keys.
+# readme = "docs/PAGE.md"
+# long_description = """
+# # {name}
+# What it does and how to configure it.
+# """
 
 # Units it runs on; leave out to allow every unit.
 # [compat]
