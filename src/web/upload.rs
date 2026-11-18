@@ -171,6 +171,11 @@ pub struct Inspection {
     /// Declared permissions the user revoked that stay revoked: the plugin stays blocked after
     /// installing this until they are granted on its page.
     pub stays_blocked: Vec<String>,
+    /// The start of the package's store page, and its full size (the rest: GET /api/uploads/<id>/page).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_preview: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_bytes: Option<u64>,
 }
 
 /// What installing a plugin declaring `declared` asks for, as `plugin_pkg::check` plans it: the
@@ -210,6 +215,10 @@ pub fn inspect(layout: &Layout, unit: &UnitInfo, colls: &[Collection], id: &str,
     i.uses_scripts = m.uses_scripts();
     i.services = m.services.iter().map(|s| format!("{name}.{}", s.name)).collect();
     i.package_kind = m.kind().name();
+    if let Some(page) = pkg.page() {
+        i.page_preview = Some(crate::index::page_preview(page));
+        i.page_bytes = Some(page.len() as u64);
+    }
     if let Some(plugin) = &m.plugin {
         let plugin_id = plugin.id(&name).to_string();
         i.plugin_id = Some(plugin_id.clone());

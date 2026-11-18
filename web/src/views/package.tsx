@@ -9,6 +9,7 @@ import { useAction } from '../lib/use-action';
 import { useApi } from '../lib/use-api';
 import { compareVersions, formatSize } from '../lib/utils';
 import { overallState, stateVariant } from '../lib/service-state';
+import { StorePage } from '../components/store-page';
 import { PackageIcon } from '../components/package-icon';
 import { PageHeader } from '../components/page-header';
 import { SectionTitle } from '../components/section-title';
@@ -138,6 +139,18 @@ export function PackageView({ name }: { name: string }) {
 
   const busy = running || action.busy;
 
+  // The installed copy's page when it has one, else the offered version's.
+  const page =
+    inst?.page_preview
+      ? { preview: inst.page_preview, bytes: inst.page_bytes, url: `/api/packages/${encodeURIComponent(p.name)}/page` }
+      : offered?.page_preview
+        ? {
+            preview: offered.page_preview,
+            bytes: offered.page_bytes,
+            url: `/api/packages/${encodeURIComponent(p.name)}/page?collection=${encodeURIComponent(offered.collection)}&version=${encodeURIComponent(offered.version)}`,
+          }
+        : null;
+
   // Everything the ••• menu can do, computed from what is actually true: an item that does not
   // make sense in this state is never rendered, and the trigger disappears with the last item.
   const menuItems: { key: string; label: string; icon: typeof RotateCw; destructive?: boolean; run: () => void }[] = [];
@@ -195,6 +208,8 @@ export function PackageView({ name }: { name: string }) {
         </div>
         <div className="mt-3">{mainAction({ p, inst, collections, chosenSource, setChosenSource, busy, install })}</div>
       </Card>
+
+      {page ? <StorePage preview={page.preview} total={page.bytes} url={page.url} /> : null}
 
       <div className="mt-3 space-y-2">
         {inst?.configs

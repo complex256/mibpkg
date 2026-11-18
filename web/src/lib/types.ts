@@ -179,6 +179,8 @@ export interface UploadCandidate {
 }
 
 export interface UploadInspection {
+  page_preview?: string;
+  page_bytes?: number;
   upload_id: string;
   name: string | null;
   version: string;

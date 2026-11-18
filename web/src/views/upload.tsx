@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { StorePage } from '../components/store-page';
 import { PackageIcon } from '../components/package-icon';
 import { ApprovalSheet, PermissionList } from '../components/permission-sheet';
 import { PageHeader } from '../components/page-header';
@@ -262,6 +263,10 @@ function ConfirmStep({
       </div>
 
       {i.description ? <p className="mt-3 text-sm">{i.description}</p> : null}
+
+      {i.page_preview ? (
+        <StorePage preview={i.page_preview} total={i.page_bytes} url={`/api/uploads/${encodeURIComponent(i.upload_id)}/page`} />
+      ) : null}
 
       <div className="mt-3">
         <Facts inspection={i} />

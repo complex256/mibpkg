@@ -99,4 +99,22 @@ describe('Install from file', () => {
 
     expect(await screen.findByText('not a package archive')).toBeInTheDocument();
   });
+
+  test('shows the package page preview and loads the rest from the upload', async () => {
+    class WithPage extends FakeXhr {
+      send() {
+        this.responseText = JSON.stringify({ ...INSPECTION, page_preview: 'Intro line.', page_bytes: 40 });
+        this.onload?.();
+      }
+    }
+    globalThis.XMLHttpRequest = WithPage as unknown as typeof XMLHttpRequest;
+    mockApi({ 'GET /api/uploads/u1/page': async () => new Response('Intro line.\n\nThe whole page.', { status: 200 }) });
+    const { container } = render(<UploadView />);
+    const input = container.querySelector('input[type=file]') as HTMLInputElement;
+    await userEvent.upload(input, new File([new Uint8Array([1])], 'netplug.mpk', { type: 'application/octet-stream' }));
+
+    expect(await screen.findByText('Intro line.')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Load more/ }));
+    expect(await screen.findByText('The whole page.')).toBeInTheDocument();
+  });
 });

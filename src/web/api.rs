@@ -251,6 +251,21 @@ pub fn page(app: &App, name: &str, collection: Option<&str>, version: Option<&st
     }
 }
 
+/// GET /api/uploads/<id>/page — the store page of the uploaded file waiting for confirmation.
+pub fn upload_page(app: &App, id: &str) -> Response {
+    let Some(path) = app.uploads.path(id) else {
+        return Response::error(404, "that upload is gone (uploads expire after 10 minutes); upload the file again");
+    };
+    match crate::archive::Package::read(&path) {
+        Ok(p) => match p.page() {
+            Some(t) => Response::new(200, "text/markdown; charset=utf-8", t.as_bytes().to_vec())
+                .with_header("X-Content-Type-Options", "nosniff"),
+            None => Response::error(404, "this package has no store page"),
+        },
+        Err(e) => Response::error(400, format!("not a valid mibpkg package ({e:#})")),
+    }
+}
+
 /// GET /api/sources — enabled sources (with the collection their cached index holds and the last
 /// check's error), sources that could be enabled (community list, SD card), and the list status.
 pub fn sources(app: &App) -> Response {

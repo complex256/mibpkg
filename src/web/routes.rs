@@ -117,6 +117,7 @@ fn api_route(app: &App, req: &Request, local: IpAddr) -> Response {
             None => Response::error(404, "no such job (finished jobs are kept 10 minutes)"),
         },
         ("POST", ["uploads"]) => upload(app, req),
+        ("GET", ["uploads", id, "page"]) => api::upload_page(app, id),
         ("POST", ["uploads", id, "install"]) => upload_install(app, req, id),
         ("DELETE", ["uploads", id]) => {
             app.uploads.discard(id);
