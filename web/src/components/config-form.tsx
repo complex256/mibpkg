@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { cn } from '../lib/utils';
+import { Alert } from './ui/alert';
 import { Button } from './ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
 import { Input } from './ui/input';
@@ -18,7 +19,7 @@ const selectClass = cn(
 /** What the control shows for a field before the owner touches it. */
 function initialDraft(f: FormField): Draft {
   if (f.kind === 'bool') {
-    return f.value === true;
+    return f.value === null || f.value === undefined ? f.default === true : f.value === true;
   }
   if (f.value === null || f.value === undefined) {
     return '';
@@ -43,12 +44,14 @@ function toValue(f: FormField, draft: Draft): { value: unknown } | { error: stri
     if (items.length === 0 && (f.value === null || f.value === undefined)) {
       return { value: null };
     }
-    const numeric = Array.isArray(f.value) && f.value.length > 0 && f.value.every((v) => typeof v === 'number');
-    if (!numeric) {
+    if (f.item_kind !== 'int' && f.item_kind !== 'float') {
       return { value: items };
     }
     const nums = items.map(Number);
-    return nums.some((n) => !Number.isFinite(n)) ? { error: 'Every line must be a number.' } : { value: nums };
+    if (nums.some((n) => !Number.isFinite(n) || (f.item_kind === 'int' && !Number.isInteger(n)))) {
+      return { error: f.item_kind === 'int' ? 'Every line must be a whole number.' : 'Every line must be a number.' };
+    }
+    return { value: nums };
   }
   const trimmed = f.kind === 'string' || f.kind === 'enum' ? text : text.trim();
   if (trimmed === '') {
@@ -184,6 +187,7 @@ function FieldRow({
           {f.raw}
         </pre>
         <p className="text-[13px] text-muted-foreground">Edit this one on the Raw tab.</p>
+        {error ? <p className="text-[13px] text-destructive-foreground">{error}</p> : null}
       </div>
     );
   }
@@ -238,12 +242,19 @@ export function ConfigForm({
 }) {
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [local, setLocal] = useState<Record<string, string>>({});
+  const [toggled, setToggled] = useState<Record<string, boolean>>({});
 
   // A fresh document (after a save and reload) starts clean.
   useEffect(() => {
     setDrafts({});
     setLocal({});
+    setToggled({});
   }, [doc]);
+
+  // Local mistakes win over what the server said last time about the same key.
+  const shown = { ...errors, ...local };
+  const known = new Set(doc.fields.map((f) => f.key));
+  const stray = Object.entries(shown).filter(([k]) => !known.has(k));
 
   const editable = useMemo(() => doc.fields.filter((f) => f.kind !== 'raw'), [doc]);
   const changed = editable.filter((f) => f.key in drafts && drafts[f.key] !== initialDraft(f));
@@ -283,7 +294,7 @@ export function ConfigForm({
         key={f.key}
         field={f}
         draft={f.key in drafts ? drafts[f.key] : initialDraft(f)}
-        error={local[f.key] ?? errors[f.key]}
+        error={shown[f.key]}
         onChange={(v) => change(f, v)}
       />
     ));
@@ -292,19 +303,36 @@ export function ConfigForm({
   return (
     <div>
       <div className="space-y-4">
-        {groups.map((g, i) =>
-          g.section === null ? (
+        {groups.map((g, i) => {
+          const hasError = g.fields.some((f) => f.key in shown);
+          const open = hasError || (g.section !== null && (toggled[g.section] ?? i === 0));
+          return g.section === null ? (
             <div key="__none" className="space-y-4">
               {renderFields(g.fields)}
             </div>
           ) : (
-            <Collapsible key={g.section} defaultOpen={i === 0} className="rounded-lg border border-border px-3">
+            <Collapsible
+              key={g.section}
+              open={open}
+              onOpenChange={(o) => setToggled((t) => ({ ...t, [g.section as string]: o }))}
+              className="rounded-lg border border-border px-3">
               <CollapsibleTrigger className="min-h-11">{g.section}</CollapsibleTrigger>
               <CollapsibleContent className="space-y-4 pb-3">{renderFields(g.fields)}</CollapsibleContent>
             </Collapsible>
-          ),
-        )}
+          );
+        })}
       </div>
+      {stray.length > 0 ? (
+        <Alert variant="destructive" className="mt-4">
+          <ul className="space-y-1">
+            {stray.map(([k, m]) => (
+              <li key={k}>
+                {k}: {m}
+              </li>
+            ))}
+          </ul>
+        </Alert>
+      ) : null}
       <Button className="mt-4 w-full" loading={saving} disabled={changed.length === 0} onClick={submit}>
         Save and restart
       </Button>

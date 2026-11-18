@@ -125,6 +125,8 @@ pub struct FormField {
     pub secret: bool,
     pub section: Option<String>,
     pub raw: Option<String>,
+    /// string|int|float for list fields, null otherwise
+    pub item_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -186,6 +188,19 @@ fn new_field(key: &str, label: &str, kind: &str, source: &str) -> FormField {
         secret: false,
         section: None,
         raw: None,
+        item_kind: None,
+    }
+}
+
+/// The scalar type of a list's items, read from the items themselves.
+fn array_item_kind(a: &toml_edit::Array) -> &'static str {
+    use toml_edit::Value as V;
+    if !a.is_empty() && a.iter().all(|i| matches!(i, V::Integer(_))) {
+        "int"
+    } else if !a.is_empty() && a.iter().all(|i| matches!(i, V::Float(_))) {
+        "float"
+    } else {
+        "string"
     }
 }
 
@@ -206,6 +221,9 @@ fn infer_table(table: &toml_edit::Table, prefix: &str, out: &mut Vec<FormField>)
                 (Some(kind), Some(json)) => {
                     let mut f = new_field(&key, k, kind, "inferred");
                     f.value = json;
+                    if let toml_edit::Value::Array(a) = v {
+                        f.item_kind = Some(array_item_kind(a).to_string());
+                    }
                     f.section = section.map(str::to_string);
                     out.push(f);
                 }
@@ -253,6 +271,9 @@ pub fn describe(text: &str, schema: Option<&Schema>) -> FormDoc {
             f.max = sf.max;
             f.secret = sf.secret;
             f.section = sf.section.clone();
+            if sf.ty == FieldType::List {
+                f.item_kind = Some(kind_name(sf.of.unwrap_or(FieldType::String)).to_string());
+            }
             if let Some(d) = &sf.default {
                 f.default = serde_json::to_value(d).unwrap_or(serde_json::Value::Null);
             }

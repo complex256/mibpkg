@@ -121,6 +121,7 @@ export interface FormField {
   secret: boolean;
   section: string | null;
   raw: string | null;
+  item_kind: 'string' | 'int' | 'float' | null;
 }
 
 export interface FormDoc {

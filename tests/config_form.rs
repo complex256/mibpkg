@@ -371,6 +371,22 @@ fn pack_rejects_invalid_schema_file() {
 }
 
 #[test]
+fn list_item_kind_comes_from_schema_or_existing_items() {
+    let s = sch("[[field]]\nkey = \"ids\"\ntype = \"list\"\nof = \"int\"\n[[field]]\nkey = \"n\"\ntype = \"int\"\n");
+    let d = describe("", Some(&s));
+    assert_eq!(kind_of(&d, "ids").item_kind.as_deref(), Some("int"));
+    assert_eq!(kind_of(&d, "n").item_kind, None);
+    assert_eq!(serde_json::to_value(kind_of(&d, "n")).unwrap()["item_kind"], serde_json::Value::Null);
+
+    let d = describe("a = [1, 2]\nb = [\"x\"]\nc = []\nd = [1.5]\ne = 3\n", None);
+    assert_eq!(kind_of(&d, "a").item_kind.as_deref(), Some("int"));
+    assert_eq!(kind_of(&d, "b").item_kind.as_deref(), Some("string"));
+    assert_eq!(kind_of(&d, "c").item_kind.as_deref(), Some("string"));
+    assert_eq!(kind_of(&d, "d").item_kind.as_deref(), Some("float"));
+    assert_eq!(kind_of(&d, "e").item_kind, None);
+}
+
+#[test]
 fn pack_accepts_valid_schema_file() {
     pack_with_schema(Some("[[field]]\nkey = \"a\"\nlabel = \"A\"\ntype = \"string\"\n")).unwrap();
 }

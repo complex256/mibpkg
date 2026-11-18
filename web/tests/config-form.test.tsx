@@ -23,6 +23,7 @@ function field(extra: Partial<FormField>): FormField {
     secret: false,
     section: null,
     raw: null,
+    item_kind: null,
     ...extra,
   };
 }
@@ -170,13 +171,74 @@ describe('the config form', () => {
         saving={false}
         errors={{}}
         onSubmit={onSubmit}
-        doc={doc([field({ key: 'ids', label: 'Ids', kind: 'list', value: [1, 2] })])}
+        doc={doc([field({ key: 'ids', label: 'Ids', kind: 'list', item_kind: 'int', value: [1, 2] })])}
       />,
     );
     expect(screen.getByLabelText('Ids')).toHaveValue('1\n2');
     await userEvent.type(screen.getByLabelText('Ids'), '\n3\n');
     await userEvent.click(screen.getByRole('button', { name: /Save and restart/ }));
     expect(onSubmit).toHaveBeenCalledWith([{ key: 'ids', value: [1, 2, 3] }]);
+  });
+});
+
+describe('fix round 1', () => {
+  const save = () => userEvent.click(screen.getByRole('button', { name: /Save and restart/ }));
+  const mount = (fields: FormField[], onSubmit = vi.fn(), errors: Record<string, string> = {}) =>
+    render(<ConfigForm saving={false} errors={errors} onSubmit={onSubmit} doc={doc(fields)} />);
+
+  test('an unset bool defaulting to true renders on and toggling off sends false', async () => {
+    const onSubmit = vi.fn();
+    mount([field({ key: 'on', label: 'On', kind: 'bool', default: true })], onSubmit);
+    expect(screen.getByRole('switch', { name: 'On' })).toBeChecked();
+    await userEvent.click(screen.getByRole('switch', { name: 'On' }));
+    await save();
+    expect(onSubmit).toHaveBeenCalledWith([{ key: 'on', value: false }]);
+  });
+
+  test('an unset bool without a default sends true when on, nothing when back to initial', async () => {
+    const onSubmit = vi.fn();
+    mount([field({ key: 'on', label: 'On', kind: 'bool' })], onSubmit);
+    expect(screen.getByRole('switch', { name: 'On' })).not.toBeChecked();
+    await userEvent.click(screen.getByRole('switch', { name: 'On' }));
+    await save();
+    expect(onSubmit).toHaveBeenCalledWith([{ key: 'on', value: true }]);
+    await userEvent.click(screen.getByRole('switch', { name: 'On' }));
+    expect(screen.getByRole('button', { name: /Save and restart/ })).toBeDisabled();
+  });
+
+  test('an error in a closed section opens it', () => {
+    mount(
+      [
+        field({ key: 'a', label: 'A', section: 'One' }),
+        field({ key: 'b', label: 'B', section: 'Two' }),
+      ],
+      vi.fn(),
+      { b: 'B is wrong' },
+    );
+    expect(screen.getByText('B is wrong')).toBeVisible();
+  });
+
+  test('an error for an unknown key is summarised above Save', () => {
+    mount([field({ key: 'a', label: 'A' })], vi.fn(), { 'ghost.key': 'No such thing' });
+    expect(screen.getByText(/ghost\.key: No such thing/)).toBeInTheDocument();
+  });
+
+  test('an error on a raw field is shown', () => {
+    mount([field({ key: 't', label: 'Table', kind: 'raw', raw: 'a = 1' })], vi.fn(), { t: 'Cannot edit' });
+    expect(screen.getByText('Cannot edit')).toBeInTheDocument();
+  });
+
+  test('an unset schema int list sends numbers, and a bad line is a field error', async () => {
+    const onSubmit = vi.fn();
+    mount([field({ key: 'ids', label: 'Ids', kind: 'list', item_kind: 'int' })], onSubmit);
+    await userEvent.type(screen.getByLabelText('Ids'), '1\n2');
+    await save();
+    expect(onSubmit).toHaveBeenCalledWith([{ key: 'ids', value: [1, 2] }]);
+    onSubmit.mockClear();
+    await userEvent.type(screen.getByLabelText('Ids'), '\nx');
+    await save();
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByText(/whole number/)).toBeInTheDocument();
   });
 });
 
