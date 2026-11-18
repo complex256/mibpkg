@@ -36,12 +36,17 @@ pub fn pack(src_dir: &Path, out: &Path) -> Result<Manifest> {
     let kind_files = m.kind_files();
     let mut needed: Vec<&str> = m.files.iter().map(|f| f.src.as_str()).collect();
     needed.extend(m.configs.iter().filter_map(|c| c.example.as_deref()));
+    needed.extend(m.configs.iter().filter_map(|c| c.schema.as_deref()));
     needed.extend([&m.scripts.post_install, &m.scripts.pre_remove].into_iter().flatten().map(|s| s.as_str()));
     needed.extend(kind_files.iter().map(|s| s.as_str()));
     for n in needed {
         if !src_dir.join(n).is_file() {
             bail!("{n} is named in manifest.toml but missing from {}", src_dir.display());
         }
+    }
+    for s in m.configs.iter().filter_map(|c| c.schema.as_deref()) {
+        let text = fs::read_to_string(src_dir.join(s)).with_context(|| format!("reading schema {s}"))?;
+        crate::config_form::Schema::parse(&text).with_context(|| format!("schema {s}"))?;
     }
     let mut rels = Vec::new();
     collect(src_dir, Path::new(""), &mut rels)?;
@@ -195,6 +200,14 @@ impl Package {
             if !entries.iter().any(|e| !e.dir && e.path == Path::new(&f.src)) {
                 bail!("package is missing {} named in its manifest", f.src);
             }
+        }
+        for s in manifest.configs.iter().filter_map(|c| c.schema.as_deref()) {
+            let e = entries
+                .iter()
+                .find(|e| !e.dir && e.path == Path::new(s))
+                .with_context(|| format!("package is missing schema {s} named in its manifest"))?;
+            let text = std::str::from_utf8(&e.data).with_context(|| format!("schema {s} is not UTF-8"))?;
+            crate::config_form::Schema::parse(text).with_context(|| format!("schema {s}"))?;
         }
         Ok(Package { manifest, entries })
     }

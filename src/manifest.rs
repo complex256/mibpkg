@@ -149,6 +149,9 @@ pub struct ConfigEntry {
     pub example: Option<String>,
     #[serde(default)]
     pub required: bool,
+    /// Package file describing this config as an editable form (needs a `.toml` config path).
+    #[serde(default)]
+    pub schema: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -261,6 +264,12 @@ impl Manifest {
             safe_rel(&c.path)?;
             if let Some(e) = &c.example {
                 safe_rel(e)?;
+            }
+            if let Some(s) = &c.schema {
+                safe_rel(s)?;
+                if !c.path.ends_with(".toml") {
+                    bail!("config {}: a schema needs a .toml config path", c.path);
+                }
             }
         }
         let mut seen = HashSet::new();

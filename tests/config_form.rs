@@ -345,3 +345,32 @@ fn schema_field_cannot_overwrite_a_table() {
     let errs = apply("[[server]]\nport = 80\n", &[e("server", json!("x"))], Some(&s)).unwrap_err();
     assert_eq!(errs[0].key, "server");
 }
+
+mod common;
+
+fn pack_with_schema(schema: Option<&str>) -> anyhow::Result<()> {
+    let d = tempfile::tempdir().unwrap();
+    let extra = "\n[[config]]\npath = \"app.toml\"\nschema = \"app.schema.toml\"\n";
+    let src = common::pkg_src(d.path(), "formpkg", "1.0.0", "true", extra);
+    if let Some(s) = schema {
+        std::fs::write(src.join("app.schema.toml"), s).unwrap();
+    }
+    mibpkg::archive::pack(&src, &d.path().join("out.mpk")).map(|_| ())
+}
+
+#[test]
+fn pack_rejects_missing_schema_file() {
+    let e = format!("{:#}", pack_with_schema(None).unwrap_err());
+    assert!(e.contains("app.schema.toml"), "{e}");
+}
+
+#[test]
+fn pack_rejects_invalid_schema_file() {
+    let e = format!("{:#}", pack_with_schema(Some("[[field]]\ntype = \"bogus\"\n")).unwrap_err());
+    assert!(e.contains("app.schema.toml"), "{e}");
+}
+
+#[test]
+fn pack_accepts_valid_schema_file() {
+    pack_with_schema(Some("[[field]]\nkey = \"a\"\nlabel = \"A\"\ntype = \"string\"\n")).unwrap();
+}
