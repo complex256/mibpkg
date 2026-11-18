@@ -214,6 +214,43 @@ pub fn config_get(app: &App, name: &str, n: usize) -> Response {
     Response::json(200, &json!({ "path": c.path, "required": c.required, "exists": exists, "content": content, "example": c.example, "card": card }))
 }
 
+/// GET /api/packages/<name>/page[?collection=<id>&version=<v>] — the package's store page as
+/// markdown. The installed copy when the version asked for (or none) is installed; otherwise the
+/// page of that version in that collection, read from the card or fetched from the source and
+/// checked against the index.
+pub fn page(app: &App, name: &str, collection: Option<&str>, version: Option<&str>) -> Response {
+    let markdown = |text: String| {
+        Response::new(200, "text/markdown; charset=utf-8", text.into_bytes()).with_header("X-Content-Type-Options", "nosniff")
+    };
+    let state = State::load(&app.layout).unwrap_or_default();
+    if let Some(inst) = state.packages.get(name) {
+        if version.map_or(true, |v| v == inst.version) {
+            return match crate::install::installed_page(&app.layout, name, &inst.version) {
+                Some(t) => markdown(t),
+                None => Response::error(404, format!("{name} has no store page")),
+            };
+        }
+    }
+    let (Some(collection), Some(version)) = (collection, version) else {
+        return Response::error(404, format!("{name} is not installed; name a collection and version"));
+    };
+    let srcs = catalog::sources(&app.layout);
+    let found = srcs.iter().find(|(c, _)| c.id() == collection).and_then(|(c, _)| {
+        c.index.packages.iter().find(|e| e.name == name && e.version == version).map(|e| (c, e))
+    });
+    let Some((c, e)) = found else {
+        return Response::error(404, format!("no {name} {version} in collection {collection}"));
+    };
+    if e.page_sha256.is_none() {
+        return Response::error(404, format!("{name} {version} has no store page"));
+    }
+    let fetcher = (app.fetcher)();
+    match crate::page::fetch(fetcher.as_ref(), &c.location(e), e) {
+        Ok(t) => markdown(t),
+        Err(err) => Response::error(502, format!("could not get the page: {err:#}")),
+    }
+}
+
 /// GET /api/sources — enabled sources (with the collection their cached index holds and the last
 /// check's error), sources that could be enabled (community list, SD card), and the list status.
 pub fn sources(app: &App) -> Response {

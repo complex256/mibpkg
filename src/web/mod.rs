@@ -50,6 +50,8 @@ pub struct App {
     pub runner: Box<dyn Runner>,
     /// Set by a settings save: after this response, ask the supervisor to restart us with them.
     pub restart_after_response: AtomicBool,
+    /// Makes the downloader for store pages that are not installed (a fresh one per request).
+    pub fetcher: Box<dyn Fn() -> Box<dyn crate::fetch::Fetcher> + Send + Sync>,
 }
 
 impl App {
@@ -61,6 +63,15 @@ impl App {
         let sys = RealSys { mounts: layout.root == Path::new("/") };
         // The running binary runs the actions (on the unit: /tmp/mibpkg, like GEM's gem.sh).
         let exe = std::env::current_exe().unwrap_or_else(|_| layout.tmp_bin());
+        let on_unit = layout.root == Path::new("/");
+        let fetch_layout = layout.clone();
+        let fetcher: Box<dyn Fn() -> Box<dyn crate::fetch::Fetcher> + Send + Sync> = Box::new(move || {
+            if on_unit {
+                Box::new(crate::fetch::CurlFetcher::for_unit(&fetch_layout, crate::clock::read_offset(&fetch_layout)))
+            } else {
+                Box::new(crate::fetch::Unavailable)
+            }
+        });
         let runner = Box::new(ProcessRunner { exe, root: layout.root.clone(), log: Some(layout.run("log")) });
         App {
             unit,
@@ -74,8 +85,14 @@ impl App {
             auth: auth::Auth::default(),
             runner,
             restart_after_response: AtomicBool::new(false),
+            fetcher,
             layout,
         }
+    }
+
+    pub fn with_fetcher(mut self, f: Box<dyn Fn() -> Box<dyn crate::fetch::Fetcher> + Send + Sync>) -> App {
+        self.fetcher = f;
+        self
     }
 
     pub fn with_runner(mut self, runner: Box<dyn Runner>) -> App {

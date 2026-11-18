@@ -193,6 +193,31 @@ fn read_entries(mpk: &Path) -> Result<Vec<Entry>> {
     Ok(out)
 }
 
+/// The store page at the start of a gzip'd package stream: Ok(None) when the first entry is
+/// something else, Err when the stream ends (or is corrupt) before the page is complete. Reads
+/// only as far as the first entry, so a partial download of the head is enough.
+pub fn read_page(stream: impl Read) -> Result<Option<Vec<u8>>> {
+    let mut r = GzDecoder::new(stream);
+    let mut h = [0u8; BLOCK];
+    r.read_exact(&mut h).context("truncated package")?;
+    let stored = parse_octal(&h[148..156])? as u32;
+    let mut hc = h;
+    hc[148..156].copy_from_slice(b"        ");
+    if hc.iter().map(|b| *b as u32).sum::<u32>() != stored {
+        bail!("corrupt package header");
+    }
+    if cstr(&h[0..100])? != PAGE_FILE || !cstr(&h[345..500])?.is_empty() || !matches!(h[156], b'0' | 0) {
+        return Ok(None);
+    }
+    let size = parse_octal(&h[124..136])? as usize;
+    if size > crate::manifest::MAX_PAGE {
+        bail!("store page is larger than {} KiB", crate::manifest::MAX_PAGE >> 10);
+    }
+    let mut data = vec![0u8; size];
+    r.read_exact(&mut data).context("truncated package")?;
+    Ok(Some(data))
+}
+
 impl Package {
     pub fn read(mpk: &Path) -> Result<Package> {
         let entries = read_entries(mpk)?;

@@ -28,6 +28,7 @@ fn setup() -> (common::Fixture, App) {
     common::collection(&f.sd(), "complex256", &[v1, v2]);
 
     let extra = common::pkg_src(f.root(), "extra", "0.2.0", "sleep 30", "");
+    fs::write(extra.join("README.md"), "# Extra\n\nRemote page.\n").unwrap();
     let pub_dir = common::collection(&f.root().join("pub"), "community", &[extra]);
     let index: Value = serde_json::from_str(&fs::read_to_string(pub_dir.join("index.json")).unwrap()).unwrap();
     let cached = serde_json::json!({"source": "github:someone/community", "base_url": "https://example.invalid/", "index": index});
@@ -190,4 +191,96 @@ fn sources_shows_why_card_entries_were_skipped() {
     let app = App::new(f.layout.clone(), Box::new(|| None));
     let (_, v) = body(api::sources(&app));
     assert!(v["card_skipped"][0].as_str().unwrap().contains("sources.toml"), "{v}");
+}
+
+/// Serves URL -> bytes, answers head requests (or refuses them), and logs every request.
+struct Net {
+    files: std::collections::HashMap<String, Vec<u8>>,
+    heads: bool,
+    log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl mibpkg::fetch::Fetcher for Net {
+    fn get(&self, url: &str, _max: u64) -> anyhow::Result<Vec<u8>> {
+        self.log.lock().unwrap().push(format!("get {url}"));
+        self.files.get(url).cloned().ok_or_else(|| anyhow::anyhow!("{url}: HTTP 404"))
+    }
+    fn get_head(&self, url: &str, max: u64) -> anyhow::Result<Vec<u8>> {
+        self.log.lock().unwrap().push(format!("head {url}"));
+        anyhow::ensure!(self.heads, "no ranged reads here");
+        let b = self.files.get(url).ok_or_else(|| anyhow::anyhow!("{url}: HTTP 404"))?;
+        Ok(b[..b.len().min(max as usize)].to_vec())
+    }
+}
+
+fn app_with_net(app: App, bytes: Vec<u8>, heads: bool) -> (App, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let l2 = log.clone();
+    let url = "https://example.invalid/packages/extra-0.2.0.mpk".to_string();
+    let app = app.with_fetcher(Box::new(move || {
+        Box::new(Net { files: [(url.clone(), bytes.clone())].into(), heads, log: l2.clone() })
+    }));
+    (app, log)
+}
+
+fn extra_mpk(f: &common::Fixture) -> Vec<u8> {
+    fs::read(f.root().join("pub/mibpkg/collections/community/packages/extra-0.2.0.mpk")).unwrap()
+}
+
+#[test]
+fn page_comes_from_the_installed_copy() {
+    let (_f, app) = setup();
+    let r = api::page(&app, "demo", None, None);
+    assert_eq!(r.status, 200);
+    assert_eq!(String::from_utf8(r.body).unwrap(), "# Demo\n\nThe installed page.\n");
+    assert_eq!(api::page(&app, "demo", Some("complex256"), Some("1.0.0")).status, 200);
+    assert_eq!(api::page(&app, "nope", None, None).status, 404);
+}
+
+#[test]
+fn page_of_a_remote_package_reads_only_the_head() {
+    let (f, app) = setup();
+    let bytes = extra_mpk(&f);
+    let (app, log) = app_with_net(app, bytes, true);
+    let r = api::page(&app, "extra", Some("community"), Some("0.2.0"));
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(String::from_utf8(r.body).unwrap(), "# Extra\n\nRemote page.\n");
+    let log = log.lock().unwrap();
+    assert_eq!(log.len(), 1, "{log:?}");
+    assert!(log[0].starts_with("head "));
+}
+
+#[test]
+fn page_falls_back_to_a_full_download_when_the_head_fails() {
+    let (f, app) = setup();
+    let (app, log) = app_with_net(app, extra_mpk(&f), false);
+    let r = api::page(&app, "extra", Some("community"), Some("0.2.0"));
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    let log = log.lock().unwrap();
+    assert!(log[0].starts_with("head ") && log[1].starts_with("get "), "{log:?}");
+}
+
+#[test]
+fn page_with_a_wrong_hash_is_refused() {
+    let (f, app) = setup();
+    // Same name and version, different README: the index's page hash no longer matches.
+    let evil = common::pkg_src(&f.root().join("evil"), "extra", "0.2.0", "sleep 30", "");
+    fs::write(evil.join("README.md"), "# Phish\n").unwrap();
+    let out = f.root().join("evil.mpk");
+    mibpkg::archive::pack(&evil, &out).unwrap();
+    let (app, _log) = app_with_net(app, fs::read(&out).unwrap(), true);
+    let r = api::page(&app, "extra", Some("community"), Some("0.2.0"));
+    assert_eq!(r.status, 502);
+    assert!(!String::from_utf8_lossy(&r.body).contains("Phish"));
+    // A full download is also checked against the package hash.
+    let (app2, _log) = app_with_net(app, fs::read(&out).unwrap(), false);
+    assert_eq!(api::page(&app2, "extra", Some("community"), Some("0.2.0")).status, 502);
+}
+
+#[test]
+fn page_of_an_unknown_version_or_collection_is_404() {
+    let (_f, app) = setup();
+    assert_eq!(api::page(&app, "extra", Some("community"), Some("9.9.9")).status, 404);
+    assert_eq!(api::page(&app, "extra", Some("nowhere"), Some("0.2.0")).status, 404);
+    assert_eq!(api::page(&app, "extra", None, None).status, 404);
 }

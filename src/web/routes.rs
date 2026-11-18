@@ -99,6 +99,7 @@ fn api_route(app: &App, req: &Request, local: IpAddr) -> Response {
             let bytes = req.query("bytes").and_then(|b| b.parse().ok()).unwrap_or(64 * 1024);
             api::log_tail(app, id, bytes)
         }
+        ("GET", ["packages", name, "page"]) => api::page(app, name, req.query("collection"), req.query("version")),
         ("GET", ["packages", name, "config", n]) => match n.parse() {
             Ok(n) => api::config_get(app, name, n),
             Err(_) => Response::error(404, "no such config"),

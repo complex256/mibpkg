@@ -15,6 +15,14 @@ pub const MAX_PACKAGE: u64 = 50 << 20;
 
 pub trait Fetcher {
     fn get(&self, url: &str, max_bytes: u64) -> Result<Vec<u8>>;
+
+    /// At most the first `max_bytes` of the body: the transfer stops there and what arrived is
+    /// returned (not an error). The default downloads everything and cuts it.
+    fn get_head(&self, url: &str, max_bytes: u64) -> Result<Vec<u8>> {
+        let mut b = self.get(url, MAX_PACKAGE)?;
+        b.truncate(max_bytes as usize);
+        Ok(b)
+    }
 }
 
 /// No network access in this context (host tests, or a command that never fetches).
@@ -32,6 +40,14 @@ pub struct MemoryFetcher {
     pub calls: RefCell<Vec<String>>,
 }
 impl Fetcher for MemoryFetcher {
+    fn get_head(&self, url: &str, max: u64) -> Result<Vec<u8>> {
+        self.calls.borrow_mut().push(format!("head {url}"));
+        match self.files.borrow().get(url) {
+            Some(b) => Ok(b[..b.len().min(max as usize)].to_vec()),
+            None => bail!("{url}: HTTP 404"),
+        }
+    }
+
     fn get(&self, url: &str, max: u64) -> Result<Vec<u8>> {
         self.calls.borrow_mut().push(url.to_string());
         match self.files.borrow().get(url) {
@@ -134,6 +150,8 @@ struct Sink {
     buf: Vec<u8>,
     max: u64,
     over: bool,
+    /// Keep the first `max` bytes and stop the transfer there, instead of failing.
+    head: bool,
 }
 
 extern "C" fn write_cb(ptr: *const u8, size: usize, n: usize, ud: *mut c_void) -> usize {
@@ -141,6 +159,10 @@ extern "C" fn write_cb(ptr: *const u8, size: usize, n: usize, ud: *mut c_void) -
     let len = size * n;
     if sink.buf.len() as u64 + len as u64 > sink.max {
         sink.over = true;
+        if sink.head {
+            let room = (sink.max - sink.buf.len() as u64) as usize;
+            sink.buf.extend_from_slice(unsafe { std::slice::from_raw_parts(ptr, room) });
+        }
         return 0; // makes curl abort the transfer
     }
     sink.buf.extend_from_slice(unsafe { std::slice::from_raw_parts(ptr, len) });
@@ -235,6 +257,16 @@ fn unit_ca(layout: &Layout) -> PathBuf {
 
 impl Fetcher for CurlFetcher {
     fn get(&self, url: &str, max_bytes: u64) -> Result<Vec<u8>> {
+        self.transfer(url, max_bytes, false)
+    }
+
+    fn get_head(&self, url: &str, max_bytes: u64) -> Result<Vec<u8>> {
+        self.transfer(url, max_bytes, true)
+    }
+}
+
+impl CurlFetcher {
+    fn transfer(&self, url: &str, max_bytes: u64, head: bool) -> Result<Vec<u8>> {
         let https = url.starts_with("https://");
         if !https && !(self.allow_http && url.starts_with("http://")) {
             bail!("{url}: only https:// URLs are allowed");
@@ -253,7 +285,7 @@ impl Fetcher for CurlFetcher {
             let ua = CString::new(format!("mibpkg/{}", env!("CARGO_PKG_VERSION")))?;
             let ca = self.ca_bundle.as_ref().map(|p| CString::new(p.to_string_lossy().as_bytes()).unwrap());
             let mut err = [0 as c_char; 256];
-            let mut sink = Sink { buf: Vec::new(), max: max_bytes, over: false };
+            let mut sink = Sink { buf: Vec::new(), max: max_bytes, over: false, head };
             (api.setopt)(c, CURLOPT_URL, curl_url.as_ptr());
             (api.setopt)(c, CURLOPT_FOLLOWLOCATION, 1 as c_long);
             (api.setopt)(c, CURLOPT_USERAGENT, ua.as_ptr());
@@ -277,6 +309,13 @@ impl Fetcher for CurlFetcher {
             let mut code: c_long = 0;
             (api.getinfo)(c, CURLINFO_RESPONSE_CODE, &mut code as *mut c_long);
             (api.cleanup)(c);
+            if sink.over && head {
+                // We stopped it on purpose; the status line already said 200 (or not).
+                if code != 200 {
+                    bail!("{url}: HTTP {code}");
+                }
+                return Ok(sink.buf);
+            }
             if sink.over {
                 bail!("{url}: larger than {max_bytes} bytes");
             }
