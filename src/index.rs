@@ -51,9 +51,50 @@ pub struct IndexEntry {
     /// The oldest mibsdk package version a plugin runs on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_sdk: Option<String>,
+    /// The start of the store page (see `page_preview`); absent when the package has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_preview: Option<String>,
+    /// Size in bytes of the full store page (`STORE-PAGE.md` in the package).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_bytes: Option<u64>,
+    /// SHA-256 of the full store page, so a client can verify it fetched on demand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_sha256: Option<String>,
+}
+
+/// Target size of `page_preview`.
+pub const PREVIEW_BYTES: usize = 1024;
+
+/// About `PREVIEW_BYTES` of `page`, cut at the last paragraph break in the second half of the
+/// window if there is one, else at a char boundary.
+pub fn page_preview(page: &str) -> String {
+    if page.len() <= PREVIEW_BYTES {
+        return page.to_string();
+    }
+    let mut end = PREVIEW_BYTES;
+    while !page.is_char_boundary(end) {
+        end -= 1;
+    }
+    let head = &page[..end];
+    let cut = match head.rfind("\n\n") {
+        Some(i) if i >= PREVIEW_BYTES / 2 => i,
+        _ => end,
+    };
+    head[..cut].trim_end().to_string()
 }
 
 impl IndexEntry {
+    /// Records the store page's preview, size and hash; None leaves the entry without them.
+    pub fn with_page(mut self, page: Option<&str>) -> IndexEntry {
+        if let Some(p) = page {
+            use sha2::{Digest, Sha256};
+            self.page_preview = Some(page_preview(p));
+            self.page_bytes = Some(p.len() as u64);
+            self.page_sha256 = Some(Sha256::digest(p.as_bytes()).iter().map(|b| format!("{b:02x}")).collect());
+        }
+        self
+    }
+
     /// The entry for a package whose archive is `file` (a path or URL).
     pub fn new(m: &Manifest, requires: &crate::requires::Requires, file: String, sha256: String, size: u64) -> IndexEntry {
         IndexEntry {
@@ -68,6 +109,9 @@ impl IndexEntry {
             kind: m.kind().name(),
             permissions: m.plugin.as_ref().map(|p| p.permissions.clone()).unwrap_or_default(),
             min_sdk: requires.min_sdk().map(str::to_string),
+            page_preview: None,
+            page_bytes: None,
+            page_sha256: None,
         }
     }
 }
@@ -223,7 +267,7 @@ fn index_dir(pkgs: &Path, id: &str, name: &str, prefix: &str) -> Result<Index> {
             bail!("{fname} holds {} {}; it must be named {want}", m.package.name, m.package.version);
         }
         let (sha256, size) = sha256_file(&f)?;
-        packages.push(IndexEntry::new(m, &pkg.requires()?, format!("{prefix}{fname}"), sha256, size));
+        packages.push(IndexEntry::new(m, &pkg.requires()?, format!("{prefix}{fname}"), sha256, size).with_page(pkg.page()));
     }
     Ok(Index {
         format: FORMAT,

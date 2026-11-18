@@ -133,3 +133,38 @@ fn index_entry_kind_is_sdk_for_the_sdk_package() {
     assert_eq!(e.kind.as_deref(), Some("sdk"));
     assert!(e.permissions.is_empty());
 }
+
+#[test]
+fn index_entry_carries_page_preview_size_and_hash() {
+    use sha2::{Digest, Sha256};
+    let t = tempfile::tempdir().unwrap();
+    let plain = common::pkg_src(t.path(), "alpha", "1.0.0", "sleep 1", "");
+    let long = common::pkg_src(t.path(), "longpage", "1.0.0", "sleep 1", "");
+    let page = format!("# Title\n\n{}\n\n{}\n", "a".repeat(700), "b".repeat(700));
+    fs::write(long.join("README.md"), &page).unwrap();
+    let short = common::pkg_src(t.path(), "shortpage", "1.0.0", "sleep 1", "");
+    fs::write(short.join("README.md"), "tiny\n").unwrap();
+    let dir = common::collection(&t.path().join("sd"), "c", &[plain, long, short]);
+    let c = Collection::load(&dir).unwrap();
+    let l = c.latest("longpage").unwrap();
+    assert_eq!(l.page_bytes, Some(page.len() as u64));
+    let want: String = Sha256::digest(page.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(l.page_sha256.as_deref(), Some(want.as_str()));
+    let pv = l.page_preview.as_deref().unwrap();
+    assert!(pv.len() <= 1024 && pv.len() < page.len() && page.starts_with(pv));
+    assert!(pv.ends_with(char::from(b'a')), "cut at the paragraph break: {pv:?}");
+    assert_eq!(c.latest("shortpage").unwrap().page_preview.as_deref(), Some("tiny\n"));
+    let a = c.latest("alpha").unwrap();
+    assert!(a.page_preview.is_none() && a.page_bytes.is_none() && a.page_sha256.is_none());
+    let json: serde_json::Value = serde_json::from_str(&fs::read_to_string(dir.join("index.json")).unwrap()).unwrap();
+    let alpha = json["packages"].as_array().unwrap().iter().find(|e| e["name"] == "alpha").unwrap();
+    assert!(!alpha.as_object().unwrap().contains_key("page_preview"));
+    assert_eq!(json["format"], 1);
+}
+
+#[test]
+fn page_preview_cuts_on_char_boundaries() {
+    let s = "é".repeat(2000);
+    let p = mibpkg::index::page_preview(&s);
+    assert!(p.len() <= 1024 && !p.is_empty());
+}
