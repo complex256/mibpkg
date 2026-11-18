@@ -104,6 +104,7 @@ fn api_route(app: &App, req: &Request, local: IpAddr) -> Response {
             Err(_) => Response::error(404, "no such config"),
         },
         ("PUT", ["packages", name, "config", n]) => config_set(app, req, name, n),
+        ("POST", ["packages", name, "config", n, "form"]) => config_form(app, req, name, n),
         ("GET", ["sources"]) => api::sources(app),
         ("POST", ["sources"]) | ("DELETE", ["sources"]) => source_change(app, req),
         ("GET", ["settings"]) => api::settings(app),
@@ -213,7 +214,12 @@ fn config_set(app: &App, req: &Request, name: &str, n: &str) -> Response {
     if std::str::from_utf8(&req.body).is_err() {
         return Response::error(400, "config files must be text (UTF-8)");
     }
-    let id = match text_file(app, &req.body) {
+    save_config(app, name, n, &path, &req.body)
+}
+
+/// Stage `text` and start the job that saves it as the package's config number `n`.
+fn save_config(app: &App, name: &str, n: usize, path: &str, text: &[u8]) -> Response {
+    let id = match text_file(app, text) {
         Ok(id) => id,
         Err(r) => return r,
     };
@@ -222,6 +228,48 @@ fn config_set(app: &App, req: &Request, name: &str, n: &str) -> Response {
         let _ = std::fs::remove_file(app.layout.run(&format!("text.{id}")));
     }
     r
+}
+
+/// POST /api/packages/:name/config/:n/form — apply form edits to a TOML config and save it.
+fn config_form(app: &App, req: &Request, name: &str, n: &str) -> Response {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Body {
+        edits: Vec<crate::config_form::Edit>,
+    }
+    let known = Known::load(&app.layout);
+    let Ok(n) = n.parse::<usize>() else { return Response::error(404, "no such config") };
+    if !crate::manifest::valid_name(name) || !known.installed.contains(name) {
+        return Response::error(404, format!("{name} is not installed"));
+    }
+    let Ok(m) = crate::install::current_manifest(&app.layout, name) else {
+        return Response::error(404, format!("{name} is not installed"));
+    };
+    let Some(c) = m.configs.get(n) else {
+        return Response::error(404, format!("{name} has no config number {n}"));
+    };
+    if !c.path.ends_with(".toml") {
+        return Response::error(400, "the form editor only handles .toml configs");
+    }
+    let b: Body = match json_body(req) {
+        Ok(b) => b,
+        Err(r) => return r,
+    };
+    if crate::config::pending_path(&app.layout, name, &c.path).is_file() {
+        return Response::error(409, "the card has a different copy of this config; resolve that first");
+    }
+    let Some(text) = api::read_config_text(app, &m, c, name) else {
+        let why = api::config_text_problem(app, c, name).unwrap_or("this file can't be edited as a form");
+        return Response::error(409, why);
+    };
+    let schema = c.schema.as_ref().and_then(|s| {
+        let dir = crate::install::current_dir(&app.layout, name)?;
+        crate::config_form::Schema::parse(&std::fs::read_to_string(dir.join(s)).ok()?).ok()
+    });
+    match crate::config_form::apply(&text, &b.edits, schema.as_ref()) {
+        Ok(new_text) => save_config(app, name, n, &c.path, new_text.as_bytes()),
+        Err(fields) => Response::json(400, &json!({ "error": "some values are not valid", "fields": fields })),
+    }
 }
 
 fn source_change(app: &App, req: &Request) -> Response {

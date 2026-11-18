@@ -2,6 +2,8 @@
 use super::http::{Request, Response};
 use super::App;
 use crate::catalog;
+use crate::config_form::{describe, FormDoc, Schema};
+use crate::manifest::{ConfigEntry, Manifest};
 use crate::install::{current_dir, current_manifest, updates_available};
 use crate::mibsdk::wifi;
 use crate::state::State;
@@ -211,7 +213,48 @@ pub fn config_get(app: &App, name: &str, n: usize) -> Response {
     // A conflict: the card's copy changed too and waits for a choice.
     let pending = crate::config::pending_path(&app.layout, name, &c.path);
     let card = pending.is_file().then(|| read_capped(&pending));
-    Response::json(200, &json!({ "path": c.path, "required": c.required, "exists": exists, "content": content, "example": c.example, "card": card }))
+    let form = c.path.ends_with(".toml").then(|| match read_config_checked(app, c, name) {
+        Ok(text) => {
+            let schema = c.schema.as_ref().and_then(|s| {
+                let dir = current_dir(&app.layout, name)?;
+                Schema::parse(&fs::read_to_string(dir.join(s)).ok()?).ok()
+            });
+            describe(&text, schema.as_ref())
+        }
+        Err(reason) => FormDoc { mode: "raw".into(), fields: vec![], reason: Some(reason.into()) },
+    });
+    Response::json(200, &json!({ "path": c.path, "required": c.required, "exists": exists, "content": content, "example": c.example, "card": card, "form": form }))
+}
+
+/// The config file's whole text (or its example when no file exists yet). Err says why not: a
+/// file over `MAX_CONFIG` or one that is not UTF-8 can't be edited as a form without losing data.
+fn read_config_checked(app: &App, c: &ConfigEntry, name: &str) -> Result<String, &'static str> {
+    let path = app.layout.config_dir(name).join(&c.path);
+    let path = if path.is_file() {
+        path
+    } else {
+        match (&c.example, current_dir(&app.layout, name)) {
+            (Some(e), Some(dir)) => dir.join(e),
+            _ => return Ok(String::new()),
+        }
+    };
+    let Ok(f) = fs::File::open(&path) else { return Ok(String::new()) };
+    let mut buf = Vec::new();
+    let _ = f.take(MAX_CONFIG + 1).read_to_end(&mut buf);
+    if buf.len() as u64 > MAX_CONFIG {
+        return Err("this file is too large for the form editor; use the text editor");
+    }
+    String::from_utf8(buf).map_err(|_| "this file is not valid UTF-8; use the text editor")
+}
+
+/// None when the form editor must not touch the file (too large, or not UTF-8).
+pub fn read_config_text(app: &App, _m: &Manifest, c: &ConfigEntry, name: &str) -> Option<String> {
+    read_config_checked(app, c, name).ok()
+}
+
+/// Why `read_config_text` gave None.
+pub fn config_text_problem(app: &App, c: &ConfigEntry, name: &str) -> Option<&'static str> {
+    read_config_checked(app, c, name).err()
 }
 
 /// GET /api/sources — enabled sources (with the collection their cached index holds and the last
