@@ -131,7 +131,7 @@ section = "Connection"
 [[field]]
 key = "password"
 label = "Password"
-help = "Leave empty if the broker has no login."
+help = "Clear this to remove the login (the broker needs none)."
 type = "string"
 secret = true
 section = "Connection"

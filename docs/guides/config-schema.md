@@ -1,8 +1,8 @@
 # Config forms and schemas
 
 For a config file that ends in `.toml`, the web interface shows two tabs: **Form** and **Raw**. Raw is
-the plain text editor. Form shows one control per setting: a switch for yes/no, a number box for
-numbers, a list of choices, and so on. Saving from either tab uses the same **Save and restart**
+the plain text editor. Form shows one control per setting: a switch for yes/no, a text box with a
+numeric keypad for numbers, a drop-down for choices, and so on. Saving from either tab uses the same **Save and restart**
 button.
 
 A package author can ship a **schema** that tells the form what each setting is called, what it is for,
@@ -23,10 +23,10 @@ Add `schema` to the `[[config]]` entry in `manifest.toml`. The config `path` mus
 path = "broker.toml"
 example = "broker.toml.example"
 schema = "broker.schema.toml"
-
-[[file]]
-src = "broker.schema.toml"
 ```
+
+The schema file only has to be in the package folder; `mibpkg build` packs it with the rest. You do not
+need to list it under `[[file]]`.
 
 The schema file ships in the package, next to the example. It is a TOML file with one `[[field]]` table
 per setting:
@@ -109,12 +109,12 @@ section = "Publishing"
 
 | Type | Control | Rules |
 |---|---|---|
-| `string` | Text box | Any text |
-| `int` | Number box | A whole number, within `min` and `max` if set |
-| `float` | Number box | Any number, within `min` and `max` if set |
+| `string` | Text box | Any text. Clearing the box removes the key from the file |
+| `int` | Text box with a numeric keypad | A whole number, within `min` and `max` if set |
+| `float` | Text box with a numeric keypad | Any number, within `min` and `max` if set |
 | `bool` | Switch | `true` or `false` |
-| `enum` | Choice list | One of `choices` |
-| `list` | Rows you can add and remove | A list of `string`, `int` or `float` items, set by `of`; no lists of lists |
+| `enum` | Drop-down | One of `choices` |
+| `list` | Text box, one item per line | A list of `string`, `int` or `float` items, set by `of`; no lists of lists |
 
 Only keys listed in the schema get a control; everything else in
 the file is kept untouched.
@@ -134,7 +134,7 @@ the wrong type is refused, the file is not changed, and the form shows the messa
 If the package has no schema, the form is built from the file as it stands:
 
 - yes/no values become switches, numbers become number boxes, text becomes a text box;
-- a list of text or numbers becomes a list of rows;
+- a list of text or numbers becomes a text box with one item per line;
 - a table becomes a section;
 - arrays of tables, inline tables and dates are shown as read-only text; change them in the Raw tab.
 
@@ -144,13 +144,23 @@ in the file yet cannot be added this way; ship a schema, or use Raw. A value is 
 
 ## When the form is not offered
 
-The Raw editor opens instead, with the reason shown, when:
+Only the Raw editor is shown, with no Form tab, when:
 
 - the config path does not end in `.toml`;
-- the file is not valid TOML (the parse error is shown);
-- the file is over 64 KiB, is not valid UTF-8, or cannot be read;
-- the card holds a different copy of the file and the conflict is not resolved yet. Choose to keep the
-  car's copy or use the card's first; see [Config, logs and restart](config-logs-restart.md).
+- the card holds a different copy of the file and the conflict is not resolved yet. The conflict
+  warning appears; choose to keep the car's copy or use the card's first, see
+  [Config, logs and restart](config-logs-restart.md).
 
-Raw always works. Unsaved edits are kept when you switch between the tabs, but a save uses only the tab
-you are on.
+The Raw editor also opens, and says why, when the form cannot be built:
+
+- the file is not valid TOML (the parse error is shown);
+- the file is over 64 KiB, is not valid UTF-8, or cannot be read.
+
+The form also refuses a change that would make the file larger than 64 KiB, because the editor could
+not open it again.
+
+If the config file does not exist yet, the form starts from the package's example. **Save and restart**
+is available straight away, so an example that is already right can be saved as it is.
+
+Raw always works. While you are editing, the other tab keeps what you typed, but a save uses only the tab
+you are on. After a save, both tabs show the saved file, so unsaved edits in the other tab are dropped.
