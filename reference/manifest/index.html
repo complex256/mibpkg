@@ -1137,6 +1137,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#store-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Store page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#compat" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1662,6 +1673,8 @@
       
         
       
+        
+      
     
     
     
@@ -1807,6 +1820,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../contributing/ci-runner/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CI runner
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../contributing/docs-style-guide/" class="md-nav__link">
         
   
@@ -1866,6 +1907,17 @@
     <span class="md-ellipsis">
       
         [package]
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#store-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Store page
       
     </span>
   </a>
@@ -2047,9 +2099,35 @@
 <td>No</td>
 <td>One line</td>
 </tr>
+<tr>
+<td><code>long_description</code></td>
+<td>No</td>
+<td>Markdown for the package's <a href="#store-page">store page</a>. At most 64 KiB</td>
+</tr>
+<tr>
+<td><code>readme</code></td>
+<td>No</td>
+<td>Package-relative path of a markdown file for the store page. Must exist and be UTF-8, at most 64 KiB</td>
+</tr>
 </tbody>
 </table>
 <p><code>mibsdk</code> is reserved for the SDK package. Only a manifest with <code>[sdk]</code> may use it.</p>
+<h2 id="store-page">Store page<a class="headerlink" href="#store-page" title="Permanent link">&para;</a></h2>
+<p>A package can carry a longer, markdown description that the web interface shows on its page. The text
+is resolved when the package is built; the first match wins:</p>
+<ol>
+<li><code>long_description</code>, inline in the manifest.</li>
+<li>The file named by <code>readme</code>.</li>
+<li><code>README.md</code> in the package directory, when there is one (no setting needed).</li>
+</ol>
+<p>Setting both <code>long_description</code> and <code>readme</code> is an error, as is a <code>readme</code> that is missing, not UTF-8,
+or outside the package directory, and any page over 64 KiB. <code>mibpkg pack</code> writes the result as
+<code>STORE-PAGE.md</code>, the first entry of the archive; a source file of that name is refused. The original
+<code>README.md</code> is still packed as an ordinary file.</p>
+<p>The page is shown as text: headings, emphasis, lists, tables, code and links. Raw HTML is dropped,
+images are not loaded (their alt text is shown), and only <code>http:</code> and <code>https:</code> links are clickable.</p>
+<p>A mibpkg older than 0.14 rejects a manifest that sets <code>long_description</code> or <code>readme</code>, because it does
+not know the keys. A package that relies on <code>README.md</code> alone installs everywhere.</p>
 <h2 id="compat"><code>[compat]</code><a class="headerlink" href="#compat" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

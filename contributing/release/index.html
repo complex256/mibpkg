@@ -16,7 +16,7 @@
         <link rel="prev" href="../test/">
       
       
-        <link rel="next" href="../docs-style-guide/">
+        <link rel="next" href="../ci-runner/">
       
       
         
@@ -1494,6 +1494,8 @@
       
         
       
+        
+      
     
     
     
@@ -1752,6 +1754,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../ci-runner/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CI runner
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../docs-style-guide/" class="md-nav__link">
         
   
@@ -1908,29 +1938,25 @@
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>mkdocs<span class="w"> </span>build<span class="w"> </span>--strict
 </code></pre></div>
 <ol>
-<li>Build the unit binary and the card:</li>
-</ol>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>scripts/build.sh
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>scripts/bundle.sh<span class="w"> </span>--signed-header<span class="w"> </span>/path/to/header.txt
-</code></pre></div>
-<p><code>scripts/bundle.sh</code> rebuilds <code>web/dist</code> first (when npm is available) and writes the unit binary,
-   the <code>.mpk</code> and the SD image under <code>out/</code>.</p>
-<ol>
 <li>Tag and push:</li>
 </ol>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>git<span class="w"> </span>tag<span class="w"> </span>v0.10.0
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>git<span class="w"> </span>push<span class="w"> </span>origin<span class="w"> </span>main<span class="w"> </span>--tags
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>git<span class="w"> </span>tag<span class="w"> </span>v0.10.0
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>git<span class="w"> </span>push<span class="w"> </span>origin<span class="w"> </span>main<span class="w"> </span>--tags
 </code></pre></div>
 <ol>
-<li>Create a GitHub release for the tag. <code>.github/workflows/host-release.yml</code> attaches the Linux host
-   binary <code>mibpkg-host-linux-x86_64</code>.</li>
+<li>Create a GitHub release for the tag. Publishing it starts two workflows:
+   <code>.github/workflows/host-release.yml</code> attaches the Linux host binary <code>mibpkg-host-linux-x86_64</code>,
+   and <code>.github/workflows/card-release.yml</code> builds the signed SD card on the self-hosted runner and
+   attaches <code>mibpkg-sd-&lt;version&gt;.zip</code>. See <a href="../ci-runner/">CI runner</a>.</li>
 </ol>
+<p>To build a card on your own machine instead, run <code>scripts/build.sh</code> and then
+<code>scripts/bundle.sh --signed-header /path/to/header.txt</code>.</p>
 <h2 id="docs">Docs<a class="headerlink" href="#docs" title="Permanent link">&para;</a></h2>
 <p>The docs workflow publishes the site to <code>gh-pages</code> on a push to <code>main</code> or a <code>v*</code> tag. GitHub Pages must
 serve the <code>gh-pages</code> branch.</p>
 <h2 id="official-collection">Official collection<a class="headerlink" href="#official-collection" title="Permanent link">&para;</a></h2>
 <p>The official packages are published separately:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>scripts/publish-official.sh<span class="w"> </span>&lt;tag&gt;<span class="w"> </span>&lt;mpk&gt;...
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>scripts/publish-official.sh<span class="w"> </span>&lt;tag&gt;<span class="w"> </span>&lt;mpk&gt;...
 </code></pre></div>
 <p>This releases <code>complex256/mibpkg-packages</code> and verifies the index.</p>
 <h2 id="the-action">The action<a class="headerlink" href="#the-action" title="Permanent link">&para;</a></h2>

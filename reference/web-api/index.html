@@ -1629,6 +1629,8 @@
       
         
       
+        
+      
     
     
     
@@ -1754,6 +1756,34 @@
     
   
     Release
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/ci-runner/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CI runner
   
 
     
@@ -1999,6 +2029,11 @@ contributors and for anyone building another client.</p>
 </tr>
 <tr>
 <td><code>GET</code></td>
+<td><code>/api/packages/&lt;name&gt;/page</code></td>
+<td>The store page as <code>text/markdown</code>: the installed copy, or with <code>?collection=&lt;id&gt;&amp;version=&lt;v&gt;</code> that version from its collection, checked against the index</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
 <td><code>/api/sources</code></td>
 <td>Enabled and available sources</td>
 </tr>
@@ -2076,6 +2111,11 @@ contributors and for anyone building another client.</p>
 <td><code>POST</code></td>
 <td><code>/api/uploads/&lt;id&gt;/install</code></td>
 <td><code>{collection, approve[]}</code></td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/api/uploads/&lt;id&gt;/page</code></td>
+<td>The uploaded package's store page</td>
 </tr>
 <tr>
 <td><code>DELETE</code></td>

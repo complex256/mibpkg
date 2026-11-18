@@ -1618,6 +1618,8 @@
       
         
       
+        
+      
     
     
     
@@ -1743,6 +1745,34 @@
     
   
     Release
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/ci-runner/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CI runner
   
 
     
@@ -2008,11 +2038,26 @@ with the same layout.</p>
 <td>A plugin's oldest supported <code>mibsdk</code> version, when declared</td>
 </tr>
 <tr>
+<td><code>packages[].page_preview</code></td>
+<td>The first ~1 KiB of the package's store page (cut at a paragraph), when it has one</td>
+</tr>
+<tr>
+<td><code>packages[].page_bytes</code></td>
+<td>Size of the full store page in bytes</td>
+</tr>
+<tr>
+<td><code>packages[].page_sha256</code></td>
+<td>SHA-256 of the full store page; the unit checks the page it fetches against it</td>
+</tr>
+<tr>
 <td><code>signatures</code></td>
 <td>Reserved; ignored in v1</td>
 </tr>
 </tbody>
 </table>
+<p>The three <code>page_*</code> fields are optional and <code>format</code> stays <code>1</code>: an index without them is valid, and an
+older mibpkg ignores them. The web interface shows <code>page_preview</code> at once and fetches the full page from
+the package (its first archive entry) when the user taps <strong>Load more</strong>.</p>
 <h2 id="build-it">Build it<a class="headerlink" href="#build-it" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>mibpkg<span class="w"> </span>index<span class="w"> </span>my-collection<span class="w"> </span>--id<span class="w"> </span>my-packages<span class="w"> </span>--name<span class="w"> </span><span class="s2">"My packages"</span>
 </code></pre></div>
