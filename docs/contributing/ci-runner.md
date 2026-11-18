@@ -42,7 +42,7 @@ gzip -9c metainfo2.txt | base64 | tr -d '\n' | gh secret set SIGNED_HEADER_GZ_B6
 Run the workflow from the Actions tab with an existing tag, or:
 
 ```sh
-gh workflow run "signed card" -f tag=v0.14.0
+gh workflow run "signed card" -f tag=v0.15.0
 ```
 
 ## Related
